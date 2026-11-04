@@ -1,0 +1,7 @@
+main{max-width:1000px}
+.pack-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:3px solid var(--navy);padding-bottom:12px;margin-bottom:16px}
+.pack-head h1{margin:4px 0;font-size:24px}
+section{margin:18px 0;break-inside:avoid}
+section h3{margin:0 0 8px;font-size:15px;text-transform:uppercase;letter-spacing:.6px;color:var(--navy)}
+.print-btn{position:sticky;top:8px}
+@media print{.print-btn,.banner{display:none}body{background:#fff}main{padding:0}.card{border:1px solid #bbb}}

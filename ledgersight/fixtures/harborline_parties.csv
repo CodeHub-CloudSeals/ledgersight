@@ -1,0 +1,11 @@
+party_id,name,type,aliases,ref_prefixes
+P-CORAL,Coral Studio,customer,CORAL STUDIO;CUST-CORAL,
+P-PELICAN,Pelican Cafe,customer,PELICAN CAFE;CUST-PELICAN,
+P-MANGROVE,Mangrove Hotels,customer,MANGROVE HOTELS;CUST-MANGROVE,
+P-BAYFRONT,Bayfront Properties,vendor,BAYFRONT PROPERTIES;VEND-BAYFRONT,LEASE-
+P-CLOUDDRAW,CloudDraw,vendor,CLOUDDRAW,CD-
+P-GULFPRINT,Gulfprint Supply Co.,vendor,GULFPRINT,GP-
+P-OFFICEDEPOT,Tampa Office Depot,vendor,OFFICE DEPOT,OD-
+P-VECTOR,Vector Stock Media,vendor,VECTOR STOCK;VEND-VECTOR,VS-
+P-PAYROLL,Harborline payroll,internal,PAYROLL,PR-
+P-BANK,Operating bank,bank,SERVICE FEE,FEE-

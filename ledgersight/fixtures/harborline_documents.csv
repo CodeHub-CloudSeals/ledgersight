@@ -1,0 +1,4 @@
+doc_id,doc_type,reference,vendor_alias,amount,file
+DOC-H-01,lease,LEASE-OCT,VEND-BAYFRONT,1200.00,harborline_lease_oct.pdf
+DOC-H-02,payroll_register,PR-1015,INTERNAL,1850.00,harborline_payroll_1015.pdf
+DOC-H-03,vendor_invoice,VS-212,VEND-VECTOR,239.00,harborline_vs212_invoice.pdf

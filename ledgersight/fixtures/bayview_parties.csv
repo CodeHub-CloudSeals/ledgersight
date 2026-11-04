@@ -1,0 +1,6 @@
+party_id,name,type,aliases,ref_prefixes
+P-HARBOUR,Harbour Charters,customer,HARBOUR CHARTERS;CUST-HARBOUR,
+P-SUNCOAST,Suncoast Tours,customer,SUNCOAST TOURS;CUST-SUNCOAST,
+P-MARINA,Marina (slip rental),vendor,MARINA;VEND-MARINA,SLIP-
+P-FUELDOCK,Fuel Dock 14,vendor,FUEL DOCK;VEND-FUELDOCK,FD-
+P-BANK,Operating bank,bank,SERVICE FEE,FEE-

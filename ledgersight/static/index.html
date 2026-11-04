@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LedgerSight</title>
+<link rel="stylesheet" href="/static/avocet.css">
+</head>
+<body>
+
+<section id="login" class="login hidden">
+  <div class="login-card">
+    <img src="/static/logo.svg" alt="CloudSeals" class="logo-lg">
+    <div class="eyebrow">LEDGERSIGHT · POWERED BY TRUSTOPS</div>
+    <h1>Sign in</h1>
+    <p class="muted" id="lg-hint">Invitation-only access.</p>
+    <label>User ID<input id="lg-user" autocomplete="username"></label>
+    <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
+    <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
+    <button id="lg-btn" class="primary wide">Sign in</button>
+    <div id="lg-msg" class="msg"></div>
+  </div>
+</section>
+
+<div id="app" class="hidden">
+  <div class="shell">
+  <aside class="sidebar">
+    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation workspace</div></div></div>
+    <nav id="tabs">
+      <div class="navlabel">Workflow</div>
+      <button class="tab active" data-tab="home" data-step="0"><span class="dot"></span>Overview</button>
+      <button class="tab" data-tab="import" data-step="1"><span class="dot"></span>Import files</button>
+      <button class="tab" data-tab="recon" data-step="2"><span class="dot"></span>Match</button>
+      <button class="tab" data-tab="exceptions" data-step="3"><span class="dot"></span>Review queue</button>
+      <button class="tab" data-tab="parties"><span class="dot ico">☺</span>Counterparties</button>
+      <button class="tab" data-tab="trace"><span class="dot ico">⇢</span>Trace a transaction</button>
+      <button class="tab" data-tab="evidence" data-step="4"><span class="dot"></span>Audit trail</button>
+      <button class="tab" data-tab="results" data-step="5"><span class="dot"></span>Impact</button>
+      <div class="navlabel">Controls</div>
+      <button class="tab" data-tab="controls"><span class="dot ico">⛨</span>Guardrails</button>
+      <button class="tab" data-tab="trust"><span class="dot ico">◎</span>Data &amp; security</button>
+      <button class="tab" data-tab="team"><span class="dot ico">◉</span>People</button>
+    </nav>
+    <div class="sidefoot">
+      <div>Read-only: nothing is posted to any ledger or bank.</div>
+      <div id="me-exp" class="small"></div>
+      <div class="small">Clicks this session: <b id="clicks">0</b></div>
+    </div>
+  </aside>
+  <div class="content">
+  <header class="topbar">
+    <div class="tb-left">
+      <label class="tbl">Book <select id="ws-select"></select></label>
+      <span class="pill">Period <b id="ws-period">-</b></span>
+      <span class="pill">Last run <b id="ws-run">none</b></span>
+    </div>
+    <div class="tb-right">
+      <button id="theme" class="iconbtn" title="Toggle dark mode" aria-label="Toggle dark mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></button>
+      <span id="avatar" class="avatar">–</span>
+      <span class="who"><b id="me-name">-</b></span>
+      <button id="logout" class="ghost">Sign out</button>
+    </div>
+  </header>
+  <div class="stepper" id="stepper"></div>
+  <main>
+    <section class="panel active" id="p-home">
+      <div class="eyebrow2" id="greet">GOOD MORNING</div>
+      <h2 id="home-h">Month-end close at a glance</h2>
+      <p class="sub">Status of each client book for this period and what to pick up next. Figures are calculated from the files you imported.</p>
+      <div class="grid two" id="clients"></div>
+      <h3 class="h3">Guided exercises</h3>
+      <p class="sub">Three short walkthroughs. Start over whenever you like with the reset below.</p>
+      <div class="grid three" id="tasks"></div>
+      <div class="card gap"><div class="card-title">This workspace</div><div id="home-status" class="muted"></div>
+        <div class="row gap"><button id="reset-btn" class="danger">Reset this client's workspace</button><span id="reset-msg" class="msg"></span></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-import">
+      <h2>Import client files</h2>
+      <p class="sub">Drop in the bank statement and ledger export. LedgerSight checks the file, proposes the column mapping and you confirm it. No re-keying.</p>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">Bring in files</div>
+          <div class="row">
+            <select id="src-select" aria-label="Where from">
+              <option value="computer">💻 From this computer</option>
+              <option value="email">✉️ From an email (.eml)</option>
+              <option value="drive">▲ From Google Drive</option>
+            </select>
+            <select id="up-kind" aria-label="File type">
+              <option value="auto">Detect file type automatically</option>
+              <option value="bank">Bank statement · CSV, Excel, OFX/QBO</option>
+              <option value="ledger">General ledger · CSV, Excel</option>
+              <option value="ar">Open invoices · CSV, Excel</option>
+              <option value="documents">Supporting documents list · CSV, Excel</option>
+              <option value="parties">Customer &amp; vendor list · CSV, Excel</option>
+              <option value="pdf">Invoice / receipt · PDF</option>
+            </select>
+            <button id="choose-btn" class="primary">Choose files…</button>
+            <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.ofx,.qfx,.qbo,.pdf">
+            <input id="em-file" type="file" class="hidden" accept=".eml,message/rfc822">
+          </div>
+          <div id="em-view"></div>
+          <div id="drive-view"></div>
+          <p class="muted small">Pick one file, or several at once (each is checked and confirmed in turn). CSV, Excel (.xlsx), TSV/TXT, bank downloads (.ofx, .qfx, .qbo), 10 MB / 5,000 rows max. Text PDFs (invoices, receipts) up to 20 pages; scanned images are not read yet. Formulas are never evaluated; macro, archive and linked workbooks are refused.</p>
+          <div class="row">
+            <button id="sample-btn" class="secondary">Load this client's files</button>
+            <span class="muted small">Or download a file and upload it yourself:</span>
+            <span id="sample-links" class="links"></span>
+          </div>
+          <div id="up-msg" class="msg"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Source status</div>
+          <div id="src-status" class="src-status"></div>
+          <div class="row gap"><button id="clear-all" class="danger">Clear all imported files</button><span id="clear-msg" class="msg"></span></div>
+        </div>
+      </div>
+      <div id="mapping" class="card gap hidden"></div>
+      <div class="card gap">
+        <div class="card-title">Where files can come from</div>
+        <div class="grid three">
+          <div><div class="srchead ok">Available now</div><ul class="plain small">
+            <li>CSV, TSV and text exports</li><li>Excel workbooks (.xlsx)</li><li>Bank downloads: OFX, QFX, QBO (QuickBooks Web Connect)</li>
+            <li>Invoice and receipt PDFs (text)</li><li>Customer &amp; vendor list</li><li>Several files in one go</li><li>Saved emails (.eml) with attachments</li><li>Google Drive files and Sheets (once connected)</li></ul></div>
+          <div><div class="srchead plan">Planned for the pilot (read-only)</div><ul class="plain small">
+            <li>QuickBooks Online or Xero, whichever you use</li><li>OneDrive / Dropbox folder</li><li>Live receipts inbox (clients forward to an address)</li>
+            <li>Photos and scanned receipts (OCR)</li></ul></div>
+          <div><div class="srchead no">Not accepted, by design</div><ul class="plain small">
+            <li>Macro workbooks (.xlsm) and old .xls</li><li>ZIP archives</li><li>PowerPoint and Word files: they don't hold transaction data</li>
+            <li>Tax returns, SSNs, bank logins</li></ul></div>
+        </div>
+      </div>
+      <div class="card gap"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
+      <div class="card gap">
+        <div class="card-title">Import health</div>
+        <div id="health"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-recon">
+      <h2>Reconcile bank to ledger</h2>
+      <p class="sub">One action. Deterministic rules match what agrees exactly; anything uncertain is held back for you, not guessed.</p>
+      <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div>
+      <div id="tiles" class="tiles gap"></div>
+      <div class="grid two gap">
+        <div class="card"><div class="card-title">Matched automatically</div><div id="matches"></div></div>
+        <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Click any row to see the original bank and ledger lines side by side.</div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-exceptions">
+      <h2>Exceptions for review</h2>
+      <p class="sub">Only the residual work. Each item shows the source rows, the rule that raised it and a suggested next step. The accountant decides; the decision is recorded and signed. Nothing is posted.</p>
+      <div id="exc-list"></div>
+    </section>
+
+    <section class="panel" id="p-controls">
+      <h2>What the AI is not allowed to do</h2>
+      <p class="sub">Each button asks the TrustOps gate for a forbidden action, live. The request is refused and the refusal is written to this client's evidence chain.</p>
+      <div class="grid three" id="attack-grid"></div>
+      <div class="card gap"><div class="card-title">Results</div><div id="attack-out" class="muted">No attempts yet.</div></div>
+    </section>
+
+    <section class="panel" id="p-parties">
+      <h2>Counterparties</h2>
+      <p class="sub">Every customer and vendor, with all of their transactions across the bank statement, ledger, invoices and documents. Each link shows the evidence behind it; anything uncertain waits for a person to confirm.</p>
+      <div class="trace-grid">
+        <div><div class="card"><div class="card-title">Customers &amp; vendors</div><div id="party-list" class="muted">Import files first.</div></div>
+          <div class="card gap"><div class="card-title">Not linked to anyone</div><div id="party-unlinked" class="muted">–</div></div></div>
+        <div id="party-view" class="card"><div class="muted">Select a customer or vendor.</div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-trace">
+      <h2>Trace a transaction</h2>
+      <p class="sub">Pick any bank line to follow it end to end: which file and row it came from, every check and decision along the way, who did it and when, and the signed record that proves each step.</p>
+      <div class="trace-grid">
+        <div class="card"><div class="card-title">Bank lines</div><div id="trace-list" class="muted">Import files first.</div></div>
+        <div id="trace-view" class="card"><div class="muted">Select a line on the left.</div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-evidence">
+      <h2>Evidence &amp; export</h2>
+      <p class="sub">Every upload, run, decision and refusal is an Ed25519-signed, hash-chained record. Anyone with the public key can verify the export offline.</p>
+      <div class="row">
+        <span id="verify-badge" class="badge">-</span>
+        <button id="ev-refresh" class="secondary">Verify now</button>
+        <button id="tamper-btn" class="danger">Tamper test (on a copy)</button>
+        <a id="exp-csv" class="secondary btnlink disabled" href="#">Download review CSV</a>
+        <a id="exp-pack" class="secondary btnlink disabled" href="#">Download signed review pack</a>
+        <a id="exp-print" class="secondary btnlink disabled" href="#" target="_blank" rel="noopener">Printable review pack (PDF)</a>
+      </div>
+      <div id="tamper-out" class="msg"></div>
+      <div class="card gap"><div id="events"></div></div>
+    </section>
+
+    <section class="panel" id="p-results">
+      <h2>Results</h2>
+      <p class="sub">Measured figures come from this run. The value estimate below is hypothetical until replaced with your own measured time study.</p>
+      <div id="measured" class="tiles"></div>
+      <div class="card gap warn">
+        <div class="card-title">Shadow estimate · HYPOTHETICAL · not a claim</div>
+        <div class="row wrap">
+          <label class="ctl2">Bank lines per client per month<input id="roi-lines" type="number" value="150"></label>
+          <label class="ctl2">Client books reconciled monthly<input id="roi-books" type="number" value="20"></label>
+          <label class="ctl2">Manual minutes per line today<input id="roi-min" type="number" value="1.5" step="0.1"></label>
+          <label class="ctl2">Review minutes per exception<input id="roi-exc" type="number" value="4"></label>
+        </div>
+        <div id="roi-out" class="gap"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="p-trust">
+      <h2>Trust &amp; data boundary</h2>
+      <p class="sub">What runs, where it is declared to run, which models are allowed and what is forbidden. Stated plainly, including what is not yet verified.</p>
+      <div id="trust"></div>
+    </section>
+
+    <section class="panel" id="p-team">
+      <h2>Team &amp; access</h2>
+      <p class="sub">Invitation-only, per-client membership, 14-day access expiry, instant revocation.</p>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">Invite someone</div>
+          <label class="ctl2">User ID (email)<input id="inv-user"></label>
+          <label class="ctl2">Name<input id="inv-name"></label>
+          <label class="ctl2">Role
+            <select id="inv-role"><option value="preparer">Preparer</option><option value="owner_reviewer">Owner / reviewer</option></select>
+          </label>
+          <div class="ctl2"><span>Client access</span><div id="inv-ws" class="row wrap"></div></div>
+          <button id="inv-btn" class="primary">Create invitation link</button>
+          <div id="inv-out" class="msg"></div>
+        </div>
+        <div class="card"><div class="card-title">Users</div><div id="users"></div></div>
+      </div>
+    </section>
+  </main>
+  </div>
+  </div>
+</div>
+<script src="/static/avocet.js"></script>
+</body>
+</html>

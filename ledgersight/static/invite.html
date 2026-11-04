@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accept invitation · LedgerSight</title>
+<link rel="stylesheet" href="/static/avocet.css">
+</head>
+<body>
+<section class="login">
+  <div class="login-card">
+    <img src="/static/logo.svg" alt="CloudSeals" class="logo-lg">
+    <div class="eyebrow">LEDGERSIGHT · INVITATION</div>
+    <h1 id="iv-title">Set up your access</h1>
+    <div id="iv-info" class="muted"></div>
+    <div class="card gap mfa-only">
+      <div class="card-title">1 · Add to your authenticator app</div>
+      <div class="muted small">In Google Authenticator / Microsoft Authenticator choose "Enter a setup key" and paste:</div>
+      <div id="iv-secret" class="mono gap"></div>
+    </div>
+    <label>Choose a password (12+ characters)<input id="iv-pw" type="password" autocomplete="new-password"></label>
+    <label class="mfa-only">Enter the 6-digit code from the app<input id="iv-code" inputmode="numeric" maxlength="6"></label>
+    <label class="row small"><input id="iv-terms" type="checkbox"> I will not upload tax returns, Social Security numbers or bank login details.</label>
+    <button id="iv-btn" class="primary wide">Activate account</button>
+    <div id="iv-msg" class="msg"></div>
+  </div>
+</section>
+<script src="/static/invite.js"></script>
+</body>
+</html>

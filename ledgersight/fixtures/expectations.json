@@ -1,0 +1,50 @@
+{
+  "harborline": {
+    "bank_rows": 12,
+    "ledger_rows": 9,
+    "bank_net_cents": 190852,
+    "ledger_net_cents": 181351,
+    "variance_cents": 9501,
+    "variance_explained_by": {
+      "HB010": 50000,
+      "HB006": -31500,
+      "HB004": -8999
+    },
+    "matches": {
+      "HB001": "GL-H-101",
+      "HB002": "GL-H-102",
+      "HB003": "GL-H-103",
+      "HB005": "GL-H-104",
+      "HB007": "GL-H-105",
+      "HB008": "GL-H-106",
+      "HB009": "GL-H-107",
+      "HB011": "GL-H-108",
+      "HB012": "GL-H-109"
+    },
+    "exceptions": {
+      "HB004": "POSSIBLE_DUPLICATE",
+      "HB005": "PARTIAL_RECEIPT",
+      "HB006": "MISSING_GL",
+      "HB009": "MISSING_RECEIPT",
+      "HB010": "UNMATCHED_DEPOSIT"
+    },
+    "partial_receipts": {
+      "HB005": {
+        "invoice": "INV-1005",
+        "received_cents": 90000,
+        "residual_cents": 30000
+      }
+    },
+    "supported_by_document": {
+      "HB012": "DOC-H-03"
+    }
+  },
+  "bayview": {
+    "bank_rows": 5,
+    "ledger_rows": 4,
+    "exceptions": {
+      "BV004": "UNMATCHED_DEPOSIT"
+    }
+  },
+  "note": "Signed-off business expectations for synthetic data. Not app output, not an ROI claim."
+}
