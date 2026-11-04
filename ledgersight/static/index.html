@@ -28,23 +28,24 @@
   <aside class="sidebar">
     <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation · governed by TrustOps</div></div></div>
     <nav id="tabs" aria-label="Main">
-      <div class="navlabel">Reconciliation</div>
-      <button class="tab active" data-tab="home"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span>Overview</button>
-      <button class="tab" data-tab="import"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span>Sources</button>
-      <button class="tab" data-tab="agents"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span>Agents<span class="tag">LIVE</span></button>
-      <button class="tab" data-tab="recon"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h14l-4-4M20 17H6l4 4"/></svg></span>Reconciliation</button>
-      <button class="tab" data-tab="exceptions"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5.5 5h13l2.5 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z"/></svg></span>Review queue</button>
-      <button class="tab" data-tab="ask"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></span>Ask LedgerSight</button>
-      <button class="tab" data-tab="reports"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span>Reports</button>
-      <div class="navlabel">Investigate</div>
-      <button class="tab" data-tab="parties"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.2 6.2 0 0 1 3.5 6"/></svg></span>Counterparties</button>
-      <button class="tab" data-tab="trace"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5"/></svg></span>Trace a transaction</button>
-      <div class="navlabel">TrustOps</div>
-      <button class="tab" data-tab="evidence"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>Audit trail</button>
-      <button class="tab" data-tab="controls"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span>Guardrails</button>
-      <button class="tab" data-tab="rules"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H20v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H20M9 7.5h7M9 11h5"/></svg></span>Rulebooks</button>
-      <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>Data &amp; security</button>
-      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span>People</button>
+      <div class="navlabel">Work</div>
+      <button class="tab active" data-tab="home"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span class="lbl-t">Overview</span></button>
+      <button class="tab" data-tab="import"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span><span class="lbl-t">Sources</span></button>
+      <button class="tab" data-tab="recon"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h14l-4-4M20 17H6l4 4"/></svg></span><span class="lbl-t">Reconciliation</span></button>
+      <button class="tab" data-tab="exceptions"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5.5 5h13l2.5 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z"/></svg></span><span class="lbl-t">Review queue</span><span id="nav-review" class="count hidden" title="Items waiting for a decision"></span></button>
+      <button class="tab" data-tab="parties"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.2 6.2 0 0 1 3.5 6"/></svg></span><span class="lbl-t">Counterparties</span></button>
+      <button class="tab" data-tab="trace"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5"/></svg></span><span class="lbl-t">Trace a transaction</span></button>
+      <div class="navlabel">Outputs</div>
+      <button class="tab" data-tab="reports"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span><span class="lbl-t">Reports</span></button>
+      <button class="tab" data-tab="ask"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></span><span class="lbl-t">Ask LedgerSight</span></button>
+      <div class="navlabel">Governance</div>
+      <button class="tab" data-tab="agents"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span><span class="lbl-t">Agents</span><span class="tag">LIVE</span></button>
+      <button class="tab" data-tab="rules"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H20v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H20M9 7.5h7M9 11h5"/></svg></span><span class="lbl-t">Rulebooks</span></button>
+      <button class="tab" data-tab="controls"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span><span class="lbl-t">Guardrails</span></button>
+      <button class="tab" data-tab="evidence"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span><span class="lbl-t">Audit trail</span></button>
+      <div class="navlabel">Admin</div>
+      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span><span class="lbl-t">People</span></button>
+      <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span><span class="lbl-t">Data &amp; security</span></button>
     </nav>
     <div class="sidefoot"><div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
       <span>Read-only. Nothing is ever posted to a ledger, paid or emailed.</span></div>
@@ -69,31 +70,36 @@
     <!-- ================= Overview ================= -->
     <section class="panel active" id="p-home">
       <div id="ov-hero" class="hero"></div>
-      <div class="how gap" aria-label="How it works">
-        <a href="#import" data-go="import"><span class="n">1</span><b>Upload files</b><span>Bank statement, ledger, invoices: CSV, Excel or PDF.</span><em class="who you">YOU</em></a>
-        <a href="#agents" data-go="agents"><span class="n">2</span><b>Agents do the work</b><span>Six agents check the files and match bank lines to the ledger.</span><em class="who ls">LEDGERSIGHT</em></a>
-        <a href="#rules" data-go="rules"><span class="n">3</span><b>TrustOps checks every step</b><span>Allowed, sent to a person, or blocked.</span><em class="who to">TRUSTOPS</em></a>
-        <a href="#exceptions" data-go="exceptions"><span class="n">4</span><b>You decide the problems</b><span>Approve, reject or return each flagged item.</span><em class="who you">YOU</em></a>
-        <a href="#reports" data-go="reports"><span class="n">5</span><b>Download reports</b><span>Finance report and governance report, with proof.</span><em class="who ls">BOTH</em></a>
+      <div id="ov-kpis" class="tiles"></div>
+      <div class="card gap pipe" id="ov-pipe">
+        <div class="pipe-head"><div class="card-title">Agent pipeline</div>
+          <div class="pipe-meta"><span class="pipe-count" data-pipe="count"><i></i>0 of 6 agents active</span><a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div></div>
+        <div id="ov-agents"></div>
       </div>
-      <div id="ov-kpis" class="tiles gap"></div>
       <div class="grid ov gap">
-        <div class="card"><div class="card-title">Agents <a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div><div id="ov-agents" class="agent-mini"></div></div>
         <div class="card"><div class="card-title">TrustOps decisions <a class="linkbtn" href="#evidence" data-go="evidence">Audit trail →</a></div><div id="ov-gov"></div></div>
-      </div>
-      <div class="grid two gap">
         <div class="card"><div class="card-title">Recent activity</div><ul id="ov-activity" class="feed"></ul></div>
-        <div class="card"><div class="card-title">Client profile</div>
-          <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
-          <div class="form-grid gap">
-            <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
-            <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
-            <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
-          </div>
-          <div class="row"><button id="pf-save" class="primary">Save profile</button><span id="pf-msg" class="msg"></span></div>
-          <div class="row gap"><button id="reset-btn" class="danger">Clear this client's data</button><span id="reset-msg" class="msg"></span></div>
+      </div>
+      <div class="card gap" aria-label="How it works">
+        <div class="card-title">How it works <span class="muted">who does each step</span></div>
+        <div class="how">
+          <a href="#import" data-go="import"><span class="n">1</span><span class="tx"><b>Upload files</b><span>Bank statement, ledger, invoices: CSV, Excel or PDF.</span><em class="who you">YOU</em></span></a>
+          <a href="#agents" data-go="agents"><span class="n">2</span><span class="tx"><b>Agents do the work</b><span>Six agents check the files and match bank lines to the ledger.</span><em class="who ls">LEDGERSIGHT</em></span></a>
+          <a href="#rules" data-go="rules"><span class="n">3</span><span class="tx"><b>TrustOps checks every step</b><span>Allowed, sent to a person, or blocked.</span><em class="who to">TRUSTOPS</em></span></a>
+          <a href="#exceptions" data-go="exceptions"><span class="n">4</span><span class="tx"><b>You decide the problems</b><span>Approve, reject or return each flagged item.</span><em class="who you">YOU</em></span></a>
+          <a href="#reports" data-go="reports"><span class="n">5</span><span class="tx"><b>Download reports</b><span>Finance report and governance report, with proof.</span><em class="who ls">BOTH</em></span></a>
         </div>
       </div>
+      <details class="card gap fold" id="ov-profile">
+        <summary>Client profile <span class="muted">name, period, industry · clear data</span></summary>
+        <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
+        <div class="form-grid gap">
+          <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
+          <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
+          <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
+        </div>
+        <div class="row gap"><button id="pf-save" class="primary">Save profile</button><button id="reset-btn" class="danger">Clear this client's data</button><span id="pf-msg" class="msg"></span><span id="reset-msg" class="msg"></span></div>
+      </details>
     </section>
 
     <!-- ================= Sources ================= -->
@@ -135,10 +141,8 @@
       </div>
       <div id="mapping" class="card gap hidden"></div>
       <div class="card gap"><div class="card-title">Connections</div><div id="connectors"></div></div>
-      <div class="grid two gap">
-        <div class="card"><div class="card-title">Import health</div><div id="health"></div></div>
-        <div class="card"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
-      </div>
+      <div class="card gap"><div class="card-title">Import health</div><div id="health"></div></div>
+      <div class="card gap"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
     </section>
 
     <!-- ================= Reconciliation ================= -->
@@ -148,8 +152,12 @@
         <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div></div>
       <div id="recon-ready"></div>
       <div id="tiles" class="tiles"></div>
-      <div class="card gap"><div class="card-title">Agent workflow <span class="muted small">TrustOps checks every step</span></div>
-        <div id="workflow" class="muted">Run a reconciliation to see each agent step.</div></div>
+      <div class="card gap pipe" id="rc-pipe">
+        <div class="pipe-head"><div class="card-title">Agent workflow</div>
+          <div class="pipe-meta"><span class="pipe-count" data-pipe="count"><i></i>0 of 6 agents active</span><span class="muted">TrustOps checks every step</span></div></div>
+        <div id="rc-pipeline"></div>
+        <details class="gap"><summary class="small muted">Step-by-step detail</summary><div id="workflow" class="muted">Run a reconciliation to see each agent step.</div></details>
+      </div>
       <div class="grid two gap">
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
         <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Select a matched row to compare the bank and ledger lines.</div></div>
@@ -160,9 +168,14 @@
     <section class="panel" id="p-agents">
       <div class="page-head"><div><h2>Agents</h2>
         <p class="sub">The six LedgerSight agents for this client: what each is doing now, what it last did and what TrustOps decided. Built from the signed audit trail; refreshes every 2 seconds.</p></div>
-        <div class="row"><span id="ag-live" class="pill">● live</span><button id="ag-run" class="primary">Run reconciliation now</button></div></div>
-      <div class="row"><span class="pill">Run <b id="ag-runid">none</b></span><span class="pill">Trace <b id="ag-trace">–</b></span><span id="ag-msg" class="msg"></span></div>
+        <div class="row"><span id="ag-live" class="pill live">● live</span><button id="ag-run" class="primary">Run reconciliation now</button></div></div>
       <div id="ag-ready"></div>
+      <div class="card pipe" id="ag-pipe">
+        <div class="pipe-head"><div class="card-title">Pipeline</div>
+          <div class="pipe-meta"><span class="pipe-count" data-pipe="count"><i></i>0 of 6 agents active</span><span class="pill">Run <b id="ag-runid">none</b></span><span class="pill">Trace <b id="ag-trace">–</b></span></div></div>
+        <div id="ag-pipeline"></div>
+        <div id="ag-msg" class="msg"></div>
+      </div>
       <div id="ag-grid" class="grid three gap"></div>
       <div class="card gap"><div class="card-title">Live activity <span class="muted small">newest first</span></div><div id="ag-feed" class="muted">No agent activity yet.</div></div>
     </section>

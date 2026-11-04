@@ -92,7 +92,7 @@ const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", 
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
-  S.run = null; S.upload = null;
+  S.run = null; S.upload = null; S.agents = null; S.anim = null; renderPipelines();
   const w = await api(W());
   S.wsMeta = w;
   const samples = await api(W("/samples")).catch(() => []);
@@ -124,6 +124,7 @@ async function progress() {
   });
   kids.push(el("span", { class: "pill runtag" }, "Last run ", el("b", {}, st.last_run || "none")));
   put("stepper", kids);
+  const nr = $("nav-review"); nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions);
   $("page-sub").textContent = [w.period, w.industry].filter(Boolean).join(" · ");
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = w.name;
   S.status = st;
@@ -140,8 +141,9 @@ async function renderOverview() {
   const state = !st.uploads ? ["Awaiting files", ""] : !st.runs ? ["Files imported", "SIMULATED"] : st.open_exceptions ? [`${st.open_exceptions} to review`, "OPEN"] : ["Ready to report", "ACCEPTED"];
   const next = !st.uploads ? ["Upload this period's files", "import"] : !(st.bank && st.ledger) ? ["Add the bank statement and ledger", "import"]
     : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? [`Review ${st.open_exceptions} item${st.open_exceptions > 1 ? "s" : ""}`, "exceptions"] : ["Download the reports", "reports"];
-  put("ov-hero", el("div", {}, el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`), el("h2", {}, w.name),
-      el("div", { class: "muted" }, [w.industry, w.period].filter(Boolean).join(" · "), " ", el("span", { class: "badge " + state[1] }, state[0]))),
+  put("ov-hero", el("div", {}, el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
+      el("h2", {}, w.name, el("span", { class: "badge " + state[1] }, state[0])),
+      el("div", { class: "muted small" }, [w.industry, w.period].filter(Boolean).join(" · "))),
     el("div", { class: "next" }, el("span", { class: "muted small" }, "Next step"), el("button", { class: "primary", onclick: () => go(next[1]) }, next[0] + " →")));
   const r = S.run && S.run.result;
   const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
@@ -152,6 +154,7 @@ async function renderOverview() {
     tile("Awaiting review", r ? st.open_exceptions : "–", r && st.open_exceptions ? "amb" : r ? "good" : "", r ? `${r.exceptions.length} raised in total` : ""),
     tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
     tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
+  if (isActive("home")) { try { await renderEvidence(); } catch (_) { /* counts fall back to last loaded */ } }
   const ev = S.events || [];
   const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
   put("ov-gov", el("div", { class: "kpis" }, [["ALLOW", cnt("ALLOW")], ["ESCALATE", cnt("ESCALATE")], ["DENY", cnt("DENY")], ["Evidence", S.verify || "–"]]
@@ -162,12 +165,8 @@ async function renderOverview() {
     el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : e.actor_id)), ` ${e.action} `,
       el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0]),
       e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
-  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet."));
-  try {
-    const a = await api(W("/agents"));
-    put("ov-agents", a.agents.map((x) => el("div", { class: "a" }, el("b", {}, el("span", { class: "dotx " + x.status }), `${x.code} ${x.name}`),
-      el("span", {}, (AG_STATUS[x.status] || x.status) + (x.last ? ` · ${ago(x.last.seconds_ago)}` : "")))));
-  } catch (_) { /* agent view optional */ }
+  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
+  await loadAgents();
 }
 let SOURCE_KINDS = ["bank", "ledger", "ar", "ap", "documents", "parties"];
 function fillProfile(w) {
@@ -288,7 +287,8 @@ async function openTrace(id) {
   let t = null; try { t = localStorage.getItem("ls-theme-v2"); } catch (_) {}
   if (t) document.documentElement.dataset.theme = t;
   $("theme").onclick = () => {
-    const dark = document.documentElement.dataset.theme === "dark";
+    const set = document.documentElement.dataset.theme;
+    const dark = set ? set === "dark" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "light" : "dark";
     try { localStorage.setItem("ls-theme-v2", document.documentElement.dataset.theme); } catch (_) {}
   };
@@ -299,7 +299,7 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "p-" + t.dataset.tab));
   if (location.hash.slice(1) !== t.dataset.tab) history.replaceState(null, "", "#" + t.dataset.tab);
-  document.title = `${t.textContent.replace("LIVE", "").trim()} · LedgerSight`;
+  document.title = `${(t.querySelector(".lbl-t") || t).textContent.trim()} · LedgerSight`;
   window.scrollTo(0, 0);
   if (t.dataset.tab === "home") renderOverview();
   if (t.dataset.tab === "evidence") renderEvidence();
@@ -418,7 +418,7 @@ async function renderDrive(open) {
     el("div", { class: "card-title" }, "Google Drive is not connected yet"),
     el("ol", { class: "plain small" }, el("li", {}, "In Google Cloud Console, enable the Google Drive API and Google Picker API."),
       el("li", {}, "Create an OAuth client (Web application) with origin http://127.0.0.1:8090, and an API key."),
-      el("li", {}, "Start the app with GOOGLE_CLIENT_ID=… GOOGLE_API_KEY=… ./run_avocet.sh")),
+      el("li", {}, "Add GOOGLE_CLIENT_ID=… and GOOGLE_API_KEY=… to the .env file, then restart LedgerSight.")),
     el("div", { class: "small muted" }, "Access is read-only and limited to the files you pick (drive.file scope). Nothing else in your Drive is visible.")));
 
 }
@@ -471,13 +471,13 @@ async function uploadOne(f) {
   const fd = new FormData(); fd.append("file", f);
   if (kind === "pdf") {
     msg("up-msg", `Reading ${f.name} in an isolated parser…`);
-    try { S.upload = await api(W("/documents"), { method: "POST", form: fd }); msg("up-msg", `${f.name}: fields extracted. Check them, then confirm${left}.`, "good"); renderDocConfirm(); }
+    try { S.upload = await agentsBusy({ "AG-01": "working" }, `Reading ${f.name}`, api(W("/documents"), { method: "POST", form: fd })); msg("up-msg", `${f.name}: fields extracted. Check them, then confirm${left}.`, "good"); renderDocConfirm(); }
     catch (e) { msg("up-msg", `${f.name} refused: ${e.message}`, "err"); nextInQueue(); }
     return;
   }
   fd.append("kind", kind);
   msg("up-msg", `Checking ${f.name} as ${KIND[kind]}…`);
-  try { S.upload = await api(W("/uploads"), { method: "POST", form: fd }); msg("up-msg", `${f.name} passed checks as ${KIND[kind]}. Confirm the columns below${left}.`, "good"); renderMapping(); }
+  try { S.upload = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, `Checking ${f.name}`, api(W("/uploads"), { method: "POST", form: fd })); msg("up-msg", `${f.name} passed checks as ${KIND[kind]}. Confirm the columns below${left}.`, "good"); renderMapping(); }
   catch (e) { msg("up-msg", `${f.name} refused: ${e.message}`, "err"); nextInQueue(); }
 }
 function renderMapping() {
@@ -504,7 +504,7 @@ function renderMapping() {
 }
 $("sample-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   msg("up-msg", "");
-  try { const r = await api(W("/samples/load"), { method: "POST" });
+  try { const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, "Checking the sample files", api(W("/samples/load"), { method: "POST" }));
     toast(`${r.length} sample files imported: bank statement, ledger, invoices, vendor bills, documents and customer & vendor list. You can now run reconciliation.`, "good");
     await refreshWs(); await progress(); }
   catch (e) { msg("up-msg", e.message, "err"); }
@@ -548,6 +548,7 @@ function toast(text, kind) {
   const box = $("toasts");
   const t = el("div", { class: "toast " + (kind || ""), role: kind === "err" ? "alert" : "status" }, text);
   box.append(t);
+  while (box.children.length > 3) box.firstElementChild.remove(); // keep the newest three, never cover the page
   setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, kind === "err" ? 7000 : 4000);
 }
 function confirmDialog(title, body, okText, danger) {
@@ -571,7 +572,7 @@ async function withBusy(btn, fn, label) {
 // ---------------- reconcile ----------------
 $("run-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   msg("run-msg", "");
-  try { S.run = await api(W("/reconciliation-runs"), { method: "POST" }); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
+  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
     renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
 }, "Running…");
@@ -588,7 +589,8 @@ function srcBox(id, label) {
     el("div", { class: "muted small" }, `source row ${l.source_row}`));
 }
 function renderWorkflow() {
-  if (!S.run || !S.run.workflow) return put("workflow", el("div", { class: "muted" }, "Run a reconciliation to see each agent step, the TrustOps decision behind it, rows in and out, and timing."));
+  renderPipelines();
+  if (!S.run || !S.run.workflow) return put("workflow", el("div", { class: "muted small" }, "Run a reconciliation to see each agent step, the TrustOps decision behind it, rows in and out, and timing."));
   const w = S.run.workflow;
   put("workflow", el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · policy set ${w[0].policy_version}. Each agent asked TrustOps before it acted; every answer is a signed record in the audit trail.`),
     el("ol", { class: "wf" }, w.map((s, i) => el("li", {},
@@ -600,16 +602,17 @@ function renderWorkflow() {
 }
 function renderRun() {
   renderWorkflow(); renderReadiness();
-  if (!S.run) { put("tiles"); put("matches", el("div", { class: "muted" }, "No run yet.")); return; }
+  if (!S.run) { put("tiles"); put("matches", empty("No run yet", "Matched bank and ledger lines appear here after a run.")); return; }
   const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN").length;
   put("tiles",
     tile("Bank net movement", usd(r.bank_net_cents)), tile("Ledger net movement", usd(r.ledger_net_cents)),
     tile("Variance", usd(r.variance_cents), r.variance_cents ? "amb" : "good"),
     tile("Variance unexplained", usd(r.unexplained_variance_cents), r.unexplained_variance_cents ? "bad" : "good"),
     tile("Matched automatically", r.matches.length, "good"), tile("Exceptions to review", open, open ? "amb" : "good"));
-  put("matches", el("table", {}, el("tr", {}, ["Bank", "Ledger", "Amount", "Rule", "Why"].map((h) => el("th", {}, h))),
+  put("matches", el("table", {}, el("tr", {}, ["Bank", "Ledger", "Amount", "Rule · why"].map((h) => el("th", {}, h))),
     r.matches.map((m) => el("tr", { class: "click", ondblclick: () => openTrace(m.bank_id), onclick: () => put("detail", el("div", { class: "row" }, el("button", { class: "secondary", onclick: () => openTrace(m.bank_id) }, "Trace " + m.bank_id + " end to end →")), el("div", { class: "side" }, srcBox(m.bank_id, "Bank"), srcBox(m.ledger_id, "Ledger")), el("div", { class: "sugg" }, `${m.rule_id}: ${m.why}`)) },
-      el("td", {}, m.bank_id), el("td", {}, m.ledger_id), el("td", { class: "num" }, usd(m.amount_cents)), el("td", {}, m.rule_id), el("td", { class: "small" }, m.why)))));
+      el("td", {}, m.bank_id), el("td", {}, m.ledger_id), el("td", { class: "num" }, usd(m.amount_cents)),
+      el("td", { class: "small" }, el("span", { class: "rule-id" }, m.rule_id), m.why)))));
 }
 const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), sub ? el("div", { class: "s" }, sub) : null);
 
@@ -632,7 +635,8 @@ function govLine(t) {
     el("span", { class: "muted small" }, `· policy set ${t.policy_version}`));
 }
 function renderExceptions() {
-  if (!S.run) return put("exc-list", el("div", { class: "muted" }, "Run a reconciliation first."));
+  if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
+  if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
   const reviewer = S.me.role === "owner_reviewer";
   put("exc-list", S.run.result.exceptions.map((x) => {
     const note = el("textarea", { placeholder: "Review note (recorded with your name)" });
@@ -767,8 +771,9 @@ function renderReadiness() {
 }
 async function renderAgents() {
   renderReadiness();
-  let d; try { d = await api(W("/agents")); } catch (e) { $("ag-live").textContent = "○ offline"; return; }
-  $("ag-live").textContent = "● live · updated " + new Date().toLocaleTimeString();
+  const d = await loadAgents();
+  if (!d) { $("ag-live").textContent = "○ offline"; $("ag-live").classList.remove("live"); return; }
+  $("ag-live").textContent = "● live · updated " + new Date().toLocaleTimeString(); $("ag-live").classList.add("live");
   $("ag-runid").textContent = d.run_id || "none"; $("ag-trace").textContent = d.trace_id || "–";
   put("ag-grid", d.agents.map((a) => {
     const s = a.last_run_step;
@@ -776,27 +781,139 @@ async function renderAgents() {
       el("div", { class: "head" }, el("div", {}, el("div", { class: "code" }, `${a.code} · ${a.actor_id}`), el("div", { class: "card-title" }, a.name)),
         el("span", { class: "badge " + a.status }, a.status === "WORKING" ? el("span", { class: "pulse" }) : null, AG_STATUS[a.status] || a.status)),
       el("div", { class: "muted small" }, a.does),
-      el("div", { class: "sugg" }, a.status_note),
       el("div", { class: "counts" }, ["ALLOW", "ESCALATE", "DENY"].map((k) => el("span", { class: "badge " + (a.counts[k] ? k : "") }, `${k} ${a.counts[k]}`)),
         el("span", { class: "small muted" }, ` ${a.actions} request${a.actions === 1 ? "" : "s"} to TrustOps`)),
-      a.last ? el("div", { class: "small" }, el("b", {}, "Last: "), `${a.last.action} · ${a.last.decision} · ${a.last.policy_id || ""} · ${ago(a.last.seconds_ago)}`) : null,
-      s ? el("div", { class: "small gap" }, el("b", {}, `In run ${d.run_id}: `), `${s.title}. ${s.summary || ""}`,
-        el("div", { class: "muted small" }, `${s.rows_in} rows in → ${s.rows_out} out · ${s.duration_ms} ms · ${s.status} · step ${s.step_id}`)) : null,
-      el("div", { class: "tools" }, "Allowed tools: " + a.tools.join(", ") + " · model: " + a.model));
+      el("div", { class: "small" }, a.last ? [el("b", {}, "Last: "), `${a.last.action} · ${a.last.decision} · ${a.last.policy_id || ""} · ${ago(a.last.seconds_ago)}`] : el("span", { class: "muted" }, a.status_note)),
+      el("details", {}, el("summary", {}, "Details: run step, allowed tools"),
+        el("div", { class: "sugg" }, a.status_note),
+        s ? el("div", {}, el("b", {}, `In run ${d.run_id}: `), `${s.title}. ${s.summary || ""}`,
+          el("div", { class: "muted small" }, `${s.rows_in} rows in → ${s.rows_out} out · ${s.duration_ms} ms · ${s.status} · step ${s.step_id}`)) : null,
+        el("div", { class: "tools gap" }, "Allowed tools: " + a.tools.join(", ") + " · model: " + a.model)));
   }));
   put("ag-feed", d.feed.length ? el("div", { class: "tablewrap" }, el("table", {},
     el("tr", {}, ["#", "Time (UTC)", "Agent", "Action", "TrustOps decision", "Policy", "Run", "On behalf of"].map((h) => el("th", {}, h))),
-    d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + e.actor_id),
+    d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small mono" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + e.actor_id),
       el("td", {}, e.action), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, e.decision)),
       el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
-    : el("div", { class: "muted" }, "No agent activity yet. Import files or press “Run reconciliation now”."));
+    : empty("No agent activity yet", "Import files or press “Run reconciliation now”."));
 }
 $("ag-run").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   msg("ag-msg", "");
-  try { S.run = await api(W("/reconciliation-runs"), { method: "POST" }); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
+  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
     renderRun(); renderExceptions(); renderResults(); renderAgents(); }
   catch (e) { msg("ag-msg", e.message, "err"); }
 }, "Running…");
+
+// ---------------- agent pipeline ----------------
+// Drawn only from GET /agents and the run's own `workflow` steps. Nothing here is invented:
+// "working" means a request is really in flight, or a recorded step is being replayed in order;
+// every number shown (rows, decision, policy, ms) is copied from the server's response.
+const PIPE_IDS = ["ov-agents", "ag-pipeline", "rc-pipeline"];
+const STEP_MS = 420;
+const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+S.agents = null; S.anim = null;
+async function loadAgents() {
+  if (!S.ws) return null;
+  try { S.agents = await api(W("/agents")); } catch (_) { return null; }
+  renderPipelines(); return S.agents;
+}
+const escCount = (s) => (s && s.escalations ? Object.values(s.escalations).reduce((x, y) => x + y, 0) : 0);
+function outcome(s) {
+  if (s.status === "BLOCKED" || String(s.decision).startsWith("DENY")) return "blocked";
+  return escCount(s) || String(s.decision).startsWith("ESCALATE") ? "escalated" : "done";
+}
+const STATE_LABEL = { idle: "Not used yet", queued: "Queued", working: "Working…", done: "Done", escalated: "Escalated",
+  blocked: "Blocked by TrustOps", stopped: "Not run · stopped" };
+function nodeFor(a, i) {
+  const an = S.anim, forced = an && an.states[a.code];
+  let state, step = null;
+  if (forced) { state = forced; step = an.shown[a.code] || null; }
+  else if (a.status === "BLOCKED") state = "blocked";
+  else if (a.last_run_step) { step = a.last_run_step; state = outcome(step); }
+  else state = a.status === "NOT_USED_YET" ? "idle" : "done";
+  const live = !forced && a.status === "WORKING";
+  let label = STATE_LABEL[state];
+  if (state === "escalated" && escCount(step)) label = `${escCount(step)} sent to a person`;
+  if (live) label += " · just now";
+  const dec = (d) => String(d).split(":")[0];
+  let data;
+  if (state === "working") data = [el("div", {}, an.titles[a.code] || an.note || "")];
+  else if (state === "queued") data = [el("div", {}, "Waiting for the previous step")];
+  else if (state === "stopped") data = [el("div", {}, "The workflow stopped at the blocked step")];
+  else if (state === "blocked" && a.status === "BLOCKED" && a.last && !forced) data = [el("div", {}, el("b", {}, a.last.action)),
+    el("div", {}, el("span", { class: "badge DENY" }, "DENY"), " ", a.last.policy_id || ""), el("div", {}, ago(a.last.seconds_ago))];
+  else if (step) data = [el("div", {}, el("b", {}, `${step.rows_in} → ${step.rows_out}`), " rows"),
+    el("div", {}, el("span", { class: "badge " + dec(step.decision) }, dec(step.decision)), " ", step.policy_id || ""),
+    el("div", {}, `${step.duration_ms} ms`)];
+  else if (a.last) data = [el("div", {}, el("b", {}, a.last.action)),
+    el("div", {}, el("span", { class: "badge " + dec(a.last.decision) }, dec(a.last.decision)), " ", a.last.policy_id || ""), el("div", {}, ago(a.last.seconds_ago))];
+  else data = [el("div", {}, "No requests yet")];
+  const ico = { done: "✓", escalated: "!", blocked: "✕", stopped: "–" }[state] || String(i + 1);
+  return { live, el: el("li", { class: `pnode s-${state}`, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
+    el("div", { class: "ptop" }, el("span", { class: "pico" }, el("span", {}, ico)), el("div", { class: "pcode" }, a.code)),
+    el("div", { class: "pname" }, a.name),
+    el("div", { class: "pstate" }, live || state === "working" ? el("span", { class: "pulse" }) : null, label),
+    el("div", { class: "pdata" }, data)) };
+}
+function renderPipelines() {
+  const d = S.agents, an = S.anim;
+  const skeleton = () => el("div", {}, el("span", { class: "skel", style: "width:60%" }), el("span", { class: "skel", style: "width:90%" }), el("span", { class: "skel", style: "width:40%" }));
+  let active = 0, total = d ? d.agents.length : 6, track = null;
+  if (d) {
+    const nodes = d.agents.map(nodeFor);
+    active = an ? Object.values(an.states).filter((s) => s === "working").length : nodes.filter((n) => n.live).length;
+    track = el("ol", { class: "pipe-track", "aria-live": "polite" }, nodes.map((n) => n.el));
+  }
+  let foot;
+  if (an && an.mode === "running") foot = "Run in progress on the server…";
+  else if (an && an.mode === "replay") foot = `Replaying ${an.run} step by step from its signed record. Rows, decisions and times are the real values.`;
+  else if (an && an.mode === "upload") foot = `${an.note}. Each agent asks TrustOps before it acts.`;
+  else if (d && d.run_id) foot = `Last run ${d.run_id} · trace ${d.trace_id}. Every step was checked by TrustOps and signed into the audit trail.`;
+  else foot = "No run yet. Upload a bank statement and a ledger, then run reconciliation.";
+  for (const id of PIPE_IDS) { const n = $(id); if (n) put(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, foot)); }
+  document.querySelectorAll('[data-pipe="count"]').forEach((c) => {
+    c.classList.toggle("on", active > 0 || !!(an && an.mode === "running"));
+    c.replaceChildren(el("i"), an && an.mode === "running" ? "Run in progress" : `${active} of ${total} agents active`);
+  });
+  document.querySelectorAll(".pipe").forEach((p) => p.classList.toggle("running", !!(an && an.mode === "running")));
+}
+// Show agents as busy while a real request is in flight; afterwards the server's own record takes over.
+async function agentsBusy(states, note, promise) {
+  if (S.anim) return promise;
+  S.anim = { mode: "upload", states, shown: {}, titles: {}, note }; renderPipelines();
+  try { return await promise; } finally { S.anim = null; loadAgents(); }
+}
+// A run is one synchronous request. While it is in flight every agent is queued; when the result arrives its
+// recorded workflow is replayed in order. A BLOCKED/DENY step stops the pipeline exactly as the server did.
+async function animateRun(promise) {
+  if (!S.agents) await loadAgents();
+  const codes = S.agents ? S.agents.agents.map((a) => a.code) : [];
+  S.anim = { mode: "running", states: Object.fromEntries(codes.map((c) => [c, "queued"])), shown: {}, titles: {} }; renderPipelines();
+  let run;
+  try { run = await promise; } catch (e) { S.anim = null; loadAgents(); throw e; }
+  replay(run);
+  return run;
+}
+async function replay(run) {
+  const an = S.anim; if (!an) return;
+  an.mode = "replay"; an.run = run.id;
+  const wf = run.workflow || [];
+  const fast = reducedMotion();
+  let stopped = false;
+  for (const s of wf) {
+    if (stopped) { an.states[s.agent] = "stopped"; continue; }
+    an.states[s.agent] = "working"; an.titles[s.agent] = s.title; renderPipelines();
+    if (!fast) await sleep(STEP_MS);
+    an.states[s.agent] = outcome(s); an.shown[s.agent] = s; renderPipelines();
+    if (an.states[s.agent] === "blocked") stopped = true;
+  }
+  for (const c of Object.keys(an.states)) if (an.states[c] === "queued") an.states[c] = stopped ? "stopped" : "idle";
+  renderPipelines();
+  if (!fast) await sleep(900);
+  if (S.anim === an) { S.anim = null; await loadAgents(); }
+}
+function empty(title, text) { return el("div", { class: "empty" }, el("b", {}, title), text ? el("span", {}, text) : null); }
 
 // ---------------- reports (finance + governance, same run id) ----------------
 const FMT_LABEL = { pdf: "PDF", xlsx: "Excel", csv: "CSV", json: "JSON" };
