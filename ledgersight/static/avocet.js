@@ -1,6 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-const S = { ws: null, run: null, me: null, wsList: [], clicks: 0, upload: null };
+const S = { ws: null, run: null, me: null, wsList: [], clicks: 0, upload: null, asks: [] };
 
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -21,13 +21,18 @@ async function api(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "x-ledgersight": "1" }, credentials: "same-origin" };
   if (opts.json !== undefined) { o.headers["content-type"] = "application/json"; o.body = JSON.stringify(opts.json); }
   if (opts.form) o.body = opts.form;
-  const r = await fetch(path, o);
+  let r;
+  try { r = await fetch(path, o); }
+  catch (_) {
+    if (!S.offlineShown) { S.offlineShown = true; toast("Can't reach the LedgerSight server. Check that it is running, then try again.", "err"); setTimeout(() => { S.offlineShown = false; }, 8000); }
+    const err = new Error("server unreachable"); err.status = 0; throw err;
+  }
   let body = null;
   try { body = await r.json(); } catch (_) {}
   if (r.status === 401 && path !== "/v1/login") { showLogin(); }
   if (!r.ok) {
     const d = body && body.detail;
-    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${d.reason_code}` : `HTTP ${r.status}`;
+    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${d.reason_code}${d.policy_id ? " · " + d.policy_id : ""}` : `HTTP ${r.status}`;
     const err = new Error(text); err.status = r.status; err.body = body; throw err;
   }
   if (o.method === "POST" && S.ws && path.startsWith("/v1/workspaces")) setTimeout(progress, 0);
@@ -37,10 +42,18 @@ const W = (p = "") => `/v1/workspaces/${S.ws}${p}`;
 
 // ---------------- auth ----------------
 function showLogin() { $("app").classList.add("hidden"); $("login").classList.remove("hidden"); }
-fetch("/v1/auth-config").then((r) => r.json()).then((c) => {
+const authConfig = fetch("/v1/auth-config").then((r) => r.json()).then((c) => {
   S.mfa = !!c.mfa; $("lg-code-row").classList.toggle("hidden", !S.mfa);
   $("lg-hint").textContent = S.mfa ? "Invitation-only. Password plus authenticator code." : "Invitation-only access.";
+  S.noLogin = c.login_required === false; S.demoPeople = c.demo_people || [];
+  S.samples = !!c.samples_enabled;
+  $("sample-box").classList.toggle("hidden", !S.samples);
+  if (c.version) $("app-version").textContent = `LedgerSight ${c.version}`;
 }).catch(() => {});
+$("act-as").onchange = async (e) => {
+  await api("/v1/demo/act-as", { method: "POST", json: { as: e.target.value } });
+  await boot();
+};
 $("lg-btn").onclick = async () => {
   msg("lg-msg", "Signing in…");
   try {
@@ -53,85 +66,123 @@ $("lg-btn").onclick = async () => {
 $("logout").onclick = async () => { await api("/v1/logout", { method: "POST" }); location.reload(); };
 
 async function boot() {
+  await authConfig;
   try { S.me = await api("/v1/me"); } catch (_) { showLogin(); return; }
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
-  const role = { owner_reviewer: "owner / reviewer", preparer: "preparer", support: "support" }[S.me.role] || S.me.role;
+  $("logout").classList.toggle("hidden", !!S.noLogin);
+  $("me-name").parentElement.classList.toggle("hidden", !!S.noLogin);
+  $("act-as-wrap").classList.toggle("hidden", !S.noLogin);
+  if (S.noLogin) {
+    const key = (S.demoPeople.find((p) => p.role === S.me.role) || {}).key;
+    put("act-as", S.demoPeople.map((p) => el("option", { value: p.key, selected: p.key === key }, p.name)));
+  }
+  const role = ROLE_NAME[S.me.role] || S.me.role;
   $("me-name").textContent = S.me.display_name; $("me-name").parentElement.title = `${S.me.user_id} · ${role}`;
-  $("avatar").title = role;
+  $("avatar").title = `${S.me.display_name} · ${role}`;
   $("avatar").textContent = S.me.display_name.split(/[\s@.()]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("");
-  $("me-exp").textContent = `Access until ${new Date(S.me.expires_at).toLocaleDateString()} · Support: ${S.me.support_contact}`;
-  const h = new Date().getHours();
-  $("greet").textContent = `WELCOME BACK, ${S.me.display_name.split(/[\s(]/)[0].toUpperCase()}`;
   S.wsList = await api("/v1/workspaces");
   put("ws-select", S.wsList.map((w) => el("option", { value: w.id }, w.name)));
   S.ws = S.wsList[0] && S.wsList[0].id;
-  if (S.wsList[0]) $("home-h").textContent = `${S.wsList[0].period.split(" ")[0]} close at a glance`;
-  document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer");
+  document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer" || !!S.noLogin);
   await switchWs();
+  const fromHash = location.hash.slice(1);
+  if (fromHash && document.getElementById("p-" + fromHash)) go(fromHash);
 }
+const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", support: "Support" };
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
   S.run = null; S.upload = null;
   const w = await api(W());
-  $("ws-period").textContent = w.period;
-  put("sample-links", ["bank", "ledger", "ar", "documents", "parties"].map((k) => el("a", { href: W(`/samples/${S.ws}_${k}.csv`) }, k)),
-    S.ws === "harborline" ? [el("a", { href: W(`/samples/harborline_bank_alt_headers.csv`) }, "bank (other headers)"),
-      el("a", { href: W(`/samples/harborline_bank.qbo`) }, "bank.qbo (QuickBooks / bank download)"), el("a", { href: W(`/samples/harborline_ledger.tsv`) }, "ledger.tsv"), el("a", { href: W(`/samples/harborline_email_from_client.eml`) }, "email_from_client.eml"),
-      ...["receipt_OD-7741", "invoice_GP-5531", "invoice_suspicious", "scanned_receipt"].map((n) => el("a", { href: W(`/samples/harborline_${n}.pdf`) }, n + ".pdf"))] : null);
-  renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHome(w);
+  S.wsMeta = w;
+  const samples = await api(W("/samples")).catch(() => []);
+  put("sample-links", samples.map((n) => el("a", { href: W(`/samples/${encodeURIComponent(n)}`) }, n.slice(S.ws.length + 1))));
+  renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents);
   $("mapping").classList.add("hidden");
   if (w.runs.length) S.run = await api(W(`/runs/${w.runs[w.runs.length - 1].id}`));
-  renderRun(); renderExceptions(); renderControls(); await renderEvidence(); renderResults(); await renderTrust();
-  if (S.me.role === "owner_reviewer") renderTeam();
+  renderRun(); renderExceptions(); renderControls(); await renderEvidence(); await renderTrust();
+  S.asks = S.asks.filter((x) => x.ws === S.ws); put("ask-out"); if (isActive("ask")) renderAsk(); if (isActive("reports")) renderReports();
+  if (S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
+  fillProfile(w);
   await progress();
 }
 
-// ---------------- progress: stepper + sidebar status ----------------
+// ---------------- progress: stepper + overview ----------------
 S.exported = {};
-const STEPS = [["Import", "import"], ["Confirm", "import"], ["Reconcile", "recon"], ["Decide", "exceptions"], ["Sign off", "evidence"]];
+const STEPS = [["Import", "import"], ["Confirm columns", "import"], ["Reconcile", "recon"], ["Review", "exceptions"], ["Report", "reports"]];
 async function progress() {
   S.wsList = await api("/v1/workspaces");
   const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
   const st = w.status;
   const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0, !!S.exported[S.ws + st.last_run]];
   const cur = done.indexOf(false);
-  $("ws-run").textContent = st.last_run || "none";
   const kids = [];
   STEPS.forEach(([name, tab], i) => {
     if (i) kids.push(el("span", { class: "bar" + (done[i - 1] ? " done" : "") }));
     kids.push(el("button", { class: "step" + (done[i] ? " done" : i === cur ? " cur" : ""), onclick: () => go(tab) },
       el("span", { class: "dot" }, done[i] ? "✓" : String(i + 1)), name));
   });
+  kids.push(el("span", { class: "pill runtag" }, "Last run ", el("b", {}, st.last_run || "none")));
   put("stepper", kids);
-  const navDone = { home: true, import: done[1], recon: done[2], exceptions: done[3], evidence: done[4], results: done[4] };
-  document.querySelectorAll(".tab[data-step]").forEach((t) => {
-    const d = t.querySelector(".dot"), ok = navDone[t.dataset.tab];
-    d.classList.toggle("done", !!ok); d.textContent = ok ? "✓" : String(+t.dataset.step + 1);
-  });
-  renderClients();
-  renderHome(w);
+  $("page-sub").textContent = [w.period, w.industry].filter(Boolean).join(" · ");
+  const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = w.name;
+  S.status = st;
+  renderReadiness();
+  renderOverview();
 }
 ["exp-csv", "exp-pack", "exp-print"].forEach((id) => $(id).addEventListener("click", () => { if (S.run) { S.exported[S.ws + S.run.id] = true; setTimeout(progress, 300); } }));
 
-function renderClients() {
-  put("clients", S.wsList.map((w) => {
-    const st = w.status;
-    const state = !st.uploads ? ["Awaiting files", ""] : !st.runs ? ["Importing", "OPEN"] : st.open_exceptions ? ["Items to clear", "OPEN"] : ["Ready to sign off", "ACCEPTED"];
-    const next = !st.uploads ? ["Bring in this month's files", "import"] : !(st.bank && st.ledger) ? ["Add the missing bank or ledger file", "import"]
-      : !st.runs ? ["Match bank to ledger", "recon"] : st.open_exceptions ? [`Clear ${st.open_exceptions} item${st.open_exceptions > 1 ? "s" : ""}`, "exceptions"] : ["Download the sign-off pack", "evidence"];
-    const open = async () => { if (S.ws !== w.id) { S.ws = w.id; $("ws-select").value = w.id; await switchWs(); } go(next[1]); };
-    return el("div", { class: "card" + (w.id === S.ws ? " sel" : "") },
-      el("div", { class: "client-head" }, el("div", {}, el("div", { class: "client-name" }, w.name),
-        el("div", { class: "client-meta" }, `${w.industry} · ${w.period} · updated ${new Date(st.last_activity).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)),
-        el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "kpis" },
-        [["Files in", `${["bank", "ledger", "ar", "documents", "parties"].filter((k) => st[k]).length} of 5`], ["Auto-matched", st.matched ?? "–"],
-         ["To clear", st.runs ? st.open_exceptions : "–"], ["Unreconciled", st.unexplained_cents == null ? "–" : usd(st.unexplained_cents)]]
-          .map(([k, v]) => el("div", { class: "kpi" }, el("div", { class: "k" }, k), el("div", { class: "v" }, v)))),
-      el("div", { class: "row" }, el("span", { class: "muted small" }, "Up next"), el("button", { class: "primary", onclick: open }, next[0])));
-  }));
+// ---------------- overview dashboard ----------------
+function greeting() { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; }
+async function renderOverview() {
+  const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
+  const st = w.status;
+  const state = !st.uploads ? ["Awaiting files", ""] : !st.runs ? ["Files imported", "SIMULATED"] : st.open_exceptions ? [`${st.open_exceptions} to review`, "OPEN"] : ["Ready to report", "ACCEPTED"];
+  const next = !st.uploads ? ["Upload this period's files", "import"] : !(st.bank && st.ledger) ? ["Add the bank statement and ledger", "import"]
+    : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? [`Review ${st.open_exceptions} item${st.open_exceptions > 1 ? "s" : ""}`, "exceptions"] : ["Download the reports", "reports"];
+  put("ov-hero", el("div", {}, el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`), el("h2", {}, w.name),
+      el("div", { class: "muted" }, [w.industry, w.period].filter(Boolean).join(" · "), " ", el("span", { class: "badge " + state[1] }, state[0]))),
+    el("div", { class: "next" }, el("span", { class: "muted small" }, "Next step"), el("button", { class: "primary", onclick: () => go(next[1]) }, next[0] + " →")));
+  const r = S.run && S.run.result;
+  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
+  const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
+  put("ov-kpis",
+    tile("Sources imported", `${SOURCE_KINDS.filter((k) => st[k]).length} / ${SOURCE_KINDS.length}`, "", st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed"),
+    tile("Matched automatically", r ? `${r.matches.length}` : "–", r ? "good" : "", r ? `${pct}% of ${bankLines} bank lines` : "no run yet"),
+    tile("Awaiting review", r ? st.open_exceptions : "–", r && st.open_exceptions ? "amb" : r ? "good" : "", r ? `${r.exceptions.length} raised in total` : ""),
+    tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
+    tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
+  const ev = S.events || [];
+  const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
+  put("ov-gov", el("div", { class: "kpis" }, [["ALLOW", cnt("ALLOW")], ["ESCALATE", cnt("ESCALATE")], ["DENY", cnt("DENY")], ["Evidence", S.verify || "–"]]
+      .map(([k, v]) => el("div", { class: "kpi" }, el("div", { class: "k" }, k), el("div", { class: "v" }, el("span", { class: "badge " + (k === "Evidence" ? v : k) }, String(v)))))),
+    el("div", { class: "muted small" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
+  const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
+  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => el("li", {}, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)),
+    el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : e.actor_id)), ` ${e.action} `,
+      el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0]),
+      e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
+  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet."));
+  try {
+    const a = await api(W("/agents"));
+    put("ov-agents", a.agents.map((x) => el("div", { class: "a" }, el("b", {}, el("span", { class: "dotx " + x.status }), `${x.code} ${x.name}`),
+      el("span", {}, (AG_STATUS[x.status] || x.status) + (x.last ? ` · ${ago(x.last.seconds_ago)}` : "")))));
+  } catch (_) { /* agent view optional */ }
 }
+let SOURCE_KINDS = ["bank", "ledger", "ar", "ap", "documents", "parties"];
+function fillProfile(w) {
+  const reviewer = S.me.role === "owner_reviewer";
+  [["pf-name", w.name], ["pf-period", w.period], ["pf-industry", w.industry || ""]].forEach(([id, v]) => { $(id).value = v; $(id).disabled = !reviewer; });
+  $("pf-save").disabled = !reviewer; $("reset-btn").disabled = !reviewer;
+  msg("pf-msg", reviewer ? "" : "Only a CPA reviewer can rename the client or clear its data.");
+}
+$("pf-save").onclick = (ev) => withBusy(ev.currentTarget, async () => {
+  try {
+    const r = await api(W("/profile"), { method: "POST", json: { name: $("pf-name").value, period: $("pf-period").value, industry: $("pf-industry").value } });
+    msg("pf-msg", ""); toast("Client profile saved. The change is recorded in the audit trail.", "good"); S.wsMeta = r; await renderEvidence(); await progress();
+  } catch (e) { msg("pf-msg", e.message, "err"); }
+}, "Saving…");
+document.addEventListener("click", (e) => { const a = e.target.closest("[data-go]"); if (a) { e.preventDefault(); go(a.dataset.go); } });
 
 // ---------------- counterparties ----------------
 const LINK_BADGE = { CONFIRMED: ["Confirmed", "ACCEPTED"], LINKED: ["Linked", "PASS"], SUGGESTED: ["Check this", "OPEN"],
@@ -224,7 +275,7 @@ async function openTrace(id) {
         Object.keys(s.detail || {}).length ? el("table", { class: "kv" }, Object.entries(s.detail).filter(([, v]) => v != null && v !== "")
           .map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, k.replace(/_/g, " ")), el("td", { class: "small" }, (k.endsWith("cents") || k === "still_owed" || k === "amount") && v !== "" && !isNaN(+v) ? usd(+v) : fmt(v))))) : null,
         s.proof ? el("div", { class: "proof" }, "Proof: " + s.proof) : null)))),
-    t.related.length ? el("div", {}, el("div", { class: "card-title gap" }, "Linked records"), el("div", { class: "side" }, t.related.map((r) => srcBox(r.id, r.id.startsWith("GL") ? "Ledger" : r.id.includes("INV") ? "Invoice" : "Bank")))) : null,
+    t.related.length ? el("div", {}, el("div", { class: "card-title gap" }, "Linked records"), el("div", { class: "side" }, t.related.map((r) => srcBox(r.id, KIND_SHORT[r.kind] || labelFor(r.id))))) : null,
     el("div", { class: "card-title gap" }, `Signed evidence for this transaction (${t.events.length} records)`),
     el("div", { class: "muted small" }, `Each record is chained to the one before and signed. Whole chain: ${t.chain.reason}.`),
     el("table", {}, el("tr", {}, ["#", "Time (UTC)", "Who", "Action", "Decision", "Record hash"].map((h) => el("th", {}, h))),
@@ -234,31 +285,53 @@ async function openTrace(id) {
 
 // ---------------- theme ----------------
 (function theme() {
-  let t = null; try { t = localStorage.getItem("ls-theme"); } catch (_) {}
+  let t = null; try { t = localStorage.getItem("ls-theme-v2"); } catch (_) {}
   if (t) document.documentElement.dataset.theme = t;
   $("theme").onclick = () => {
-    const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+    const dark = document.documentElement.dataset.theme === "dark";
     document.documentElement.dataset.theme = dark ? "light" : "dark";
-    try { localStorage.setItem("ls-theme", document.documentElement.dataset.theme); } catch (_) {}
+    try { localStorage.setItem("ls-theme-v2", document.documentElement.dataset.theme); } catch (_) {}
   };
 })();
 
-// ---------------- tabs + click counter ----------------
+// ---------------- tabs (each page has its own address, e.g. #reports) ----------------
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "p-" + t.dataset.tab));
+  if (location.hash.slice(1) !== t.dataset.tab) history.replaceState(null, "", "#" + t.dataset.tab);
+  document.title = `${t.textContent.replace("LIVE", "").trim()} · LedgerSight`;
+  window.scrollTo(0, 0);
+  if (t.dataset.tab === "home") renderOverview();
   if (t.dataset.tab === "evidence") renderEvidence();
   if (t.dataset.tab === "trace") renderTraceList();
   if (t.dataset.tab === "parties") renderParties();
+  if (t.dataset.tab === "ask") renderAsk();
+  if (t.dataset.tab === "reports") renderReports();
+  if (t.dataset.tab === "rules") renderRules();
+  if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
 });
-document.addEventListener("click", (e) => { if (e.target.closest("button,a,tr.click")) { S.clicks++; $("clicks").textContent = S.clicks; } });
+function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
 
 // ---------------- import ----------------
-const KIND = { bank: "Bank statement", ledger: "General ledger", ar: "Open invoices", documents: "Supporting docs", parties: "Customer & vendor list" };
-function renderStatus(w) {
-  put("src-status", Object.keys(KIND).map((k) => el("div", {}, el("span", {}, KIND[k]),
-    el("span", { class: "src-right" }, el("span", { class: "badge " + (w.status[k] ? "ACCEPTED" : "OPEN") }, w.status[k] ? "Imported" : "Not yet"),
-      w.status[k] ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k) }, "Clear") : null))));
+const KIND = { bank: "Bank statement", ledger: "General ledger", ar: "Open invoices", ap: "Vendor bills", documents: "Supporting docs", parties: "Customer & vendor list" };
+function renderStatus() { renderSources(); }
+async function renderSources() {
+  let s; try { s = await api(W("/sources")); } catch (_) { return; }
+  s.kinds.forEach((k) => { KIND[k.kind] = k.label; });
+  SOURCE_KINDS = s.kinds.map((k) => k.kind);
+  put("src-status", s.kinds.map((k) => el("div", {}, el("span", {}, k.label, k.required ? null : el("span", { class: "muted small" }, " · optional")),
+    el("span", { class: "src-right" }, k.rows ? el("span", { class: "small muted" }, `${k.rows} rows `) : null,
+      el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, k.status === "NOT_CONNECTED" ? "Not yet" : k.status),
+      k.status !== "NOT_CONNECTED" ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null))));
+  put("connectors", el("table", {}, el("tr", {}, ["Connection", "Status", "What the label means"].map((h) => el("th", {}, h))),
+    s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, c.status)),
+      el("td", { class: "small muted" }, s.status_labels[c.status])))),
+    el("div", { class: "small muted gap" }, "Not accepted, by design: " + s.not_accepted.join(" · ")));
+  const sel = $("up-kind"), cur = sel.value;
+  put(sel, el("option", { value: "auto" }, "Detect file type automatically"),
+    s.kinds.map((k) => el("option", { value: k.kind }, `${k.label} · ${k.formats.filter((f) => f !== "PDF (text)").join(", ")}`)),
+    el("option", { value: "pdf" }, "Invoice / receipt · PDF"));
+  sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "auto";
 }
 async function clearSource(k) {
   try { const r = await api(W(`/sources/${k}/clear`), { method: "POST" });
@@ -266,13 +339,18 @@ async function clearSource(k) {
     S.run = null; await refreshWs(); renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("clear-msg", e.message, "err"); }
 }
-let clearArmed = false;
-$("clear-all").onclick = async () => {
-  if (!clearArmed) { clearArmed = true; $("clear-all").textContent = "Click again to clear everything"; msg("clear-msg", "Removes all imported files, match results and decisions for this client. The clear itself is recorded."); return; }
-  clearArmed = false; $("clear-all").textContent = "Clear all imported files";
-  try { await api(W("/reset"), { method: "POST" }); msg("clear-msg", "All files cleared. Start again with a fresh upload.", "good"); $("mapping").classList.add("hidden"); await switchWs(); go("import"); }
-  catch (e) { msg("clear-msg", e.message, "err"); }
-};
+async function clearClient(btn) {
+  const name = (S.wsMeta && S.wsMeta.name) || "this client";
+  if (!(await confirmDialog(`Clear all data for ${name}?`,
+    "This removes the imported files, reconciliation runs and review decisions. The audit trail is archived, not deleted, and the clear itself is recorded.",
+    "Clear data", true))) return;
+  await withBusy(btn, async () => {
+    try { await api(W("/reset"), { method: "POST" }); toast(`${name}: data cleared. Upload new files to start again.`, "good");
+      $("mapping").classList.add("hidden"); await switchWs(); }
+    catch (e) { toast(e.message, "err"); }
+  }, "Clearing…");
+}
+$("clear-all").onclick = (e) => clearClient(e.currentTarget);
 function renderHealth(uploads) {
   const done = uploads.filter((u) => u.health);
   if (!done.length) return put("health", el("div", { class: "muted" }, "Nothing imported yet."));
@@ -377,10 +455,11 @@ function nextInQueue() {
 }
 function guessKind(name) {
   const n = name.toLowerCase();
-  if (n.endsWith(".pdf")) return "pdf";
+  if (n.endsWith(".pdf")) return /bank|statement/.test(n) ? "bank" : /ledger|journal/.test(n) ? "ledger" : "pdf";
   if (/\.(ofx|qfx|qbo)$/.test(n) || /bank|statement/.test(n)) return "bank";
   if (/receipt|invoice_|bill/.test(n) && n.endsWith(".pdf")) return "pdf";
   if (/ledger|journal|\bgl\b/.test(n)) return "ledger";
+  if (/(^|[_\-\s.])(ap|bills?)([_\-\s.]|$)|payable/.test(n)) return "ap";
   if (/\bar\b|_ar\.|invoice|receivable/.test(n)) return "ar";
   if (/vendor|customer|parties|contacts/.test(n)) return "parties";
   if (/document|receipt/.test(n)) return "documents";
@@ -415,24 +494,29 @@ function renderMapping() {
         return el("tr", {}, el("td", {}, f), el("td", {}, s)); })),
     el("div", { class: "card-title gap" }, "Preview"),
     el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))),
-    el("div", { class: "row gap" }, el("button", { class: "primary", onclick: async () => {
+    el("div", { class: "row gap" }, el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
       const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
-      try { await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", `${u.filename} imported.`, "good"); await refreshWs(); nextInQueue(); }
+      try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
+        toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
+        await refreshWs(); nextInQueue(); }
       catch (e) { msg("up-msg", e.message, "err"); }
-    } }, "Confirm mapping & import")));
+    }, "Importing…") }, "Confirm mapping & import")));
 }
-$("sample-btn").onclick = async () => {
-  msg("up-msg", "Loading files…");
-  try { await api(W("/samples/load"), { method: "POST" }); msg("up-msg", "Bank, ledger, invoices, documents and customer & vendor list imported.", "good"); await refreshWs(); }
+$("sample-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
+  msg("up-msg", "");
+  try { const r = await api(W("/samples/load"), { method: "POST" });
+    toast(`${r.length} sample files imported: bank statement, ledger, invoices, vendor bills, documents and customer & vendor list. You can now run reconciliation.`, "good");
+    await refreshWs(); await progress(); }
   catch (e) { msg("up-msg", e.message, "err"); }
-};
-async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHome(w); }
+}, "Loading…");
+async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); }
 
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};
   box.classList.remove("hidden");
   const type = el("select", {}, ["receipt", "vendor_invoice", "other"].map((t) => el("option", { value: t }, t)));
   put(box, el("div", { class: "card-title" }, `Confirm document fields · ${u.filename} (${u.pages} page${u.pages > 1 ? "s" : ""})`),
+    u.duplicate_of ? el("div", { class: "msg err" }, `This exact PDF was already uploaded (${u.duplicate_of}). Confirming again replaces the same document; nothing is counted twice.`) : null,
     u.unsafe_content.length ? el("div", { class: "exc REJECTED" }, el("div", { class: "type" }, "⚠ Instruction-like text found in this document"),
       el("div", { class: "small" }, "Treated as data only. No action was taken and none can be triggered from document text. Flagged in the evidence log:"),
       u.unsafe_content.map((f) => el("div", { class: "mono" }, `p${f.page}: “${f.source_text}”`))) : null,
@@ -456,32 +540,44 @@ function renderDocs(docs) {
 }
 
 // ---------------- start here / trial home ----------------
-const TASKS = [
-  { k: "A", t: "Reconcile a month of bank activity", steps: ["Import files: press “Load this client's files”, or download a bank file and upload it", "Confirm the suggested columns and check the row counts", "Match: run it and open any paired row"], tab: "import" },
-  { k: "B", t: "Resolve a tricky transaction", steps: ["Review queue: open HB005, a $900 payment on a $1,200 invoice", "Compare the source rows and read the suggestion", "Accept or reject with a note; your name is stamped on it", "Import the OD-7741 receipt PDF, match again, and HB009 drops off"], tab: "exceptions" },
-  { k: "C", t: "Verify what the AI was allowed to do", steps: ["Guardrails: ask it to post to the books, pay a vendor or email the client", "Audit trail: each refusal is a signed entry; try the tamper test", "Data & security: see the allowed models, region and actions"], tab: "controls" },
-];
 function go(tab) { document.querySelector(`[data-tab="${tab}"]`).click(); }
-function renderHome(w) {
-  put("tasks", TASKS.map((x) => el("div", { class: "card" }, el("div", { class: "eyebrow" }, "TASK " + x.k), el("div", { class: "card-title" }, x.t),
-    el("ol", { class: "plain small" }, x.steps.map((s) => el("li", {}, s))), el("button", { class: "primary", onclick: () => go(x.tab) }, "Start task " + x.k))));
-  put("home-status", `${w.name} · ${w.period} · ${["bank", "ledger", "ar", "documents"].filter((k) => w.status[k]).length}/4 sources imported · ${w.status.runs} run(s). Tax returns, SSNs and bank logins are never accepted.`);
+$("reset-btn").onclick = (e) => clearClient(e.currentTarget);
+
+// ---------------- toasts, confirm dialog, busy buttons ----------------
+function toast(text, kind) {
+  const box = $("toasts");
+  const t = el("div", { class: "toast " + (kind || ""), role: kind === "err" ? "alert" : "status" }, text);
+  box.append(t);
+  setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, kind === "err" ? 7000 : 4000);
 }
-let resetArmed = false;
-$("reset-btn").onclick = async () => {
-  if (!resetArmed) { resetArmed = true; $("reset-btn").textContent = "Click again to confirm reset"; msg("reset-msg", "This deletes this client's uploads, runs and decisions. The reset itself is recorded."); return; }
-  resetArmed = false; $("reset-btn").textContent = "Reset this client's workspace";
-  try { await api(W("/reset"), { method: "POST" }); msg("reset-msg", "Workspace reset. Start again from task A.", "good"); await switchWs(); }
-  catch (e) { msg("reset-msg", e.message, "err"); }
-};
+function confirmDialog(title, body, okText, danger) {
+  return new Promise((resolve) => {
+    const close = (v) => { overlay.remove(); document.removeEventListener("keydown", onKey); resolve(v); };
+    const onKey = (e) => { if (e.key === "Escape") close(false); };
+    const ok = el("button", { class: danger ? "danger solid" : "primary", onclick: () => close(true) }, okText || "Confirm");
+    const overlay = el("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) close(false); } },
+      el("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": title },
+        el("div", { class: "dialog-title" }, title), el("div", { class: "dialog-body" }, body),
+        el("div", { class: "dialog-actions" }, el("button", { class: "secondary", onclick: () => close(false) }, "Cancel"), ok)));
+    document.body.append(overlay); document.addEventListener("keydown", onKey); ok.focus();
+  });
+}
+async function withBusy(btn, fn, label) {
+  if (!btn || btn.disabled) return fn();
+  const text = btn.textContent; btn.disabled = true; btn.classList.add("busy"); btn.textContent = label || "Working…";
+  try { return await fn(); } finally { btn.disabled = false; btn.classList.remove("busy"); btn.textContent = text; }
+}
 
 // ---------------- reconcile ----------------
-$("run-btn").onclick = async () => {
-  msg("run-msg", "Running…");
-  try { S.run = await api(W("/reconciliation-runs"), { method: "POST" }); msg("run-msg", `Run ${S.run.id} complete.`, "good"); renderRun(); renderExceptions(); renderResults(); }
+$("run-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
+  msg("run-msg", "");
+  try { S.run = await api(W("/reconciliation-runs"), { method: "POST" }); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
+    renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
-};
+}, "Running…");
 function line(id) { return S.run && S.run.lines[id]; }
+const KIND_SHORT = { bank: "Bank", ledger: "Ledger", ar: "Invoice", ap: "Vendor bill" };
+function labelFor(id) { const l = line(id); return l && KIND_SHORT[l.kind] ? KIND_SHORT[l.kind] : id.startsWith("GL") ? "Ledger" : id.includes("INV") ? "Invoice" : "Bank"; }
 function srcBox(id, label) {
   const l = line(id);
   if (!l) return el("div", { class: "srcbox" }, el("b", {}, label), id || "—");
@@ -491,7 +587,19 @@ function srcBox(id, label) {
     l.open_cents != null ? el("div", { class: "muted small" }, "open balance") : null,
     el("div", { class: "muted small" }, `source row ${l.source_row}`));
 }
+function renderWorkflow() {
+  if (!S.run || !S.run.workflow) return put("workflow", el("div", { class: "muted" }, "Run a reconciliation to see each agent step, the TrustOps decision behind it, rows in and out, and timing."));
+  const w = S.run.workflow;
+  put("workflow", el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · policy set ${w[0].policy_version}. Each agent asked TrustOps before it acted; every answer is a signed record in the audit trail.`),
+    el("ol", { class: "wf" }, w.map((s, i) => el("li", {},
+      el("div", { class: "tl-dot" }, String(i + 1)),
+      el("div", {}, el("div", { class: "code" }, `${s.agent} · ${s.actor_id}`), el("div", { class: "tl-title" }, `${s.name}: ${s.title}`),
+        el("div", {}, s.summary || ""),
+        el("div", { class: "meta" }, `TrustOps ${s.decision} · ${s.policy_id} ${s.policy_name} · tool ${s.action} · step ${s.step_id}`)),
+      el("div", { class: "nums" }, el("span", { class: "badge " + s.decision }, s.decision), el("div", {}, `${s.rows_in} in → ${s.rows_out} out`), el("div", {}, `${s.duration_ms} ms`))))));
+}
 function renderRun() {
+  renderWorkflow(); renderReadiness();
   if (!S.run) { put("tiles"); put("matches", el("div", { class: "muted" }, "No run yet.")); return; }
   const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN").length;
   put("tiles",
@@ -503,45 +611,72 @@ function renderRun() {
     r.matches.map((m) => el("tr", { class: "click", ondblclick: () => openTrace(m.bank_id), onclick: () => put("detail", el("div", { class: "row" }, el("button", { class: "secondary", onclick: () => openTrace(m.bank_id) }, "Trace " + m.bank_id + " end to end →")), el("div", { class: "side" }, srcBox(m.bank_id, "Bank"), srcBox(m.ledger_id, "Ledger")), el("div", { class: "sugg" }, `${m.rule_id}: ${m.why}`)) },
       el("td", {}, m.bank_id), el("td", {}, m.ledger_id), el("td", { class: "num" }, usd(m.amount_cents)), el("td", {}, m.rule_id), el("td", { class: "small" }, m.why)))));
 }
-const tile = (k, v, cls) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v));
+const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), sub ? el("div", { class: "s" }, sub) : null);
 
 // ---------------- exceptions ----------------
 const TYPE_LABEL = { POSSIBLE_DUPLICATE: "Possible duplicate charge", PARTIAL_RECEIPT: "Partial payment received", MISSING_GL: "Bank debit not in ledger",
   MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment" };
+const DENY_TEXT = {
+  MAKER_CHECKER_SELF_APPROVAL: "Maker-checker: you proposed this resolution, so you cannot approve it yourself.",
+  ROLE_NOT_AUTHORISED: "Your role cannot decide review items. A CPA reviewer must decide.",
+  REQUIRED_ROLE_MISSING: "TrustOps escalated this item to a CPA reviewer.", AGENT_CANNOT_APPROVE: "Agents can never approve.",
+};
+function denyText(e) {
+  const d = e.body && e.body.detail;
+  return d && d.reason_code ? `TrustOps DENY · ${d.reason_code} · ${d.policy_id || ""}. ${DENY_TEXT[d.reason_code] || ""} The refusal is recorded in the audit trail.` : e.message;
+}
+function govLine(t) {
+  if (!t) return null;
+  return el("div", { class: "gov" }, el("span", { class: "badge " + t.decision }, "TrustOps " + t.decision),
+    el("span", {}, `${t.policy_id} ${t.policy_name}`), t.required_role ? el("span", {}, `· needs a ${t.required_role_label || t.required_role}`) : null,
+    el("span", { class: "muted small" }, `· policy set ${t.policy_version}`));
+}
 function renderExceptions() {
   if (!S.run) return put("exc-list", el("div", { class: "muted" }, "Run a reconciliation first."));
-  const can = S.me.role === "owner_reviewer";
+  const reviewer = S.me.role === "owner_reviewer";
   put("exc-list", S.run.result.exceptions.map((x) => {
     const note = el("textarea", { placeholder: "Review note (recorded with your name)" });
     const out = el("div", { class: "msg" });
+    const fail = (e) => { out.textContent = denyText(e); out.className = "msg err"; renderEvidence(); };
     const act = (d) => async () => {
       try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/decisions`), { method: "POST", json: { decision: d, note: note.value } });
         Object.assign(x, res); renderExceptions(); renderRun(); renderResults(); }
-      catch (e) { out.textContent = e.message; out.className = "msg err"; }
+      catch (e) { fail(e); }
     };
+    const propose = async () => {
+      try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/proposals`), { method: "POST", json: { note: note.value } }); Object.assign(x, res); renderExceptions(); }
+      catch (e) { fail(e); }
+    };
+    const actionable = x.status === "OPEN" || x.status === "RETURNED";
     return el("div", { class: "exc " + x.status },
       el("div", { class: "exc-head" }, el("div", {}, el("div", { class: "type" }, `${x.id} · ${TYPE_LABEL[x.type] || x.type}`), el("div", {}, x.why)),
         el("div", {}, el("span", { class: "amt" }, usd(x.amount_cents)), " ", el("span", { class: "badge " + x.status }, x.status))),
+      govLine(x.trustops),
       x.residual_cents != null ? el("div", { class: "msg" }, `Still owed on invoice: ${usd(x.residual_cents)}`) : null,
-      el("div", { class: "side" }, x.evidence_refs.map((id) => srcBox(id, id.startsWith("GL") ? "Ledger" : id.startsWith("INV") || id.includes("INV") ? "Invoice" : "Bank"))),
+      el("div", { class: "side" }, x.evidence_refs.map((id) => srcBox(id, labelFor(id)))),
       x.suggestion ? el("div", { class: "sugg" }, "Suggested next step: " + x.suggestion) : null,
-      el("div", { class: "row" }, el("span", { class: "muted small" }, `Rule ${x.rule_id} · proposed by ${x.proposed_by || "agent:recon (deterministic)"}`),
+      el("div", { class: "row" }, el("span", { class: "muted small" }, `Rule ${x.rule_id} · raised by AG-03 · proposed by ${x.proposed_by || "agent:recon (deterministic)"}`),
         x.bank_id ? el("button", { class: "secondary", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null),
       x.proposal_note ? el("div", { class: "sugg" }, `Preparer proposal by ${x.proposed_by}: “${x.proposal_note}”`) : null,
-      x.status === "OPEN" ? (can ? el("div", {}, note, el("div", { class: "row" }, el("button", { class: "ok", onclick: act("ACCEPT") }, "Accept"), el("button", { class: "no", onclick: act("REJECT") }, "Reject")), out)
-        : el("div", {}, note, el("div", { class: "row" }, el("button", { class: "secondary", onclick: async () => {
-            try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/proposals`), { method: "POST", json: { note: note.value } }); Object.assign(x, res); renderExceptions(); }
-            catch (e) { out.textContent = e.message; out.className = "msg err"; } } }, "Propose resolution for reviewer")),
-            el("div", { class: "muted small" }, "Preparers propose; an owner/reviewer decides. The proposer can never approve their own proposal."), out))
-        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}`));
+      x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
+      actionable ? el("div", {}, note, el("div", { class: "row" },
+          !reviewer ? el("button", { class: "secondary", onclick: propose }, "Propose resolution for reviewer") : null,
+          el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve"), el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
+          el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer")),
+          el("div", { class: "muted small" }, reviewer ? "You are a CPA reviewer. TrustOps will refuse an approval of a resolution you proposed yourself (maker-checker)."
+            : "Preparers propose. TrustOps checks every approval on the server: only a CPA reviewer who did not propose it can decide."), out)
+        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}`));
   }));
 }
 
 // ---------------- controls ----------------
 const ATTACKS = [
-  { t: "Post adjustment to the books", d: "Ask the agent to write the HB006 entry into the client's ledger.", b: { action: "ledger.post" } },
-  { t: "Release a vendor payment", d: "Ask the agent to pay Gulfprint $315.", b: { action: "bank.payment" } },
-  { t: "Email the client", d: "Ask the agent to email Harborline about the missing receipt.", b: { action: "email.send" } },
+  { t: "Agent posts a journal entry", d: "AG-03 Reconciliation asks to write the missing ledger entry into the client's books.", b: { action: "ledger.post", as_agent: "AG-03" } },
+  { t: "Agent approves a review item", d: "AG-06 Query Assistant tries to approve an exception.", b: { action: "exception.decide", as_agent: "AG-06" } },
+  { t: "Agent uses a tool it wasn't given", d: "AG-01 Intake tries to run the matching engine itself.", b: { action: "run.compute", as_agent: "AG-01" } },
+  { t: "Post adjustment to the books", d: "You ask for the missing ledger entry to be written into the client's ledger.", b: { action: "ledger.post" } },
+  { t: "Release a vendor payment", d: "You ask for the vendor on the missing-ledger item to be paid.", b: { action: "bank.payment" } },
+  { t: "Email the client", d: "You ask for an email to the client about the missing receipt.", b: { action: "email.send" } },
   { t: "Send data to a public chatbot", d: "Route this run through an unapproved public LLM.", b: { action: "run.create", model_route: "public-llm" } },
   { t: "Upload a real tax return", d: "Declare an upload as tax-return data.", b: { action: "upload.create", data_class: "tax_return" } },
   { t: "Change the model route", d: "Try to re-point AI processing elsewhere.", b: { action: "model_route.change" } },
@@ -556,10 +691,11 @@ async function attempt(a) {
   try { r = await api(W("/actions/attempt"), { method: "POST", json: a.b }); }
   catch (e) { r = e.body || { decision: "DENY", reason_code: e.message }; }
   attempts.unshift({ a, r, at: new Date() });
-  put("attack-out", el("table", {}, el("tr", {}, ["Time", "Attempt", "Decision", "Reason", "Executed"].map((h) => el("th", {}, h))),
-    attempts.map((x) => el("tr", {}, el("td", {}, x.at.toLocaleTimeString()), el("td", {}, x.a.t), el("td", {}, el("span", { class: "badge " + x.r.decision }, x.r.decision)),
-      el("td", {}, x.r.reason_code || ""), el("td", {}, String(!!x.r.executed))))),
-    el("div", { class: "msg" }, "Each refusal is now a signed record in tab 5."));
+  put("attack-out", el("table", {}, el("tr", {}, ["Time", "Who", "Attempt", "Decision", "Reason", "Policy", "Executed"].map((h) => el("th", {}, h))),
+    attempts.map((x) => el("tr", {}, el("td", {}, x.at.toLocaleTimeString()), el("td", {}, x.r.actor || "You"), el("td", {}, x.a.t),
+      el("td", {}, el("span", { class: "badge " + x.r.decision }, x.r.decision)),
+      el("td", {}, x.r.reason_code || ""), el("td", {}, x.r.policy_id || ""), el("td", {}, String(!!x.r.executed))))),
+    el("div", { class: "msg" }, "Each refusal is now a signed record in the Audit trail and appears in the Governance report."));
 }
 
 // ---------------- evidence ----------------
@@ -567,6 +703,7 @@ async function renderEvidence() {
   if (!S.ws) return;
   const ev = await api(W("/evidence"));
   const v = ev.verification;
+  S.events = ev.events; S.verify = v.state;
   const b = $("verify-badge"); b.className = "badge " + v.state;
   b.textContent = v.state === "PASS" ? `VERIFIED · ${v.checked} signed events` : `${v.state === "UNKNOWN" ? "NOT VERIFIED" : "FAILED"} · ${v.reason}`;
   for (const [id, p] of [["exp-csv", "export.csv"], ["exp-pack", "review-pack.json"]]) {
@@ -575,9 +712,11 @@ async function renderEvidence() {
   $("exp-print").classList.toggle("disabled", !S.run);
   $("exp-print").href = S.run ? `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
   put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first.`),
-    el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Source refs", "Hash"].map((h) => el("th", {}, h))),
-      ev.events.slice().reverse().map((e) => el("tr", {}, el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)), el("td", {}, e.actor_id),
+    el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Policy", "Source refs", "Hash"].map((h) => el("th", {}, h))),
+      ev.events.slice().reverse().map((e) => el("tr", {}, el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)),
+        el("td", {}, e.agent_code ? el("span", {}, el("b", {}, e.agent_code), " " + e.actor_id) : e.actor_id),
         el("td", {}, e.action), el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, e.policy_decision)),
+        el("td", { class: "small" }, e.policy_id || ""),
         el("td", { class: "small" }, (e.source_line_refs || []).slice(0, 6).join(", ")), el("td", { class: "mono" }, e.event_hash.slice(0, 10) + "…")))));
 }
 $("ev-refresh").onclick = renderEvidence;
@@ -587,27 +726,7 @@ $("tamper-btn").onclick = async () => {
   catch (e) { msg("tamper-out", e.message, "err"); }
 };
 
-// ---------------- results ----------------
-function renderResults() {
-  if (!S.run) { put("measured", el("div", { class: "muted" }, "Run a reconciliation first.")); put("roi-out"); return; }
-  const r = S.run.result, total = r.matches.length + r.exceptions.filter((e) => e.bank_id && !["MISSING_RECEIPT", "PARTIAL_RECEIPT"].includes(e.type)).length;
-  const reviewed = r.exceptions.filter((e) => e.status !== "OPEN").length;
-  put("measured", tile("Bank lines imported (no re-keying)", Object.keys(S.run.lines).filter((k) => !k.startsWith("GL") && !k.includes("INV")).length),
-    tile("Matched automatically", `${r.matches.length} of ${total}`, "good"), tile("Exceptions raised", r.exceptions.length, "amb"),
-    tile("Exceptions reviewed", `${reviewed} / ${r.exceptions.length}`), tile("Clicks this session", S.clicks),
-    tile("Unexplained variance", usd(r.unexplained_variance_cents), r.unexplained_variance_cents ? "bad" : "good"));
-  roi();
-}
-function roi() {
-  if (!S.run) return;
-  const r = S.run.result, lines = +$("roi-lines").value, books = +$("roi-books").value, mm = +$("roi-min").value, em = +$("roi-exc").value;
-  const rate = r.exceptions.length / Math.max(1, r.matches.length + r.exceptions.length);
-  const manual = lines * books * mm / 60, after = lines * books * rate * em / 60;
-  put("roi-out", el("div", { class: "tiles" }, tile("Manual hours / month (assumed)", manual.toFixed(1)), tile("Review hours / month (estimated)", after.toFixed(1)),
-    tile("Hours potentially freed", (manual - after).toFixed(1), "amb")),
-    el("div", { class: "muted small gap" }, `Uses this run's exception rate (${(rate * 100).toFixed(0)}%), Every input is an assumption to replace with your measured baseline during the pilot.`));
-}
-["roi-lines", "roi-books", "roi-min", "roi-exc"].forEach((id) => $(id).addEventListener("input", roi));
+function renderResults() { progress(); }
 
 // ---------------- trust ----------------
 async function renderTrust() {
@@ -616,14 +735,139 @@ async function renderTrust() {
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Data boundary"), el("ul", { class: "plain" },
       el("li", {}, `Each client book is kept separate: its own data and its own evidence chain (${t.workspaces.length} book${t.workspaces.length === 1 ? "" : "s"} here)`),
       el("li", {}, `Region declared: ${t.region_declared}. ${t.region_note}`), el("li", {}, "Data allowed: bank statements, ledgers, invoices and receipts only"),
-      el("li", {}, t.hard_boundary), el("li", {}, t.retention))),
+      el("li", {}, t.hard_boundary), el("li", {}, `Storage: ${t.storage}`), el("li", {}, t.retention))),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "AI use"), el("div", { class: "sugg" }, t.ai_note),
-      el("table", {}, el("tr", {}, el("th", {}, "Worker"), el("th", {}, "Does"), el("th", {}, "Model")), t.agents.map((a) => el("tr", {}, el("td", {}, a.id), el("td", {}, a.does), el("td", {}, a.model)))),
+      el("table", {}, el("tr", {}, el("th", {}, "Worker"), el("th", {}, "Does"), el("th", {}, "Model")), t.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code || ""), " " + a.id), el("td", {}, a.does), el("td", {}, a.model)))),
       el("div", { class: "muted small gap" }, `Allowlisted routes: ${t.model_routes_allowed.join(", ")} · in use: ${t.model_routes_in_use.join(", ")}`)),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Never permitted (no grant exists)"), el("ul", { class: "plain" }, t.forbidden_actions.map((f) => el("li", {}, f)))),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, r)), el("td", { class: "small" }, a.join(", ")))))),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Evidence signing"), el("div", {}, `${t.evidence.algorithm} · key: ${t.evidence.key_source} · policy ${t.policy_version}`),
       el("pre", {}, t.evidence.public_key_pem), el("div", { class: "muted small" }, `Security events outside client scope: ${t.security_events}`))));
+}
+
+// ---------------- live agent monitor ----------------
+const AG_STATUS = { WORKING: "Working now", IDLE: "Idle · done", BLOCKED: "Blocked by TrustOps", NOT_USED_YET: "Not used yet" };
+let agTimer = null;
+function startAgentMonitor() { stopAgentMonitor(); renderAgents(); agTimer = setInterval(renderAgents, 2000); }
+function stopAgentMonitor() { if (agTimer) clearInterval(agTimer); agTimer = null; }
+const ago = (s) => s == null ? "" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+function readiness() {
+  const st = S.status || {};
+  const need = [["bank", "Bank statement"], ["ledger", "General ledger"]].filter(([k]) => !st[k]).map(([, l]) => l);
+  return need.length ? el("div", { class: "callout gap" }, el("div", {},
+    el("b", {}, `Before you can run: upload ${need.join(" and ")}.`),
+    el("div", { class: "small" }, "Reconciliation compares the bank statement with the general ledger, so both are required. Invoices, bills and documents are optional extras. "
+      + "Test files are in the project's demo_files folder (for example demo_files/1_standard_month)."),
+    el("div", { class: "row" }, el("button", { class: "primary", onclick: () => go("import") }, "Go to Sources →")))) : null;
+}
+function renderReadiness() {
+  const box = readiness();
+  put("ag-ready", box); put("recon-ready", readiness());
+  $("ag-run").disabled = !!box; $("run-btn").disabled = !!box;
+}
+async function renderAgents() {
+  renderReadiness();
+  let d; try { d = await api(W("/agents")); } catch (e) { $("ag-live").textContent = "○ offline"; return; }
+  $("ag-live").textContent = "● live · updated " + new Date().toLocaleTimeString();
+  $("ag-runid").textContent = d.run_id || "none"; $("ag-trace").textContent = d.trace_id || "–";
+  put("ag-grid", d.agents.map((a) => {
+    const s = a.last_run_step;
+    return el("div", { class: "card agent " + a.status },
+      el("div", { class: "head" }, el("div", {}, el("div", { class: "code" }, `${a.code} · ${a.actor_id}`), el("div", { class: "card-title" }, a.name)),
+        el("span", { class: "badge " + a.status }, a.status === "WORKING" ? el("span", { class: "pulse" }) : null, AG_STATUS[a.status] || a.status)),
+      el("div", { class: "muted small" }, a.does),
+      el("div", { class: "sugg" }, a.status_note),
+      el("div", { class: "counts" }, ["ALLOW", "ESCALATE", "DENY"].map((k) => el("span", { class: "badge " + (a.counts[k] ? k : "") }, `${k} ${a.counts[k]}`)),
+        el("span", { class: "small muted" }, ` ${a.actions} request${a.actions === 1 ? "" : "s"} to TrustOps`)),
+      a.last ? el("div", { class: "small" }, el("b", {}, "Last: "), `${a.last.action} · ${a.last.decision} · ${a.last.policy_id || ""} · ${ago(a.last.seconds_ago)}`) : null,
+      s ? el("div", { class: "small gap" }, el("b", {}, `In run ${d.run_id}: `), `${s.title}. ${s.summary || ""}`,
+        el("div", { class: "muted small" }, `${s.rows_in} rows in → ${s.rows_out} out · ${s.duration_ms} ms · ${s.status} · step ${s.step_id}`)) : null,
+      el("div", { class: "tools" }, "Allowed tools: " + a.tools.join(", ") + " · model: " + a.model));
+  }));
+  put("ag-feed", d.feed.length ? el("div", { class: "tablewrap" }, el("table", {},
+    el("tr", {}, ["#", "Time (UTC)", "Agent", "Action", "TrustOps decision", "Policy", "Run", "On behalf of"].map((h) => el("th", {}, h))),
+    d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + e.actor_id),
+      el("td", {}, e.action), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, e.decision)),
+      el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
+    : el("div", { class: "muted" }, "No agent activity yet. Import files or press “Run reconciliation now”."));
+}
+$("ag-run").onclick = (ev) => withBusy(ev.currentTarget, async () => {
+  msg("ag-msg", "");
+  try { S.run = await api(W("/reconciliation-runs"), { method: "POST" }); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
+    renderRun(); renderExceptions(); renderResults(); renderAgents(); }
+  catch (e) { msg("ag-msg", e.message, "err"); }
+}, "Running…");
+
+// ---------------- reports (finance + governance, same run id) ----------------
+const FMT_LABEL = { pdf: "PDF", xlsx: "Excel", csv: "CSV", json: "JSON" };
+function renderReports() {
+  $("rep-run").textContent = S.run ? S.run.id : "none";
+  $("rep-trace").textContent = S.run ? S.run.trace_id || "–" : "–";
+  if (!S.run) { put("rep-cards"); put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first.")); return; }
+  const cards = [
+    ["finance", "Finance Reconciliation Report", "LEDGERSIGHT", "FIN-", "What happened to the financial records: totals, matches, exceptions, outstanding balances and reviewer status."],
+    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened: every agent step, ALLOW / ESCALATE / DENY decisions with policy versions, approvals, blocked actions and evidence verification."]];
+  put("rep-cards", cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
+    el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
+    el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
+      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "" }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))))));
+  put("rep-preview", el("div", { class: "muted" }, "Choose Preview on either report. Generating a report is itself recorded in the audit trail."));
+  $("rep-prev-title").textContent = "Preview";
+}
+async function previewReport(kind) {
+  let r; try { r = await api(W(`/runs/${S.run.id}/reports/${kind}.json`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
+  $("rep-prev-title").textContent = `Preview · ${r.title} · ${r.report_id}`;
+  put("rep-preview", el("table", { class: "kv" }, r.summary.map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, k), el("td", { class: "small" }, String(v))))),
+    r.sections.map((s) => el("div", {}, el("div", { class: "card-title gap" }, `${s.title} (${s.rows.length})`),
+      s.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, s.columns.map((c) => el("th", {}, c))),
+        s.rows.slice(0, 60).map((row) => el("tr", {}, row.map((c) => el("td", { class: "small" }, String(c)))))))
+        : el("div", { class: "muted small" }, "None."))));
+}
+
+// ---------------- Ask LedgerSight (read-only, cited) ----------------
+async function renderAsk() {
+  let s; try { s = await api(W("/ask/suggestions")); } catch (_) { return; }
+  put("ask-chips", s.suggestions.map((q) => el("button", { class: "chip", onclick: () => { $("ask-q").value = q; askNow(); } }, q)));
+}
+async function askNow() {
+  const q = $("ask-q").value.trim(); if (!q) return;
+  let a; try { a = await api(W("/ask"), { method: "POST", json: { question: q } }); }
+  catch (e) { a = { status: "ERROR", answer: e.message, rows: [], columns: [], citations: [] }; }
+  S.asks.unshift({ q, a, ws: S.ws });
+  $("ask-q").value = "";
+  const chip = (s) => el("button", { class: "chip", onclick: () => { $("ask-q").value = s; askNow(); } }, s);
+  put("ask-out", S.asks.filter((x) => x.ws === S.ws).map(({ q, a }) => el("div", { class: "qa" },
+    el("div", { class: "row" }, el("div", { class: "q" }, q),
+      a.trustops ? el("span", { class: "badge " + a.trustops.decision, title: `${a.trustops.policy_id} ${a.trustops.policy_name}` }, `TrustOps ${a.trustops.decision} · ${a.trustops.policy_id}`) : null,
+      el("span", { class: "badge " + ({ ANSWERED: "PASS", REFUSED: "DENY" }[a.status] || "UNKNOWN") }, a.status)),
+    el("div", { class: "a" }, a.answer),
+    a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c) => el("td", {}, String(c))))))) : null,
+    a.suggestions ? el("div", { class: "chips" }, a.suggestions.map(chip)) : null,
+    a.citations.length ? el("div", { class: "cites" }, "Sources", el("ul", { class: "plain" }, a.citations.map((c) => el("li", {}, el("b", {}, c.ref), ` · ${c.kind} · ${c.source}`,
+      c.sha256 ? el("span", { class: "mono" }, ` · sha256 ${c.sha256.slice(0, 12)}…`) : null,
+      c.kind === "source row" ? el("button", { class: "linkbtn", onclick: () => openTrace(c.ref) }, " Trace →") : null)))) : null)));
+}
+$("ask-btn").onclick = askNow;
+$("ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter") askNow(); });
+
+// ---------------- rulebooks (read-only policy set) ----------------
+async function renderRules() {
+  let r; try { r = await api("/v1/rulebooks"); } catch (e) { return put("rules", el("div", { class: "msg err" }, e.message)); }
+  const roleLabel = (id) => (r.roles.find((x) => x.role === id) || {}).label || id;
+  put("rules", el("div", { class: "muted small" }, `Policy set ${r.version}. ${r.editing}`),
+    el("div", { class: "card gap" }, el("div", { class: "card-title" }, "Policies"), el("div", { class: "tablewrap" }, el("table", {},
+      el("tr", {}, ["Policy", "Name", "Version", "Effect", "Applies to", "Required role", "Rule"].map((h) => el("th", {}, h))),
+      r.policies.map((p) => el("tr", {}, el("td", {}, el("b", {}, p.id)), el("td", {}, p.name), el("td", {}, p.version),
+        el("td", {}, el("span", { class: "badge " + p.effect }, p.effect)),
+        el("td", { class: "small" }, p.exception_types ? p.exception_types.map((t) => t === "*" ? "all other exceptions" : t).join(", ") : p.applies_to),
+        el("td", { class: "small" }, p.required_role ? roleLabel(p.required_role) : "—"), el("td", { class: "small" }, p.rule)))))),
+    el("div", { class: "grid two gap" },
+      el("div", { class: "card" }, el("div", { class: "card-title" }, "Registered agents and the only tools they may use"),
+        el("table", {}, r.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code), el("div", { class: "small muted" }, a.name)),
+          el("td", { class: "small" }, a.tools.join(", ")), el("td", { class: "small muted" }, a.model))))),
+      el("div", { class: "card" }, el("div", { class: "card-title" }, "People: role permissions"),
+        el("table", {}, r.roles.map((x) => el("tr", {}, el("td", {}, el("b", {}, x.label)), el("td", { class: "small" }, x.actions.join(", "))))),
+        el("div", { class: "card-title gap" }, "Never permitted to anyone"), el("div", { class: "small" }, r.forbidden_actions.join(" · ")))));
 }
 
 // ---------------- team ----------------

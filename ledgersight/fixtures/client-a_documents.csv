@@ -1,0 +1,4 @@
+doc_id,doc_type,reference,vendor_alias,amount,file
+DOC-H-01,lease,LEASE-OCT,VEND-LANDLORD,1200.00,lease_oct.pdf
+DOC-H-02,payroll_register,PR-1015,INTERNAL,1850.00,payroll_1015.pdf
+DOC-H-03,vendor_invoice,VS-212,VEND-STOCKMEDIA,239.00,vs212_invoice.pdf

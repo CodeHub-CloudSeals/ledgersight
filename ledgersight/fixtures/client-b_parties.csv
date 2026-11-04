@@ -1,0 +1,6 @@
+party_id,name,type,aliases,ref_prefixes
+P-CUST11,Customer 11,customer,CUSTOMER 11;CUST-11,
+P-CUST12,Customer 12,customer,CUSTOMER 12;CUST-12,
+P-SLIP,Slip Rental Vendor,vendor,SLIP RENTAL;VEND-SLIP,SLIP-
+P-FUEL,Fuel Vendor,vendor,FUEL VENDOR;VEND-FUEL,FD-
+P-BANK,Operating bank,bank,SERVICE FEE,FEE-

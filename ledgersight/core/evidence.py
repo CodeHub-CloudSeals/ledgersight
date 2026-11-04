@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -20,6 +21,7 @@ GENESIS = "0" * 64
 SIGNED_FIELDS = ["event_id", "timestamp_utc", "tenant_id", "workspace_id", "actor_type", "actor_id",
                  "workflow_pack", "run_id", "source_batch_sha256", "source_line_refs", "canonical_version",
                  "matching_rule_id", "model_route", "action", "policy_decision", "approval_id",
+                 "policy_id", "policy_version", "required_role", "agent_code", "delegated_by", "trace_id",
                  "prior_hash", "key_id"]
 
 
@@ -36,6 +38,9 @@ class EvidenceLog:
         self._key = private_key
         self.key_id = key_id
         self.events: list[dict] = []
+        # The web server handles requests on several threads. Appending must be atomic, or two
+        # events could take the same prior_hash and break the chain.
+        self._lock = threading.Lock()
 
     @classmethod
     def generate(cls, key_id="demo-ed25519-1"):
@@ -48,14 +53,15 @@ class EvidenceLog:
     def append(self, **fields) -> dict:
         if self._key is None:
             raise SignerUnavailable("evidence signer unavailable; material action blocked")
-        ev = {k: fields.get(k) for k in SIGNED_FIELDS}
-        ev.update(event_id=str(uuid.uuid4()), timestamp_utc=datetime.now(timezone.utc).isoformat(),
-                  prior_hash=self.events[-1]["event_hash"] if self.events else GENESIS, key_id=self.key_id)
-        body = _canonical(ev)
-        ev["event_hash"] = hashlib.sha256(body).hexdigest()
-        ev["signature"] = self._key.sign(body).hex()
-        self.events.append(ev)
-        return ev
+        with self._lock:
+            ev = {k: fields.get(k) for k in SIGNED_FIELDS}
+            ev.update(event_id=str(uuid.uuid4()), timestamp_utc=datetime.now(timezone.utc).isoformat(),
+                      prior_hash=self.events[-1]["event_hash"] if self.events else GENESIS, key_id=self.key_id)
+            body = _canonical(ev)
+            ev["event_hash"] = hashlib.sha256(body).hexdigest()
+            ev["signature"] = self._key.sign(body).hex()
+            self.events.append(ev)
+            return ev
 
 
 def verify(events: list[dict], public_key_pem: bytes | None) -> dict:

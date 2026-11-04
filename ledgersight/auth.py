@@ -180,5 +180,5 @@ class AuthStore:
                                    expires_at=now() + timedelta(days=30), terms_accepted_at=now())
             return None
         # Local development: print a one-time invite link to stdout.
-        inv = self.invite("presenter@cloudseals", "CloudSeals presenter", "owner_reviewer", workspaces)
+        inv = self.invite("presenter", "Demo presenter", "owner_reviewer", workspaces)
         return inv

@@ -1,0 +1,12 @@
+party_id,name,type,aliases,ref_prefixes
+P-C21,Customer 21,customer,CUSTOMER 21;CUST-21,
+P-C22,Customer 22,customer,CUSTOMER 22;CUST-22,
+P-C23,Customer 23,customer,CUSTOMER 23;CUST-23,
+P-LANDLORD,Landlord,vendor,LANDLORD;VEND-LANDLORD,LEASE-
+P-HOSTING,Cloud Hosting Provider,vendor,CLOUD HOSTING;VEND-HOSTING,CH-
+P-PACKAGING,Packaging Supplier,vendor,PACKAGING SUPPLIER;VEND-PACKAGING,PK-
+P-OFFICE,Office Supplies Vendor,vendor,OFFICE SUPPLIES VENDOR,RC-
+P-TRAINING,Training Provider,vendor,TRAINING PROVIDER;VEND-TRAINING,TR-
+P-UTILITY,Utility Company,vendor,ELECTRICITY,UT-
+P-PAYROLL,Payroll,internal,PAYROLL,PAY-
+P-BANK,Operating bank,bank,SERVICE FEE,FEE-

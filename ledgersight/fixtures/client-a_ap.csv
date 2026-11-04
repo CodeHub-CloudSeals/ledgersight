@@ -1,0 +1,3 @@
+bill_id,vendor_alias,issue_date,amount,open_balance,currency
+GP-5531,VEND-PRINT,2026-10-03,315.00,315.00,USD
+VS-212,VEND-STOCKMEDIA,2026-10-20,239.00,239.00,USD

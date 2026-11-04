@@ -1,0 +1,7 @@
+{
+  "note": "Client books. Default names are placeholders and can be renamed in the app (Overview > Client profile); this product is not built for a specific client. Data for each book comes from uploaded files; the sample files in ledgersight/fixtures are synthetic. AVOCET_CLIENTS=client-a limits a deployment to some of these.",
+  "clients": [
+    {"id": "client-a", "name": "Client 1", "period": "October 2026", "industry": "Design studio"},
+    {"id": "client-b", "name": "Client 2", "period": "October 2026", "industry": "Marine services"}
+  ]
+}

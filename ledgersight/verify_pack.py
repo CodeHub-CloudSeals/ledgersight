@@ -1,6 +1,6 @@
 """Independent verifier for an exported review pack.
 
-    python -m ledgersight.verify_pack harborline_RUN-xxxx_review_pack.json [trusted_public_key.pem]
+    python -m ledgersight.verify_pack client-a_RUN-xxxx_review_pack.json [trusted_public_key.pem]
 
 Pass the public key you obtained separately (e.g. from the Trust tab or CloudSeals)
 to avoid trusting the key embedded in the pack itself.

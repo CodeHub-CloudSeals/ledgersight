@@ -1,0 +1,5 @@
+doc_id,doc_type,reference,vendor_alias,amount,file
+DOC-A-01,lease,LEASE-1026,VEND-LANDLORD,1500.00,lease_october.pdf
+DOC-A-02,payroll_register,PAY-1015,INTERNAL,2600.00,payroll_register_1015.pdf
+DOC-A-03,vendor_invoice,CH-7781,VEND-HOSTING,129.00,hosting_invoice_7781.pdf
+DOC-A-04,vendor_invoice,TR-551,VEND-TRAINING,310.00,training_invoice_551.pdf

@@ -1,0 +1,3 @@
+doc_id,doc_type,reference,vendor_alias,amount,file
+DOC-B-01,vendor_invoice,SLIP-OCT,VEND-SLIP,780.00,slip_oct.pdf
+DOC-B-02,receipt,FD-1407,VEND-FUEL,412.35,fuel_1407.pdf

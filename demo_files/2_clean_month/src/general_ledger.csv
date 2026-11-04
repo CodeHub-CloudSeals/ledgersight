@@ -1,0 +1,9 @@
+entry_id,posted_date,account,description,reference,debit,credit,currency
+GL-C-401,2026-10-03,1100 Accounts Receivable,Customer 31 payment,INV-3101,1800.00,,USD
+GL-C-402,2026-10-04,6100 Rent,October rent,LEASE-1036,,1500.00,USD
+GL-C-403,2026-10-07,6400 Hosting,Cloud hosting October,CH-7790,,129.00,USD
+GL-C-404,2026-10-12,1100 Accounts Receivable,Customer 32 payment,INV-3104,2400.00,,USD
+GL-C-405,2026-10-15,6000 Payroll,Payroll 2026-10A,PAY-1036,,2600.00,USD
+GL-C-406,2026-10-20,6200 Office Supplies,Office supplies,RC-4520,,64.20,USD
+GL-C-407,2026-10-25,6500 Training,Staff training,TR-560,,310.00,USD
+GL-C-408,2026-10-31,6900 Bank Fees,Monthly service fee,FEE-1036,,15.00,USD

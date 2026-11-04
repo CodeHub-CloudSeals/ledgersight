@@ -1,0 +1,10 @@
+# Keep text files with LF in the repository; never touch binary or byte-exact sample files.
+* text=auto eol=lf
+*.sh text eol=lf
+*.pdf binary
+*.xlsx binary
+*.xlsm binary
+*.docx binary
+*.png binary
+*.qbo -text
+*.eml -text

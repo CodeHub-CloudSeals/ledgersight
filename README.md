@@ -10,7 +10,9 @@ any ledger or bank.
 ```bash
 ./run.sh            # creates .venv on first run, then serves http://127.0.0.1:8090
 ```
-Log in as `presenter` / `DemoPresenter#2026` (local defaults; change before any shared use).
+First copy `.env.example` to `.env` and set your own administrator password and authenticator secret
+(`.env` is never committed). On Windows/VS Code, press F5 ("LedgerSight (local)"): it reads `.env` and opens
+without a login screen (`AVOCET_NO_LOGIN=1`, local only). Test data and a walkthrough are in `demo_files/`.
 Local mode turns the authenticator-code step off (`AVOCET_REQUIRE_MFA=0`); hosted use must set it to `1`.
 
 ## Flow
@@ -37,7 +39,7 @@ ledgersight/
   verify_pack.py   offline verifier for exported review packs
   core/            ingest, recon (engine), policy (gate), evidence (signer)
   static/          UI
-  fixtures/        example client files (fictional company)
+  fixtures/        synthetic sample files (generic names; regenerate derived files with `python -m ledgersight.make_fixtures`)
 tests/             acceptance tests (G-D01..G-D12 + negative paths)
 ```
 
@@ -52,7 +54,7 @@ python -m pytest -q
 | Variable | Purpose |
 |---|---|
 | `AVOCET_REQUIRE_MFA` | `1` = password + authenticator code (default), `0` = password only |
-| `AVOCET_CLIENTS` | comma list of client books to show, e.g. `harborline` |
+| `AVOCET_CLIENTS` | comma list of client books to show, e.g. `client-a` |
 | `AVOCET_SIGNING_KEY_PEM` | Ed25519 private key from the secret store (otherwise generated at start-up) |
 | `AVOCET_REGION_DECLARED` | region shown on the Data & security page |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_API_KEY` | enable the Google Drive picker (read-only, drive.file scope) |

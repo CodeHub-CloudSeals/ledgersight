@@ -1,0 +1,28 @@
+{
+  "status_labels": {
+    "VERIFIED_UPLOAD": "A real file was uploaded, checked and imported",
+    "SIMULATED": "Synthetic sample data loaded for the demo",
+    "LIVE_CONNECTOR": "A tested, authorised live connection",
+    "PLANNED": "Not available yet",
+    "NOT_CONNECTED": "Nothing imported yet"
+  },
+  "kinds": [
+    {"kind": "bank", "label": "Bank statement", "formats": ["CSV", "Excel", "TSV", "JSON", "OFX/QFX/QBO", "PDF statement"], "required": true},
+    {"kind": "ledger", "label": "General ledger", "formats": ["CSV", "Excel", "TSV", "JSON", "PDF listing"], "required": true},
+    {"kind": "ar", "label": "Accounts receivable (open invoices)", "formats": ["CSV", "Excel", "TSV", "JSON"], "required": false},
+    {"kind": "ap", "label": "Accounts payable (vendor bills)", "formats": ["CSV", "Excel", "TSV", "JSON"], "required": false},
+    {"kind": "documents", "label": "Supporting documents", "formats": ["CSV", "Excel", "TSV", "JSON", "PDF (text)"], "required": false},
+    {"kind": "parties", "label": "Customer & vendor list", "formats": ["CSV", "Excel", "TSV", "JSON"], "required": false}
+  ],
+  "connectors": [
+    {"id": "file-upload", "name": "File upload from this computer", "status": "VERIFIED_UPLOAD"},
+    {"id": "email", "name": "Saved email (.eml) attachments", "status": "VERIFIED_UPLOAD"},
+    {"id": "sample", "name": "Synthetic sample files", "status": "SIMULATED"},
+    {"id": "google-drive", "name": "Google Drive picker (read-only)", "status": "PLANNED", "env": ["GOOGLE_CLIENT_ID", "GOOGLE_API_KEY"], "status_when_configured": "LIVE_CONNECTOR"},
+    {"id": "quickbooks", "name": "QuickBooks Online API", "status": "PLANNED"},
+    {"id": "xero", "name": "Xero API", "status": "PLANNED"},
+    {"id": "onedrive", "name": "OneDrive / Dropbox folder", "status": "PLANNED"},
+    {"id": "ocr", "name": "Scanned receipts and photos (OCR)", "status": "PLANNED"}
+  ],
+  "not_accepted": ["Macro workbooks (.xlsm) and legacy .xls", "ZIP archives", "Word and PowerPoint files", "Tax returns, SSNs, bank logins"]
+}

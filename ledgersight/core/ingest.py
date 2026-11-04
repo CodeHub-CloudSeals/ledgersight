@@ -1,4 +1,4 @@
-"""Safe source ingestion: CSV/XLSX -> canonical lines in integer cents.
+"""Safe source ingestion: CSV/TSV/XLSX/JSON/OFX -> canonical lines in integer cents.
 
 Rules (plan 8.1): never evaluate formulas or external links, reject macro/zip
 formats, bound size/rows, keep raw + normalised reference, preserve source
@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_ROWS = 5000
-ALLOWED_EXT = {".csv", ".xlsx", ".tsv", ".txt", ".ofx", ".qfx", ".qbo"}
+ALLOWED_EXT = {".csv", ".xlsx", ".tsv", ".txt", ".json", ".ofx", ".qfx", ".qbo"}
 BANK_FILE_EXT = {".ofx", ".qfx", ".qbo"}  # Open Financial Exchange: US bank / QuickBooks downloads
 ZIP_MAGIC = b"PK\x03\x04"
 OLE_MAGIC = b"\xd0\xcf\x11\xe0"  # legacy .xls / macro containers
@@ -25,6 +25,7 @@ CANONICAL = {
     "bank": ["line_id", "date", "description", "reference", "amount", "currency"],
     "ledger": ["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
     "ar": ["invoice_id", "customer_alias", "issue_date", "amount", "open_balance", "currency"],
+    "ap": ["bill_id", "vendor_alias", "issue_date", "amount", "open_balance", "currency"],
     "documents": ["doc_id", "doc_type", "reference", "vendor_alias", "amount", "file"],
     "parties": ["party_id", "name", "type", "aliases", "ref_prefixes"],
 }
@@ -43,6 +44,11 @@ SYNONYMS = {
     "account": ["account", "gl account", "account name"],
     "debit": ["debit", "dr"],
     "credit": ["credit", "cr"],
+    "bill_id": ["bill id", "bill number", "bill no", "vendor invoice", "invoice number", "invoice id", "reference"],
+    "vendor_alias": ["vendor", "vendor name", "supplier", "payee"],
+    "customer_alias": ["customer", "customer name", "client"],
+    "issue_date": ["issue date", "bill date", "invoice date", "date"],
+    "open_balance": ["open balance", "balance due", "amount due", "open amount"],
 }
 
 
@@ -94,7 +100,7 @@ def parse_date(raw) -> date:
 def sniff_and_check(filename: str, blob: bytes) -> str:
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXT:
-        raise IngestError(f"unsupported file type {ext or '(none)'}; CSV or XLSX only")
+        raise IngestError(f"unsupported file type {ext or '(none)'}; CSV, TSV, Excel (.xlsx), JSON or OFX/QFX/QBO only")
     if len(blob) > MAX_BYTES:
         raise IngestError("file exceeds 10 MB limit")
     if blob.startswith(OLE_MAGIC):
@@ -121,6 +127,8 @@ def read_table(filename: str, blob: bytes) -> tuple[list[str], list[list]]:
     ext = sniff_and_check(filename, blob)
     if ext in BANK_FILE_EXT:
         rows = _read_ofx(blob)
+    elif ext == ".json":
+        rows = _read_json(blob)
     elif ext in (".csv", ".tsv", ".txt"):
         try:
             text = blob.decode("utf-8-sig")
@@ -163,6 +171,25 @@ def _read_ofx(blob: bytes) -> list[list]:
     return rows
 
 
+def _read_json(blob: bytes) -> list[list]:
+    """JSON export: a list of flat records, or {"rows"|"data"|"transactions"|"records": [...]}.
+    Parsed as data only; nested values are kept as text and never interpreted."""
+    import json
+    try:
+        doc = json.loads(blob.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise IngestError("not valid JSON") from e
+    if isinstance(doc, dict):
+        doc = next((doc[k] for k in ("rows", "data", "transactions", "records", "items") if isinstance(doc.get(k), list)), None)
+    if not isinstance(doc, list) or not all(isinstance(r, dict) for r in doc):
+        raise IngestError("JSON must be a list of records (objects with the same fields)")
+    header: list[str] = []
+    for r in doc:
+        header += [k for k in r if k not in header]
+    cell = lambda v: json.dumps(v) if isinstance(v, (dict, list)) else v
+    return [header] + [[cell(r.get(h)) for h in header] for r in doc]
+
+
 def propose_mapping(kind: str, header: list[str]) -> dict[str, str | None]:
     """canonical field -> source column. Unknowns are None (user must map)."""
     lower = {h.lower(): h for h in header}
@@ -182,16 +209,19 @@ REQUIRED = {
     "bank": ["line_id", "date", "amount", "currency"],
     "ledger": ["entry_id", "posted_date", "currency"],
     "ar": ["invoice_id", "amount", "open_balance", "currency"],
+    "ap": ["bill_id", "amount", "open_balance", "currency"],
     "documents": ["doc_id", "reference"],
     "parties": ["party_id", "name"],
 }
 
 
-def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str | None]) -> ImportResult:
+def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str | None],
+                 table: tuple[list[str], list[list]] | None = None) -> ImportResult:
+    """`table` is an already-extracted (header, rows), e.g. from a PDF statement read in the isolated parser."""
     missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
     if missing:
         raise IngestError(f"mapping incomplete: {missing}")
-    header, rows = read_table(filename, blob)
+    header, rows = table if table else read_table(filename, blob)
     idx = {f: header.index(col) for f, col in mapping.items() if col and col in header}
     res = ImportResult(kind=kind, source_sha256=hashlib.sha256(blob).hexdigest(), rows_received=len(rows))
     seen_ids = set()
@@ -241,6 +271,10 @@ def _canon(kind: str, raw: dict) -> dict:
     if kind == "ar":
         return {"id": s("invoice_id"), "ref_norm": norm_ref(s("invoice_id")),
                 "customer_alias": s("customer_alias"), "amount_cents": to_cents(raw["amount"]),
+                "open_cents": to_cents(raw["open_balance"]), "currency": s("currency").upper()}
+    if kind == "ap":
+        return {"id": s("bill_id"), "ref_norm": norm_ref(s("bill_id")),
+                "vendor_alias": s("vendor_alias"), "amount_cents": to_cents(raw["amount"]),
                 "open_cents": to_cents(raw["open_balance"]), "currency": s("currency").upper()}
     if kind == "documents":
         return {"id": s("doc_id"), "doc_type": s("doc_type"), "reference": s("reference"),

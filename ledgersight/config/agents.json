@@ -1,0 +1,23 @@
+{
+  "note": "Registered LedgerSight agents. Each agent may only use the tools listed here; TrustOps denies anything else. No agent uses a language model in the money path.",
+  "agents": [
+    {"code": "AG-01", "actor_id": "agent:intake", "name": "Intake & Validation",
+     "does": "Checks each file, quarantines bad rows, re-hashes stored files to prove they are unchanged",
+     "tools": ["upload.parse", "upload.verify", "document.extract"], "model": "none (rules)"},
+    {"code": "AG-02", "actor_id": "agent:mapping", "name": "Canonical Mapper",
+     "does": "Proposes column mappings (a person confirms) and verifies every row is in the standard format",
+     "tools": ["mapping.propose", "canonical.verify"], "model": "none (rules)"},
+    {"code": "AG-03", "actor_id": "agent:recon", "name": "Reconciliation",
+     "does": "Matches bank to ledger with fixed rules and raises typed exceptions. Cannot post anything",
+     "tools": ["run.compute"], "model": "none (deterministic)"},
+    {"code": "AG-04", "actor_id": "agent:triage", "name": "Exception Triage",
+     "does": "Asks TrustOps how each exception must be handled and routes it to the right reviewer",
+     "tools": ["exception.triage", "exception.route"], "model": "none (rules)"},
+    {"code": "AG-05", "actor_id": "agent:report", "name": "Report Composer",
+     "does": "Builds the Finance Reconciliation Report and the TrustOps Governance Report for a run",
+     "tools": ["report.compose"], "model": "none (templates)"},
+    {"code": "AG-06", "actor_id": "agent:query", "name": "Query Assistant",
+     "does": "Answers read-only questions about the open client book, with source citations",
+     "tools": ["query.index", "query.answer"], "model": "none (intent rules)"}
+  ]
+}

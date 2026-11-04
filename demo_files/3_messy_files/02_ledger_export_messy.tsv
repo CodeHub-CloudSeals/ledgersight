@@ -1,0 +1,6 @@
+entry_id	posted_date	account	description	reference	debit	credit	currency
+GL-M-1	2026-10-02	1100 Accounts Receivable	Customer 41 payment	INV-4101	1250.00		USD
+GL-M-2	2026-10-05	6100 Rent	October rent	LEASE-1041		900.00	USD
+GL-M-3	2026-10-14	6400 Hosting	Cloud hosting	CH-7801		129.00	USD
+GL-M-4	2026-10-15	6900 Misc	Both debit and credit filled	X-9	10.00	10.00	USD
+GL-M-5	2026-10-16	6900 Misc	No amount at all	X-10			USD

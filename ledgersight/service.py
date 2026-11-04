@@ -8,12 +8,14 @@ or contact a client: no such code path exists.
 """
 from __future__ import annotations
 
+import copy
 import csv
 import io
 import os
+import hashlib
 import shutil
+import time
 import uuid
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,14 +23,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
 from .auth import User
-from .core import evidence, ingest, policy, recon
+from .config import load as load_config
+from .core import evidence, ingest, policy, query, recon, reports
+from .core.store import Store
+
+SOURCES = load_config("sources.json")
+SOURCE_KINDS = [k["kind"] for k in SOURCES["kinds"]]
 
 TENANT = os.environ.get("LEDGERSIGHT_TENANT", "firm-01")  # internal id; never shown as a customer name
-WORKSPACES = {
-    "harborline": {"name": "Harborline Design LLC", "period": "October 2026", "industry": "Design studio"},
-    "bayview": {"name": "Bayview Marine Services", "period": "October 2026", "industry": "Marine services"},
-}
-# Which client books this deployment shows. The local demo runs one client (AVOCET_CLIENTS=harborline).
+# Client books come from configuration (generic demo names), never from code.
+WORKSPACES = {c["id"]: {k: v for k, v in c.items() if k != "id"} for c in load_config("clients.json")["clients"]}
+# Which client books this deployment shows. The local demo runs one client (AVOCET_CLIENTS=client-a).
 _only = [c.strip() for c in os.environ.get("AVOCET_CLIENTS", "").split(",") if c.strip() in WORKSPACES]
 if _only:
     WORKSPACES = {k: WORKSPACES[k] for k in _only}
@@ -37,9 +42,9 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class Denied(Exception):
-    def __init__(self, code: str, conceal: bool = False):
+    def __init__(self, code: str, conceal: bool = False, policy_id: str = ""):
         super().__init__(code)
-        self.code, self.conceal = code, conceal
+        self.code, self.conceal, self.policy_id = code, conceal, policy_id
 
 
 def _ts():
@@ -54,45 +59,193 @@ class Workspace:
         self.batches: dict[str, dict] = {}  # kind -> accepted import (latest)
         self.digests: dict[tuple, str] = {}  # (kind, sha) -> upload id, idempotency (workspace-scoped)
         self.blobs: dict[str, bytes] = {}
+        self.tables: dict[str, tuple] = {}  # "sha:<digest>" -> (header, rows) read from a PDF statement
         self.party_reviews: dict[str, dict] = {}  # line_id -> human confirmation of who the counterparty is
         self.runs: dict[str, dict] = {}
         self.log = evidence.EvidenceLog(key, "ledgersight-ed25519-1")
         self.started_at = _ts()
+        self.saved_events = 0  # how many evidence events are already in durable storage
+
+    # ---- durable state (everything except file bytes, which live on disk) ----
+    def to_state(self) -> dict:
+        return {"meta": self.meta, "uploads": self.uploads, "batches": self.batches,
+                "digests": [[k, s, uid] for (k, s), uid in self.digests.items()],
+                "tables": {k: [list(h), [list(r) for r in rows]] for k, (h, rows) in self.tables.items()},
+                "party_reviews": self.party_reviews, "runs": self.runs, "started_at": self.started_at}
+
+    @classmethod
+    def from_state(cls, wid: str, key, state: dict, events: list[dict], files_dir: Path) -> "Workspace":
+        from datetime import date
+        w = cls(wid, key)
+        w.meta.update(state.get("meta") or {})
+        w.uploads = state.get("uploads", {})
+        w.batches = state.get("batches", {})
+        for k in ("bank", "ledger"):  # dates come back as text; the matching engine needs real dates
+            for r in w.batches.get(k, {}).get("rows", []):
+                if isinstance(r.get("date"), str):
+                    r["date"] = date.fromisoformat(r["date"][:10])
+        w.digests = {(k, s): uid for k, s, uid in state.get("digests", [])}
+        w.tables = {k: (h, rows) for k, (h, rows) in state.get("tables", {}).items()}
+        w.party_reviews = state.get("party_reviews", {})
+        w.runs = state.get("runs", {})
+        for r in w.runs.values():
+            r["batch_key"] = tuple(r.get("batch_key") or ())
+        w.started_at = state.get("started_at", w.started_at)
+        for uid in w.uploads:
+            f = next(iter(files_dir.glob(f"{uid}.*")), None) if files_dir.exists() else None
+            if f:
+                w.blobs[uid] = f.read_bytes()
+        w.log.events = events
+        w.saved_events = len(events)
+        return w
+
+
+PERSIST = os.environ.get("AVOCET_PERSIST", "1") != "0"
 
 
 class Service:
     def __init__(self):
-        key_pem = os.environ.get("AVOCET_SIGNING_KEY_PEM")
-        self._key = (serialization.load_pem_private_key(key_pem.encode(), None) if key_pem
-                     else Ed25519PrivateKey.generate())
-        self.key_source = "secret store" if key_pem else "ephemeral (generated at start-up)"
-        self.ws: dict[str, Workspace] = {w: Workspace(w, self._key) for w in WORKSPACES}
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self.store = Store(DATA_DIR / "ledgersight.db") if PERSIST else None
+        self._key, self.key_source = self._load_key()
+        self.ws: dict[str, Workspace] = {}
+        for w in WORKSPACES:
+            state = self.store.load_workspace(w) if self.store else None
+            self.ws[w] = (Workspace.from_state(w, self._key, state, self.store.load_events(w), DATA_DIR / TENANT / w)
+                          if state else Workspace(w, self._key))
         self.security_log = evidence.EvidenceLog(self._key, "ledgersight-ed25519-1")
+        if self.store:
+            self.security_log.events = self.store.load_events("_security")
+        self._security_saved = len(self.security_log.events)
         self.region = os.environ.get("AVOCET_REGION_DECLARED", "local-development")
+
+    def _load_key(self):
+        """Signing key: secret store (env) > key file kept with the data > ephemeral (no storage)."""
+        pem = os.environ.get("AVOCET_SIGNING_KEY_PEM")
+        if pem:
+            return serialization.load_pem_private_key(pem.encode(), None), "secret store"
+        if not self.store:
+            return Ed25519PrivateKey.generate(), "ephemeral (generated at start-up)"
+        path = DATA_DIR / "signing-key.pem"
+        if path.exists():
+            return serialization.load_pem_private_key(path.read_bytes(), None), "key file in the data directory"
+        key = Ed25519PrivateKey.generate()
+        path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                           serialization.NoEncryption()))
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return key, "key file in the data directory"
+
+    def save(self, wid: str | None = None) -> None:
+        """Write the book's state and any new evidence events to durable storage."""
+        if not self.store:
+            return
+        for w in ([self.ws[wid]] if wid in self.ws else []):
+            for _ in range(3):  # another request may change the state mid-copy; retry
+                try:
+                    state = copy.deepcopy(w.to_state())
+                    break
+                except RuntimeError:
+                    continue
+            else:
+                state = None
+            if state is not None:
+                self.store.save_workspace(w.id, state)
+            new = w.log.events[w.saved_events:]
+            if new:
+                self.store.append_events(w.id, w.saved_events, list(new))
+                w.saved_events += len(new)
+        new = self.security_log.events[self._security_saved:]
+        if new:
+            self.store.append_events("_security", self._security_saved, list(new))
+            self._security_saved += len(new)
+
+    def ready(self) -> dict:
+        checks = {"signer": self._key is not None, "storage": (self.store.healthy() if self.store else None),
+                  "config": bool(policy.POLICIES) and bool(WORKSPACES)}
+        return {"ready": all(v is not False for v in checks.values()), "checks": checks,
+                "persistence": "sqlite" if self.store else "memory only"}
 
     def public_key_pem(self) -> bytes:
         return self._key.public_key().public_bytes(serialization.Encoding.PEM,
                                                    serialization.PublicFormat.SubjectPublicKeyInfo)
 
     # ---- gate ----------------------------------------------------------
-    def gate(self, user: User, wid: str, action: str, *, data_class="synthetic", model_route="deterministic",
-             maker_id=None, refs=None, run_id=None, rule=None, approval_id=None, batch_sha=None) -> Workspace:
+    def gate(self, user: User, wid: str, action: str, **kw) -> Workspace:
+        return self._gate(user, wid, action, **kw)[0]
+
+    def _gate(self, user: User, wid: str, action: str, *, data_class="synthetic", model_route="deterministic",
+              maker_id=None, refs=None, run_id=None, rule=None, approval_id=None, batch_sha=None, trace_id=None,
+              record=True, **extra) -> tuple[Workspace, policy.Decision]:
+        """A person asks TrustOps for an action. Every answer is signed into the evidence chain.
+        record=False is only for high-frequency read-only views (the live agent monitor): the policy is
+        still evaluated and any DENY is still recorded; only routine ALLOWed reads are not logged."""
         mem = {user.user_id: user.workspaces}
         req = {"actor_id": user.user_id, "role": user.role, "workspace_id": wid, "tool_action": action,
-               "data_class": data_class, "model_route": model_route, "maker_id": maker_id}
+               "data_class": data_class, "model_route": model_route, "maker_id": maker_id, **extra}
         d = policy.evaluate(req, mem)
         target = self.ws.get(wid) if wid in user.workspaces else None
         log = target.log if target else self.security_log
-        log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
-                   workflow_pack="cpa-bank-reconciliation", run_id=run_id, source_batch_sha256=batch_sha,
-                   source_line_refs=refs or [], canonical_version="canon-1", matching_rule_id=rule,
-                   model_route=model_route, action=action, policy_decision=f"{d.decision}:{d.reason_code}",
-                   approval_id=approval_id)
+        if record or d.decision != "ALLOW":
+            log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
+                       workflow_pack="cpa-bank-reconciliation", run_id=run_id, source_batch_sha256=batch_sha,
+                       source_line_refs=refs or [], canonical_version="canon-1", matching_rule_id=rule,
+                       model_route=model_route, action=action, policy_decision=d.label(), policy_id=d.policy_id,
+                       policy_version=d.policy_version, required_role=d.required_role, approval_id=approval_id,
+                       trace_id=trace_id)
         if d.decision != "ALLOW":
-            raise Denied(d.reason_code, conceal=(d.reason_code == "WORKSPACE_SCOPE"))
+            raise Denied(d.reason_code, conceal=(d.reason_code == "WORKSPACE_SCOPE"), policy_id=d.policy_id)
         if wid not in self.ws:
-            raise Denied("WORKSPACE_SCOPE", conceal=True)
-        return self.ws[wid]
+            raise Denied("WORKSPACE_SCOPE", conceal=True, policy_id="POL-01")
+        return self.ws[wid], d
+
+    def agent_gate(self, user: User, w: Workspace, agent_actor: str, action: str, *, run_id=None, trace_id=None,
+                   refs=None, batch_sha=None, rule=None, data_class="synthetic", model_route="deterministic",
+                   **extra) -> policy.Decision:
+        """An agent asks TrustOps for an action. Agents act only inside the delegating person's
+        client scope and only with their registered tools. The decision is signed; nothing is raised,
+        so the caller decides how to stop (fail closed) on DENY."""
+        agent = policy.AGENT_BY_ACTOR.get(agent_actor, {})
+        mem = {agent_actor: {w.id} & user.workspaces}
+        req = {"actor_id": agent_actor, "role": agent_actor, "workspace_id": w.id, "tool_action": action,
+               "data_class": data_class, "model_route": model_route, **extra}
+        d = policy.evaluate(req, mem)
+        w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="agent", actor_id=agent_actor,
+                     agent_code=agent.get("code"), delegated_by=user.user_id, workflow_pack="cpa-bank-reconciliation",
+                     run_id=run_id, trace_id=trace_id, source_batch_sha256=batch_sha, source_line_refs=refs or [],
+                     canonical_version="canon-1", matching_rule_id=rule, model_route=model_route, action=action,
+                     policy_decision=d.label(), policy_id=d.policy_id, policy_version=d.policy_version,
+                     required_role=d.required_role)
+        return d
+
+    def _agent_or_stop(self, user, w, agent_actor, action, **kw) -> policy.Decision:
+        d = self.agent_gate(user, w, agent_actor, action, **kw)
+        if d.decision == "DENY":
+            raise Denied(d.reason_code, policy_id=d.policy_id)
+        return d
+
+    PROFILE_LIMITS = {"name": 80, "period": 40, "industry": 60}
+
+    def update_profile(self, user, wid, fields: dict):
+        """Rename a client book / set its period. Names are entered by the firm, never shipped in code."""
+        w = self.gate(user, wid, "workspace.configure", refs=sorted(k for k in fields if k in self.PROFILE_LIMITS))
+        clean = {}
+        for k, limit in self.PROFILE_LIMITS.items():
+            if k in fields:
+                v = " ".join(str(fields[k] or "").split())
+                if not v or len(v) > limit:
+                    raise ValueError(f"{k} must be 1–{limit} characters")
+                clean[k] = v
+        if not clean:
+            raise ValueError("nothing to change")
+        w.meta.update(clean)
+        WORKSPACES[wid] = w.meta
+        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
+                     action="workspace.profile_updated", policy_decision="ALLOW:OK", policy_id="POL-02",
+                     source_line_refs=sorted(clean), workflow_pack="cpa-bank-reconciliation")
+        return {"id": wid, **w.meta}
 
     def workspaces_for(self, user: User):
         return [{"id": w, **WORKSPACES[w], "status": self.status(w)} for w in WORKSPACES if w in user.workspaces]
@@ -101,26 +254,39 @@ class Service:
         w = self.ws[wid]
         last = list(w.runs.values())[-1] if w.runs else None
         exc = last["result"]["exceptions"] if last else []
-        return {"bank": "bank" in w.batches, "ledger": "ledger" in w.batches, "ar": "ar" in w.batches,
-                "documents": "documents" in w.batches, "parties": "parties" in w.batches,
+        return {**{k: k in w.batches for k in SOURCE_KINDS},
                 "runs": len(w.runs), "uploads": len(w.uploads),
                 "last_run": last["id"] if last else None,
                 "matched": len(last["result"]["matches"]) if last else None,
-                "exceptions": len(exc), "open_exceptions": sum(e["status"] == "OPEN" for e in exc),
+                "exceptions": len(exc), "open_exceptions": sum(e["status"] in ("OPEN", "RETURNED") for e in exc),
                 "variance_cents": last["result"]["variance_cents"] if last else None,
                 "unexplained_cents": last["result"]["unexplained_variance_cents"] if last else None,
                 "last_activity": w.log.events[-1]["timestamp_utc"] if w.log.events else w.started_at}
 
     # ---- uploads -------------------------------------------------------
-    def upload(self, user, wid, kind, filename, blob, data_class="synthetic"):
+    def upload(self, user, wid, kind, filename, blob, data_class="synthetic", origin="upload"):
         if kind not in ingest.CANONICAL:
             raise ValueError("unknown source type")
         w = self.gate(user, wid, "upload.create", data_class=data_class)
-        if filename.lower().endswith(".pdf"):
+        is_pdf = filename.lower().endswith(".pdf")
+        if is_pdf and kind not in self.PDF_TABLE_KINDS:
             raise ingest.IngestError("PDFs go through document intake: choose 'Invoice / receipt PDF'.")
-        header, rows = ingest.read_table(filename, blob)  # quarantine checks happen here
+        if len(blob) > ingest.MAX_BYTES:
+            raise ingest.IngestError("file exceeds 10 MB limit")
+        sha = hashlib.sha256(blob).hexdigest()
+        self._agent_or_stop(user, w, "agent:intake", "upload.parse", batch_sha=sha, data_class=data_class, refs=[kind])
+        unsafe = []
+        if is_pdf:  # a statement printed as PDF: read its table in the isolated parser
+            out = self._pdf_worker(blob, "statement")
+            if out.get("error"):
+                raise ingest.IngestError(out["error"])
+            header, rows, unsafe = out["header"], out["rows"], out.get("unsafe_content", [])
+            if len(rows) > ingest.MAX_ROWS:
+                raise ingest.IngestError(f"more than {ingest.MAX_ROWS} rows")
+            w.tables[f"sha:{sha}"] = (header, rows)
+        else:
+            header, rows = ingest.read_table(filename, blob)  # quarantine checks happen here
         uid = "UP-" + uuid.uuid4().hex[:8]
-        sha = __import__("hashlib").sha256(blob).hexdigest()
         prefix = DATA_DIR / TENANT / wid
         prefix.mkdir(parents=True, exist_ok=True)
         (prefix / f"{uid}.{filename.rsplit('.', 1)[-1].lower()}").write_bytes(blob)
@@ -129,13 +295,12 @@ class Service:
                "header": header, "preview": [[str(c) if c is not None else "" for c in r] for r in rows[:6]],
                "rows": len(rows), "proposed_mapping": mapping, "state": "MAPPED_PENDING_CONFIRMATION",
                "uploaded_by": user.user_id, "uploaded_at": _ts(),
-               "duplicate_of": w.digests.get((kind, sha)),
-               "mapping_method": "deterministic header rules (no AI model invoked)"}
+               "duplicate_of": w.digests.get((kind, sha)), "origin": origin, "unsafe_content": unsafe,
+               "mapping_method": ("PDF table read by column position, then " if is_pdf else "") +
+                                 "deterministic header rules (no AI model invoked)"}
         w.uploads[uid] = rec
         w.blobs[uid] = blob
-        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="agent", actor_id="agent:intake",
-                     action="upload.quarantine_passed", policy_decision="ALLOW:OK", source_batch_sha256=sha,
-                     workflow_pack="cpa-bank-reconciliation", model_route="deterministic")
+        self._agent_or_stop(user, w, "agent:mapping", "mapping.propose", batch_sha=sha, data_class=data_class, refs=[kind])
         return rec
 
     def commit_mapping(self, user, wid, upload_id, mapping):
@@ -151,12 +316,14 @@ class Service:
             up["health"] = {**w.uploads[dup]["health"], "note": f"identical file already imported as {dup}; "
                             "no rows added twice"}
             return up
-        res = ingest.import_table(up["kind"], up["filename"], w.blobs[upload_id], mapping)
+        res = ingest.import_table(up["kind"], up["filename"], w.blobs[upload_id], mapping,
+                                  table=w.tables.get(f"sha:{up['sha256']}"))
         up.update(state="VALIDATED", committed_mapping=mapping, committed_by=user.user_id)
         up["health"] = {"received": res.rows_received, "accepted": len(res.accepted), "rejected": res.rejected,
                         "debit_cents": res.debit_cents, "credit_cents": res.credit_cents, "net_cents": res.net_cents,
                         "control_total_ok": res.rows_received == len(res.accepted) + len(res.rejected)}
-        w.batches[up["kind"]] = {"upload_id": upload_id, "sha256": up["sha256"], "rows": res.accepted}
+        w.batches[up["kind"]] = {"upload_id": upload_id, "sha256": up["sha256"], "rows": res.accepted,
+                                 "origin": up.get("origin", "upload"), "filename": up["filename"]}
         w.digests[(up["kind"], up["sha256"])] = upload_id
         w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                      action="mapping.confirmed", policy_decision="ALLOW:OK", source_batch_sha256=up["sha256"],
@@ -164,19 +331,29 @@ class Service:
         return up
 
     # ---- text-PDF document intake ----------------------------------------
+    PDF_TABLE_KINDS = ("bank", "ledger")  # statements / ledger listings may arrive as PDF
+
+    @staticmethod
+    def _pdf_worker(blob: bytes, mode: str | None = None) -> dict:
+        """Parse a PDF in a separate, resource-limited process with a minimal environment."""
+        import json, subprocess, sys
+        try:
+            proc = subprocess.run([sys.executable, "-I", str(Path(__file__).with_name("pdf_worker.py")), *([mode] if mode else [])],
+                                  input=blob, capture_output=True, timeout=15, env={"PATH": os.environ.get("PATH", "")})
+            return json.loads(proc.stdout or b"{}") if proc.returncode == 0 else {"error": "parser stopped (resource limit)"}
+        except subprocess.TimeoutExpired:
+            return {"error": "parser timed out (15 s limit)"}
+        except ValueError:
+            return {"error": "parser returned no result"}
     def upload_pdf(self, user, wid, filename, blob, data_class="synthetic"):
         w = self.gate(user, wid, "upload.create", data_class=data_class)
         if not filename.lower().endswith(".pdf"):
             raise ingest.IngestError("PDF files only for document intake")
         if len(blob) > ingest.MAX_BYTES:
             raise ingest.IngestError("file exceeds 10 MB limit")
-        import hashlib, json, subprocess, sys
-        try:
-            proc = subprocess.run([sys.executable, "-I", str(Path(__file__).with_name("pdf_worker.py"))],
-                                  input=blob, capture_output=True, timeout=15, env={"PATH": os.environ.get("PATH", "")})
-            out = json.loads(proc.stdout or b"{}") if proc.returncode == 0 else {"error": "parser stopped (resource limit)"}
-        except subprocess.TimeoutExpired:
-            out = {"error": "parser timed out (15 s limit)"}
+        self._agent_or_stop(user, w, "agent:intake", "document.extract", batch_sha=hashlib.sha256(blob).hexdigest(),
+                            data_class=data_class, refs=["pdf"])
+        out = self._pdf_worker(blob)
         sha = hashlib.sha256(blob).hexdigest()
         if out.get("error"):
             w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="agent", actor_id="agent:intake",
@@ -187,12 +364,15 @@ class Service:
         prefix = DATA_DIR / TENANT / wid
         prefix.mkdir(parents=True, exist_ok=True)
         (prefix / f"{did}.pdf").write_bytes(blob)
+        dup = next((u["id"] for u in w.uploads.values() if u.get("kind") == "pdf" and u.get("sha256") == sha), None)
         rec = {"id": did, "kind": "pdf", "filename": filename, "sha256": sha, "size": len(blob), **out,
-               "state": "EXTRACTED_PENDING_CONFIRMATION", "uploaded_by": user.user_id, "uploaded_at": _ts()}
+               "state": "EXTRACTED_PENDING_CONFIRMATION", "uploaded_by": user.user_id, "uploaded_at": _ts(),
+               "duplicate_of": dup}
         w.uploads[did] = rec
-        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="agent", actor_id="agent:extract",
+        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="agent", actor_id="agent:intake", agent_code="AG-01",
+                     delegated_by=user.user_id,
                      action="document.extracted" + (".unsafe_content_flagged" if out["unsafe_content"] else ""),
-                     policy_decision="ALLOW:OK", source_batch_sha256=sha, model_route="deterministic",
+                     policy_decision="ALLOW:OK", policy_id="POL-02", source_batch_sha256=sha, model_route="deterministic",
                      workflow_pack="cpa-bank-reconciliation")
         return rec
 
@@ -210,9 +390,10 @@ class Service:
         row = {"id": doc_id, "doc_type": doc_type or "vendor_invoice", "reference": ref, "ref_norm": ingest.norm_ref(ref),
                "vendor_alias": (fields.get("vendor") or "")[:80], "amount_cents": amt, "file": up["filename"],
                "source_row": 1, "source_sha256": up["sha256"], "confirmed_by": user.user_id}
-        batch = w.batches.setdefault("documents", {"upload_id": None, "sha256": "", "rows": []})
+        batch = w.batches.setdefault("documents", {"upload_id": None, "sha256": "", "rows": [], "origin": "upload"})
         batch["rows"] = [r for r in batch["rows"] if r["ref_norm"] != row["ref_norm"]] + [row]
-        batch["sha256"] = __import__("hashlib").sha256((batch["sha256"] + up["sha256"]).encode()).hexdigest()
+        batch["sha256"] = hashlib.sha256((batch["sha256"] + up["sha256"]).encode()).hexdigest()
+        batch["pdf_added"] = True
         changed = {k: v for k, v in fields.items() if str(v) != str(up["fields"].get(k, {}).get("value", ""))}
         up.update(state="CONFIRMED", confirmed_fields=fields, human_edits=changed, confirmed_by=user.user_id)
         w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
@@ -227,7 +408,7 @@ class Service:
         """Opens a saved email and hands back its attachments. Each attachment then goes
         through exactly the same checks as a direct upload. The email body is data only:
         instruction-like text is flagged, never acted on."""
-        import base64, email, hashlib, re
+        import base64, email
         from email import policy as _pol
         w = self.gate(user, wid, "upload.create")
         if len(blob) > 25 * 1024 * 1024:
@@ -257,70 +438,187 @@ class Service:
                 "attachments": atts, "skipped": skipped, "unsafe_content": flags}
 
     def load_sample(self, user, wid):
-        prefix = wid
+        """Synthetic sample files, imported through the normal upload path but labelled SIMULATED."""
         out = []
-        for kind in ("bank", "ledger", "ar", "documents", "parties"):
-            name = f"{prefix}_{kind}.csv"
+        for kind in SOURCE_KINDS:
+            name = f"{wid}_{kind}.csv"
             if not (FIXTURES / name).exists():
                 continue
-            up = self.upload(user, wid, kind, name, (FIXTURES / name).read_bytes())
+            up = self.upload(user, wid, kind, name, (FIXTURES / name).read_bytes(), origin="sample")
             out.append(self.commit_mapping(user, wid, up["id"], up["proposed_mapping"]))
         return out
+
+    def sample_files(self, user, wid):
+        self.gate(user, wid, "workspace.read")
+        return sorted(p.name for p in FIXTURES.glob(f"{wid}_*") if p.suffix != ".json")
+
+    # ---- sources: what is connected, and how honestly can we label it ----------
+    def sources(self, user, wid):
+        w = self.gate(user, wid, "workspace.read")
+        kinds = []
+        for k in SOURCES["kinds"]:
+            b = w.batches.get(k["kind"])
+            status = "NOT_CONNECTED" if not b else ("SIMULATED" if b.get("origin") == "sample" and not b.get("pdf_added") else "VERIFIED_UPLOAD")
+            kinds.append({**k, "status": status, "rows": len(b["rows"]) if b else 0, "sha256": b["sha256"] if b else None,
+                          "filename": b.get("filename") if b else None})
+        conns = []
+        for c in SOURCES["connectors"]:
+            st = c["status"]
+            if c.get("env") and all(os.environ.get(e) for e in c["env"]):
+                st = c.get("status_when_configured", st)
+            conns.append({"id": c["id"], "name": c["name"], "status": st})
+        return {"kinds": kinds, "connectors": conns, "status_labels": SOURCES["status_labels"],
+                "not_accepted": SOURCES["not_accepted"], "accepted_extensions": sorted(ingest.ALLOWED_EXT | {".pdf", ".eml"})}
 
     # ---- runs ----------------------------------------------------------
     def run(self, user, wid):
         w = self.gate(user, wid, "run.create")
         if "bank" not in w.batches or "ledger" not in w.batches:
-            raise ValueError("Import a bank statement and a ledger first.")
+            labels = {k["kind"]: k["label"] for k in SOURCES["kinds"]}
+            missing = [labels[k] for k in ("bank", "ledger") if k not in w.batches]
+            raise ValueError(f"Missing: {' and '.join(missing)}. Upload and confirm "
+                             f"{'it' if len(missing) == 1 else 'them'} on the Sources page, then run again.")
         key = tuple(w.batches[k]["sha256"] for k in sorted(w.batches))
         for r in w.runs.values():
             if r["batch_key"] == key:
                 return r  # idempotent: same inputs, same run
         b = w.batches
-        res = recon.reconcile(wid, b["bank"]["rows"], b["ledger"]["rows"],
-                              b.get("ar", {}).get("rows"), b.get("documents", {}).get("rows"))
         rid = "RUN-" + uuid.uuid4().hex[:6]
-        lines = {r["id"]: r for k in ("bank", "ledger") for r in b[k]["rows"]}
-        lines.update({r["id"]: r for r in b.get("ar", {}).get("rows", [])})
-        run = {"id": rid, "batch_key": key, "created_by": user.user_id, "created_at": _ts(),
-               "engine_version": res.engine_version, "result": res.to_dict(),
+        trace = "TR-" + uuid.uuid4().hex[:12]
+        steps: list[dict] = []
+        ctx = {}
+
+        def step(agent_actor, action, title, rows_in, work, **gate_kw):
+            """One agent step: ask TrustOps first, then do the work, then record what happened."""
+            agent = policy.AGENT_BY_ACTOR[agent_actor]
+            t0 = time.perf_counter()
+            d = self.agent_gate(user, w, agent_actor, action, run_id=rid, trace_id=trace, **gate_kw)
+            rec = {"agent": agent["code"], "name": agent["name"], "actor_id": agent_actor, "action": action, "title": title,
+                   "decision": d.decision, "reason_code": d.reason_code, "policy_id": d.policy_id,
+                   "policy_name": d.policy_name, "policy_version": d.policy_version, "rows_in": rows_in, "rows_out": 0,
+                   "trace_id": trace, "step_id": f"{trace}.{len(steps) + 1}", "started_at": _ts(), "status": "DONE"}
+            steps.append(rec)
+            if d.decision == "DENY":  # fail closed: the workflow stops and the refusal is already signed
+                rec.update(status="BLOCKED", duration_ms=round((time.perf_counter() - t0) * 1000, 2),
+                           summary=f"Stopped: TrustOps denied {action} ({d.reason_code}, {d.policy_id}).")
+                raise Denied(d.reason_code, policy_id=d.policy_id)
+            rows_out, summary, extra = work()
+            rec.update(rows_out=rows_out, summary=summary, duration_ms=round((time.perf_counter() - t0) * 1000, 2), **(extra or {}))
+            return d
+
+        # AG-01: re-hash every stored file and prove it is the file that was checked at upload
+        def intake():
+            checked, ok = 0, 0
+            for k, batch in b.items():
+                uid = batch.get("upload_id")
+                if uid in w.blobs and uid in w.uploads:
+                    checked += 1
+                    ok += hashlib.sha256(w.blobs[uid]).hexdigest() == w.uploads[uid]["sha256"]
+            if checked != ok:
+                raise ValueError("a stored source file no longer matches its fingerprint; re-import it")
+            n = sum(len(x["rows"]) for x in b.values())
+            return n, (f"{len(b)} sources present ({', '.join(f'{k} {len(v['rows'])}' for k, v in b.items())}); "
+                       f"{ok}/{checked} stored files re-hashed and unchanged"), {"sources": sorted(b)}
+        step("agent:intake", "upload.verify", "Verify sources and file fingerprints",
+             sum(len(x["rows"]) for x in b.values()), intake, refs=sorted(b))
+
+        # AG-02: every row must already be in the canonical shape (integer cents, ISO currency, a date)
+        def mapper():
+            bad = [r["id"] for k in ("bank", "ledger") for r in b[k]["rows"]
+                   if not isinstance(r.get("amount_cents"), int) or len(r.get("currency") or "") != 3 or not r.get("date")]
+            n = len(b["bank"]["rows"]) + len(b["ledger"]["rows"])
+            if bad:
+                raise ValueError(f"rows not in canonical form: {bad[:5]}")
+            return n, f"{n} bank and ledger rows in canonical form (amounts in integer cents, ISO currency, dates)", None
+        step("agent:mapping", "canonical.verify", "Check every row is in the standard format",
+             len(b["bank"]["rows"]) + len(b["ledger"]["rows"]), mapper)
+
+        # AG-03: deterministic matching
+        def reconcile():
+            res = recon.reconcile(wid, b["bank"]["rows"], b["ledger"]["rows"], b.get("ar", {}).get("rows"),
+                                  b.get("documents", {}).get("rows"), b.get("ap", {}).get("rows"))
+            ctx["res"] = res
+            return (len(res.matches) + len(res.exceptions),
+                    f"{len(res.matches)} matched automatically, {len(res.exceptions)} exception(s) raised; "
+                    f"variance {res.variance_cents / 100:.2f}, unexplained {res.unexplained_variance_cents / 100:.2f}",
+                    {"engine_version": res.engine_version})
+        step("agent:recon", "run.compute", "Match bank to ledger", len(b["bank"]["rows"]) + len(b["ledger"]["rows"]),
+             reconcile, rule=recon.ENGINE_VERSION)
+        result = ctx["res"].to_dict()
+
+        # AG-04: TrustOps decides how each exception must be handled
+        def triage():
+            routed = {}
+            for e in result["exceptions"]:
+                d = self.agent_gate(user, w, "agent:triage", "exception.route", run_id=rid, trace_id=trace,
+                                    refs=e["evidence_refs"], rule=e["rule_id"], exception_type=e["type"])
+                e["trustops"] = {**d.to_dict(), "required_role_label": policy.ROLE_LABELS.get(d.required_role or "", d.required_role)}
+                routed[d.policy_id] = routed.get(d.policy_id, 0) + 1
+            return (len(result["exceptions"]),
+                    f"{len(result['exceptions'])} exception(s) sent to TrustOps: " +
+                    (", ".join(f"{p} x{n}" for p, n in sorted(routed.items())) or "none") + "; all need a CPA reviewer",
+                    {"escalations": routed})
+        step("agent:triage", "exception.triage", "Route exceptions for human review", len(result["exceptions"]), triage)
+
+        # AG-05: reports are composed from this run; both carry the same run id
+        step("agent:report", "report.compose", "Prepare finance and governance reports",
+             len(result["matches"]) + len(result["exceptions"]),
+             lambda: (2, f"Finance report FIN-{rid} and governance report GOV-{rid} ready (same run id {rid})",
+                      {"reports": [f"FIN-{rid}", f"GOV-{rid}"]}))
+
+        # AG-06: the query assistant may cite only this book's rows and this run
+        lines = {r["id"]: dict(r, kind=k) for k in ("bank", "ledger", "ar", "ap") for r in b.get(k, {}).get("rows", [])}
+        step("agent:query", "query.index", "Index this run for Ask LedgerSight", len(lines),
+             lambda: (len(lines) + len(result["exceptions"]),
+                      f"{len(lines)} source rows and {len(result['exceptions'])} exceptions available to read-only questions", None))
+
+        run = {"id": rid, "trace_id": trace, "batch_key": key, "created_by": user.user_id, "created_at": _ts(),
+               "engine_version": result["engine_version"], "result": result, "workflow": steps,
                "lines": {k: {kk: (str(vv) if kk == "date" else vv) for kk, vv in v.items()} for k, v in lines.items()},
                "decisions": {}}
         w.runs[rid] = run
-        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="agent", actor_id="agent:recon",
-                     run_id=rid, action="run.compute", policy_decision="ALLOW:OK", model_route="deterministic",
-                     matching_rule_id=res.engine_version, workflow_pack="cpa-bank-reconciliation",
-                     source_line_refs=[m.bank_id for m in res.matches])
         return run
 
+    DECISIONS = {"ACCEPT": "ACCEPTED", "REJECT": "REJECTED", "RETURN": "RETURNED"}
+
     def decide(self, user, wid, run_id, exc_id, decision, note):
-        if decision not in ("ACCEPT", "REJECT"):
-            raise ValueError("decision must be ACCEPT or REJECT")
+        if decision not in self.DECISIONS:
+            raise ValueError("decision must be ACCEPT, REJECT or RETURN")
         w = self.ws.get(wid)
         run = w.runs.get(run_id) if w and wid in user.workspaces else None
         exc = next((e for e in (run or {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
         maker = (exc or {}).get("proposed_by", "agent:recon")
-        w = self.gate(user, wid, "exception.decide", maker_id=maker, run_id=run_id,
-                      refs=(exc or {}).get("evidence_refs"), rule=(exc or {}).get("rule_id"))
+        tro = (exc or {}).get("trustops") or {}
+        w, d = self._gate(user, wid, "exception.decide", maker_id=maker, run_id=run_id,
+                          refs=(exc or {}).get("evidence_refs"), rule=(exc or {}).get("rule_id"),
+                          required_role=tro.get("required_role"), escalation_policy_id=tro.get("policy_id"))
         if not exc:
             raise KeyError(exc_id)
-        if exc["status"] != "OPEN":
+        if exc["status"] not in ("OPEN", "RETURNED"):
             raise ValueError(f"already {exc['status']}")
         aid = "APR-" + uuid.uuid4().hex[:6]
-        exc.update(status="ACCEPTED" if decision == "ACCEPT" else "REJECTED", reviewer=user.user_id,
-                   reviewed_at=_ts(), review_note=note, approval_id=aid,
-                   effect="Local review decision only. Nothing posted to any accounting system or bank.")
+        effect = ("Returned to the preparer for correction. " if decision == "RETURN" else "Local review decision only. ") + \
+                 "Nothing posted to any accounting system or bank."
+        exc.setdefault("history", []).append({"decision": decision, "by": user.user_id, "at": _ts(), "note": note, "approval_id": aid})
+        exc.update(status=self.DECISIONS[decision], reviewer=user.user_id, reviewed_at=_ts(), review_note=note,
+                   approval_id=aid, effect=effect, approval_policy=d.policy_id)
         w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
-                     run_id=run_id, action=f"exception.{decision.lower()}", policy_decision="ALLOW:OK",
+                     run_id=run_id, action=f"exception.{decision.lower()}", policy_decision=d.label(),
+                     policy_id=d.policy_id, policy_version=d.policy_version,
                      approval_id=aid, source_line_refs=exc["evidence_refs"], matching_rule_id=exc["rule_id"],
-                     workflow_pack="cpa-bank-reconciliation")
+                     workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return exc
 
     def propose(self, user, wid, run_id, exc_id, note):
         """Preparer proposes a resolution; becomes the maker, so cannot also approve."""
         w = self.gate(user, wid, "exception.propose", run_id=run_id)
-        exc = next(e for e in w.runs[run_id]["result"]["exceptions"] if e["id"] == exc_id)
-        exc.update(proposed_by=user.user_id, proposal_note=note)
+        run = w.runs.get(run_id)
+        exc = next((e for e in (run or {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
+        if not exc:
+            raise KeyError(exc_id)
+        if exc["status"] not in ("OPEN", "RETURNED"):
+            raise ValueError(f"already {exc['status']}")
+        exc.update(proposed_by=user.user_id, proposal_note=note, status="OPEN")
         return exc
 
     # ---- evidence + export --------------------------------------------
@@ -485,7 +783,7 @@ class Service:
     def trace(self, user, wid, line_id):
         w = self.gate(user, wid, "workspace.read", refs=[line_id])
         line, kind = None, None
-        for k in ("bank", "ledger", "ar"):
+        for k in ("bank", "ledger", "ar", "ap"):
             for r in w.batches.get(k, {}).get("rows", []):
                 if r["id"] == line_id:
                     line, kind = r, k
@@ -521,6 +819,12 @@ class Service:
                               "detail": {"why": e["why"], "suggestion": e.get("suggestion"), "rule": e["rule_id"],
                                          "still_owed": e.get("residual_cents")},
                               "who": "agent:recon (deterministic)", "when": run["created_at"], "proof": f"run {run['id']}"})
+                t = e.get("trustops")
+                if t:
+                    steps.append({"stage": "TrustOps decision", "title": f"{t['decision']} · {t['policy_id']} {t['policy_name']}",
+                                  "detail": {"required_role": t.get("required_role_label"), "policy_set": t["policy_version"],
+                                             "routed_by": "AG-04 Exception Triage"},
+                                  "who": "TrustOps", "when": run["created_at"], "proof": f"trace {run.get('trace_id')}"})
                 if e["status"] != "OPEN":
                     decision = e
                     steps.append({"stage": "Decided", "title": f"{e['status'].title()} by {e['reviewer']}",
@@ -593,6 +897,115 @@ class Service:
                 "boundary": "Read-only review output. No postings, payments or client emails.",
                 "generated_by": user.user_id, "generated_at": _ts()}
 
+    # ---- reports (AG-05): finance + governance, same run id, several formats --------
+    def report(self, user, wid, run_id, kind, fmt="json") -> tuple[dict, bytes]:
+        if kind not in reports.KINDS or fmt not in reports.FORMATS:
+            raise ValueError("report must be finance or governance; format json, csv, xlsx or pdf")
+        w = self.gate(user, wid, "export.read", run_id=run_id)
+        run = w.runs.get(run_id)
+        if not run:
+            raise KeyError(run_id)
+        self._agent_or_stop(user, w, "agent:report", "report.compose", run_id=run_id, trace_id=run.get("trace_id"),
+                            refs=[f"{kind}.{fmt}"])
+        common = {"client": w.meta, "run": run, "generated_by": user.user_id, "generated_at": _ts()}
+        if kind == "finance":
+            rep = reports.finance_report(inputs={k: {"sha256": v["sha256"], "rows": len(v["rows"])} for k, v in w.batches.items()},
+                                         **common)
+        else:
+            rep = reports.governance_report(events=w.log.events, verification=evidence.verify(w.log.events, self.public_key_pem()),
+                                            policies=policy.POLICIES, policy_version=policy.POLICY_VERSION,
+                                            key_id=w.log.key_id, **common)
+        return rep, reports.RENDER[fmt](rep)
+
+    # ---- Ask LedgerSight (AG-06): read-only, intent-limited, cited ------------------
+    def ask(self, user, wid, question):
+        question = (question or "")[:500]
+        w = self.gate(user, wid, "query.ask")
+        run = list(w.runs.values())[-1] if w.runs else None
+        parties = w.batches.get("parties", {}).get("rows", [])
+        allowed = [w.meta["name"], wid] + [p["name"] for p in parties] + [a for p in parties for a in p["aliases"]] + \
+                  [r.get(f) for k in ("ar", "ap", "documents") for r in w.batches.get(k, {}).get("rows", [])
+                   for f in ("customer_alias", "vendor_alias") if r.get(f)]
+        cls = query.classify(question, allowed)
+        d = self.agent_gate(user, w, "agent:query", "query.answer", run_id=run["id"] if run else None,
+                            trace_id=run.get("trace_id") if run else None, query_class=cls)
+        if d.decision != "ALLOW":
+            return {**query.refusal(d.reason_code), "trustops": d.to_dict()}
+        ctx = {"client": w.meta, "run": run, "lines": (run or {}).get("lines", {}),
+               "files": {u["sha256"]: u["filename"] for u in w.uploads.values()}}
+        res = query.answer(question, ctx)
+        res["trustops"] = d.to_dict()
+        res["run_id"] = run["id"] if run else None
+        return res
+
+    def ask_suggestions(self, user, wid):
+        w = self.gate(user, wid, "workspace.read")
+        run = list(w.runs.values())[-1] if w.runs else None
+        return {"suggestions": query.suggestions({"run": run})}
+
+    # ---- agent attempts (security demonstration; nothing is ever executed) ----------
+    def agent_attempt(self, user, wid, agent_code, action, **extra):
+        agent = policy.AGENTS.get(agent_code) or policy.AGENT_BY_ACTOR.get(agent_code)
+        if not agent:
+            raise ValueError("unknown agent")
+        if wid not in user.workspaces or wid not in self.ws:
+            self.security_log.append(tenant_id=TENANT, workspace_id=wid, actor_type="agent", actor_id=agent["actor_id"],
+                                     agent_code=agent["code"], delegated_by=user.user_id, action=action,
+                                     policy_decision="DENY:WORKSPACE_SCOPE", policy_id="POL-01",
+                                     policy_version=policy.POLICY_VERSION, workflow_pack="cpa-bank-reconciliation")
+            raise Denied("WORKSPACE_SCOPE", conceal=True, policy_id="POL-01")
+        d = self.agent_gate(user, self.ws[wid], agent["actor_id"], action, **extra)
+        return {"decision": d.decision, "reason_code": d.reason_code, "policy_id": d.policy_id, "policy_name": d.policy_name,
+                "actor": f"{agent['code']} {agent['name']}", "executed": False}
+
+    # ---- live agent monitor: which agent is working, and how is it doing ----------
+    ACTIVE_SECONDS = 8
+
+    def agents_status(self, user, wid):
+        """Built only from the signed evidence log and the latest run, so it shows what agents really did."""
+        w = self.gate(user, wid, "workspace.read", record=False)
+        now = datetime.now(timezone.utc)
+        run = list(w.runs.values())[-1] if w.runs else None
+        steps = {s["agent"]: s for s in (run or {}).get("workflow", [])}
+        evs = [dict(e, seq=i) for i, e in enumerate(w.log.events) if e.get("actor_type") == "agent" and e.get("agent_code")]
+        out = []
+        for code, a in policy.AGENTS.items():
+            mine = [e for e in evs if e["agent_code"] == code]
+            counts = {k: sum(str(e["policy_decision"]).startswith(k) for e in mine) for k in ("ALLOW", "ESCALATE", "DENY")}
+            last = mine[-1] if mine else None
+            age = (now - datetime.fromisoformat(last["timestamp_utc"])).total_seconds() if last else None
+            if not last:
+                status, note = "NOT_USED_YET", "Has not been asked to do anything in this book yet."
+            elif str(last["policy_decision"]).startswith("DENY"):
+                status, note = "BLOCKED", f"Last request was refused by TrustOps: {last['action']} ({last['policy_decision'].split(':', 1)[1]}, {last.get('policy_id')})."
+            elif age is not None and age <= self.ACTIVE_SECONDS:
+                status, note = "WORKING", f"Active in the last {self.ACTIVE_SECONDS} seconds: {last['action']}."
+            else:
+                status, note = "IDLE", f"Finished. Last action: {last['action']}."
+            out.append({"code": code, "actor_id": a["actor_id"], "name": a["name"], "does": a["does"], "tools": a["tools"],
+                        "model": a["model"], "status": status, "status_note": note, "counts": counts, "actions": len(mine),
+                        "last": ({"at": last["timestamp_utc"], "seconds_ago": round(age, 1), "action": last["action"],
+                                  "decision": last["policy_decision"], "policy_id": last.get("policy_id"), "run_id": last.get("run_id")}
+                                 if last else None),
+                        "last_run_step": steps.get(code),
+                        "recent": [{"seq": e["seq"], "at": e["timestamp_utc"], "action": e["action"], "decision": e["policy_decision"],
+                                    "policy_id": e.get("policy_id"), "refs": (e.get("source_line_refs") or [])[:4]} for e in mine[-5:][::-1]]})
+        return {"run_id": run["id"] if run else None, "trace_id": (run or {}).get("trace_id"), "server_time": now.isoformat(),
+                "active_window_seconds": self.ACTIVE_SECONDS, "agents": out,
+                "feed": [{"seq": e["seq"], "at": e["timestamp_utc"], "agent": e["agent_code"], "actor_id": e["actor_id"],
+                          "action": e["action"], "decision": e["policy_decision"], "policy_id": e.get("policy_id"),
+                          "run_id": e.get("run_id"), "delegated_by": e.get("delegated_by")} for e in evs[-40:][::-1]]}
+
+    # ---- rulebooks: the policy set, read-only ------------------------------------
+    def rulebooks(self):
+        return {"version": policy.POLICY_VERSION, "policies": list(policy.POLICIES.values()),
+                "forbidden_actions": sorted(policy.FORBIDDEN),
+                "roles": [{"role": r, "label": policy.ROLE_LABELS.get(r, r), "actions": sorted(a)}
+                          for r, a in policy.ROLE_ACTIONS.items() if not r.startswith("agent:")],
+                "agents": list(policy.AGENTS.values()),
+                "editing": "Read-only here. Policy changes are made in ledgersight/config/policies.json and take effect on restart; "
+                           "in-app editing is in development."}
+
     # ---- reset ---------------------------------------------------------
     def clear_source(self, user, wid, kind):
         """Remove one imported source (e.g. a wrong bank file). Runs built on it are withdrawn too,
@@ -604,9 +1017,11 @@ class Service:
         old_sha = w.batches.get(kind, {}).get("sha256")
         w.batches.pop(kind, None)
         for uid in removed:
-            w.uploads.pop(uid, None); w.blobs.pop(uid, None)
-            for ext in ("csv", "xlsx", "pdf"):
-                (DATA_DIR / TENANT / wid / f"{uid}.{ext}").unlink(missing_ok=True)
+            u = w.uploads.pop(uid, None); w.blobs.pop(uid, None)
+            if u:
+                w.tables.pop(f"sha:{u.get('sha256')}", None)
+            for f in (DATA_DIR / TENANT / wid).glob(f"{uid}.*"):
+                f.unlink(missing_ok=True)
         for k in [k for k in w.digests if k[0] == kind]:
             del w.digests[k]
         if kind == "parties":
@@ -622,14 +1037,17 @@ class Service:
     def reset(self, user, wid):
         self.gate(user, wid, "workspace.reset")
         old = self.ws[wid]
+        self.save(wid)  # make sure the old chain is fully stored before it is archived
+        archived = self.store.archive_events(wid) if self.store else None
         shutil.rmtree(DATA_DIR / TENANT / wid, ignore_errors=True)
         new = Workspace(wid, self._key)
         new.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                        action="workspace.reset", policy_decision="ALLOW:OK",
                        workflow_pack="cpa-bank-reconciliation",
                        source_line_refs=[f"prior_chain_head:{old.log.events[-1]['event_hash'] if old.log.events else 'none'}",
-                                         f"prior_event_count:{len(old.log.events)}"])
+                                         f"prior_event_count:{len(old.log.events)}"] + ([f"archived_as:{archived}"] if archived else []))
         self.ws[wid] = new
+        self.save(wid)
         return {"reset": wid, "files_deleted": True}
 
     # ---- trust view ----------------------------------------------------
@@ -645,15 +1063,12 @@ class Service:
             "ai_note": "No language model is called anywhere. Mapping and matching are rule-based.",
             "forbidden_actions": sorted(policy.FORBIDDEN),
             "roles": {k: sorted(v) for k, v in policy.ROLE_ACTIONS.items()},
-            "agents": [
-                {"id": "agent:intake", "does": "File checks, quarantine, checksums, control totals", "model": "none"},
-                {"id": "agent:mapping", "does": "Proposes column mapping; human confirms", "model": "none (rules)"},
-                {"id": "agent:recon", "does": "Deterministic matching and typed exceptions", "model": "none"},
-                {"id": "agent:explainer", "does": "Reason text from verified source refs", "model": "none (templates)"},
-            ],
+            "agents": [{"id": a["actor_id"], "code": a["code"], "name": a["name"], "does": a["does"], "model": a["model"]}
+                       for a in policy.AGENTS.values()],
             "evidence": {"algorithm": "Ed25519 over SHA-256 hash chain", "key_source": self.key_source,
                          "public_key_pem": self.public_key_pem().decode()},
-            "retention": "Client files deleted on workspace reset or at account expiry (14 days).",
+            "retention": "Client files are deleted when a client's data is cleared; the audit trail of a cleared client is archived, not deleted.",
+            "storage": ("SQLite database and file store in the data directory" if self.store else "memory only (lost on restart)"),
             "policy_version": policy.POLICY_VERSION,
             "security_events": len(self.security_log.events),
         }

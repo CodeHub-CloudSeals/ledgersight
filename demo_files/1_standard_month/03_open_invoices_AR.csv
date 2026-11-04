@@ -1,0 +1,4 @@
+invoice_id,customer_alias,issue_date,amount,open_balance,currency
+INV-2101,CUST-21,2026-09-20,3200.00,3200.00,USD
+INV-2105,CUST-22,2026-09-28,1750.00,1750.00,USD
+INV-2108,CUST-23,2026-10-01,2750.00,2750.00,USD

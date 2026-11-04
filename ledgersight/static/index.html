@@ -4,14 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LedgerSight</title>
+<link rel="icon" href="/static/logo.svg">
 <link rel="stylesheet" href="/static/avocet.css">
 </head>
 <body>
 
 <section id="login" class="login hidden">
   <div class="login-card">
-    <img src="/static/logo.svg" alt="CloudSeals" class="logo-lg">
-    <div class="eyebrow">LEDGERSIGHT · POWERED BY TRUSTOPS</div>
+    <img src="/static/logo.svg" alt="" class="logo-lg">
+    <div class="eyebrow">LedgerSight · TrustOps</div>
     <h1>Sign in</h1>
     <p class="muted" id="lg-hint">Invitation-only access.</p>
     <label>User ID<input id="lg-user" autocomplete="username"></label>
@@ -25,37 +26,39 @@
 <div id="app" class="hidden">
   <div class="shell">
   <aside class="sidebar">
-    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation workspace</div></div></div>
-    <nav id="tabs">
-      <div class="navlabel">Workflow</div>
-      <button class="tab active" data-tab="home" data-step="0"><span class="dot"></span>Overview</button>
-      <button class="tab" data-tab="import" data-step="1"><span class="dot"></span>Import files</button>
-      <button class="tab" data-tab="recon" data-step="2"><span class="dot"></span>Match</button>
-      <button class="tab" data-tab="exceptions" data-step="3"><span class="dot"></span>Review queue</button>
-      <button class="tab" data-tab="parties"><span class="dot ico">☺</span>Counterparties</button>
-      <button class="tab" data-tab="trace"><span class="dot ico">⇢</span>Trace a transaction</button>
-      <button class="tab" data-tab="evidence" data-step="4"><span class="dot"></span>Audit trail</button>
-      <button class="tab" data-tab="results" data-step="5"><span class="dot"></span>Impact</button>
-      <div class="navlabel">Controls</div>
-      <button class="tab" data-tab="controls"><span class="dot ico">⛨</span>Guardrails</button>
-      <button class="tab" data-tab="trust"><span class="dot ico">◎</span>Data &amp; security</button>
-      <button class="tab" data-tab="team"><span class="dot ico">◉</span>People</button>
+    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation · governed by TrustOps</div></div></div>
+    <nav id="tabs" aria-label="Main">
+      <div class="navlabel">Reconciliation</div>
+      <button class="tab active" data-tab="home"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span>Overview</button>
+      <button class="tab" data-tab="import"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span>Sources</button>
+      <button class="tab" data-tab="agents"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span>Agents<span class="tag">LIVE</span></button>
+      <button class="tab" data-tab="recon"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h14l-4-4M20 17H6l4 4"/></svg></span>Reconciliation</button>
+      <button class="tab" data-tab="exceptions"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5.5 5h13l2.5 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z"/></svg></span>Review queue</button>
+      <button class="tab" data-tab="ask"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></span>Ask LedgerSight</button>
+      <button class="tab" data-tab="reports"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span>Reports</button>
+      <div class="navlabel">Investigate</div>
+      <button class="tab" data-tab="parties"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.2 6.2 0 0 1 3.5 6"/></svg></span>Counterparties</button>
+      <button class="tab" data-tab="trace"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5"/></svg></span>Trace a transaction</button>
+      <div class="navlabel">TrustOps</div>
+      <button class="tab" data-tab="evidence"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>Audit trail</button>
+      <button class="tab" data-tab="controls"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span>Guardrails</button>
+      <button class="tab" data-tab="rules"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H20v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H20M9 7.5h7M9 11h5"/></svg></span>Rulebooks</button>
+      <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span>Data &amp; security</button>
+      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span>People</button>
     </nav>
-    <div class="sidefoot">
-      <div>Read-only: nothing is posted to any ledger or bank.</div>
-      <div id="me-exp" class="small"></div>
-      <div class="small">Clicks this session: <b id="clicks">0</b></div>
-    </div>
+    <div class="sidefoot"><div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+      <span>Read-only. Nothing is ever posted to a ledger, paid or emailed.</span></div>
+      <div id="app-version" class="small" style="margin-top:8px">LedgerSight</div></div>
   </aside>
   <div class="content">
   <header class="topbar">
     <div class="tb-left">
-      <label class="tbl">Book <select id="ws-select"></select></label>
-      <span class="pill">Period <b id="ws-period">-</b></span>
-      <span class="pill">Last run <b id="ws-run">none</b></span>
+      <div class="small muted">Client</div>
+      <div class="ws-line"><select id="ws-select" class="ws-title" aria-label="Client"></select><span class="page-sub" id="page-sub">–</span></div>
     </div>
     <div class="tb-right">
-      <button id="theme" class="iconbtn" title="Toggle dark mode" aria-label="Toggle dark mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></button>
+      <label id="act-as-wrap" class="tbl hidden"><span class="lbl">Acting as</span><select id="act-as" aria-label="Acting as"></select></label>
+      <button id="theme" class="iconbtn" title="Light / dark" aria-label="Toggle light or dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor"/></svg></button>
       <span id="avatar" class="avatar">–</span>
       <span class="who"><b id="me-name">-</b></span>
       <button id="logout" class="ghost">Sign out</button>
@@ -63,53 +66,66 @@
   </header>
   <div class="stepper" id="stepper"></div>
   <main>
+    <!-- ================= Overview ================= -->
     <section class="panel active" id="p-home">
-      <div class="eyebrow2" id="greet">GOOD MORNING</div>
-      <h2 id="home-h">Month-end close at a glance</h2>
-      <p class="sub">Status of each client book for this period and what to pick up next. Figures are calculated from the files you imported.</p>
-      <div class="grid two" id="clients"></div>
-      <h3 class="h3">Guided exercises</h3>
-      <p class="sub">Three short walkthroughs. Start over whenever you like with the reset below.</p>
-      <div class="grid three" id="tasks"></div>
-      <div class="card gap"><div class="card-title">This workspace</div><div id="home-status" class="muted"></div>
-        <div class="row gap"><button id="reset-btn" class="danger">Reset this client's workspace</button><span id="reset-msg" class="msg"></span></div>
+      <div id="ov-hero" class="hero"></div>
+      <div class="how gap" aria-label="How it works">
+        <a href="#import" data-go="import"><span class="n">1</span><b>Upload files</b><span>Bank statement, ledger, invoices: CSV, Excel or PDF.</span><em class="who you">YOU</em></a>
+        <a href="#agents" data-go="agents"><span class="n">2</span><b>Agents do the work</b><span>Six agents check the files and match bank lines to the ledger.</span><em class="who ls">LEDGERSIGHT</em></a>
+        <a href="#rules" data-go="rules"><span class="n">3</span><b>TrustOps checks every step</b><span>Allowed, sent to a person, or blocked.</span><em class="who to">TRUSTOPS</em></a>
+        <a href="#exceptions" data-go="exceptions"><span class="n">4</span><b>You decide the problems</b><span>Approve, reject or return each flagged item.</span><em class="who you">YOU</em></a>
+        <a href="#reports" data-go="reports"><span class="n">5</span><b>Download reports</b><span>Finance report and governance report, with proof.</span><em class="who ls">BOTH</em></a>
+      </div>
+      <div id="ov-kpis" class="tiles gap"></div>
+      <div class="grid ov gap">
+        <div class="card"><div class="card-title">Agents <a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div><div id="ov-agents" class="agent-mini"></div></div>
+        <div class="card"><div class="card-title">TrustOps decisions <a class="linkbtn" href="#evidence" data-go="evidence">Audit trail →</a></div><div id="ov-gov"></div></div>
+      </div>
+      <div class="grid two gap">
+        <div class="card"><div class="card-title">Recent activity</div><ul id="ov-activity" class="feed"></ul></div>
+        <div class="card"><div class="card-title">Client profile</div>
+          <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
+          <div class="form-grid gap">
+            <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
+            <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
+            <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
+          </div>
+          <div class="row"><button id="pf-save" class="primary">Save profile</button><span id="pf-msg" class="msg"></span></div>
+          <div class="row gap"><button id="reset-btn" class="danger">Clear this client's data</button><span id="reset-msg" class="msg"></span></div>
+        </div>
       </div>
     </section>
 
+    <!-- ================= Sources ================= -->
     <section class="panel" id="p-import">
-      <h2>Import client files</h2>
-      <p class="sub">Drop in the bank statement and ledger export. LedgerSight checks the file, proposes the column mapping and you confirm it. No re-keying.</p>
+      <div class="page-head"><div><h2>Sources</h2>
+        <p class="sub">Bring in the bank statement, general ledger, invoices and supporting documents. Each file is checked, fingerprinted and mapped to standard columns, and you confirm the mapping before anything is used.</p></div></div>
       <div class="grid two">
         <div class="card">
-          <div class="card-title">Bring in files</div>
-          <div class="row">
-            <select id="src-select" aria-label="Where from">
-              <option value="computer">💻 From this computer</option>
-              <option value="email">✉️ From an email (.eml)</option>
-              <option value="drive">▲ From Google Drive</option>
-            </select>
-            <select id="up-kind" aria-label="File type">
-              <option value="auto">Detect file type automatically</option>
-              <option value="bank">Bank statement · CSV, Excel, OFX/QBO</option>
-              <option value="ledger">General ledger · CSV, Excel</option>
-              <option value="ar">Open invoices · CSV, Excel</option>
-              <option value="documents">Supporting documents list · CSV, Excel</option>
-              <option value="parties">Customer &amp; vendor list · CSV, Excel</option>
-              <option value="pdf">Invoice / receipt · PDF</option>
-            </select>
-            <button id="choose-btn" class="primary">Choose files…</button>
-            <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.ofx,.qfx,.qbo,.pdf">
-            <input id="em-file" type="file" class="hidden" accept=".eml,message/rfc822">
+          <div class="card-title">Upload files</div>
+          <div class="dropzone">
+            <div class="row">
+              <select id="src-select" aria-label="Where from">
+                <option value="computer">From this computer</option>
+                <option value="email">From a saved email (.eml)</option>
+                <option value="drive">From Google Drive</option>
+              </select>
+              <select id="up-kind" aria-label="File type"><option value="auto">Detect file type automatically</option></select>
+              <button id="choose-btn" class="primary">Choose files…</button>
+              <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.json,.ofx,.qfx,.qbo,.pdf">
+              <input id="em-file" type="file" class="hidden" accept=".eml,message/rfc822">
+            </div>
+            <div class="muted small">Select several files at once. Accepted: CSV, Excel (.xlsx), TSV, JSON, bank downloads (OFX/QFX/QBO), bank statements as text PDF, invoice and receipt PDFs. 10 MB / 5,000 rows per file. Formulas are never run; macro, archive and linked workbooks are refused.</div>
           </div>
           <div id="em-view"></div>
           <div id="drive-view"></div>
-          <p class="muted small">Pick one file, or several at once (each is checked and confirmed in turn). CSV, Excel (.xlsx), TSV/TXT, bank downloads (.ofx, .qfx, .qbo), 10 MB / 5,000 rows max. Text PDFs (invoices, receipts) up to 20 pages; scanned images are not read yet. Formulas are never evaluated; macro, archive and linked workbooks are refused.</p>
-          <div class="row">
-            <button id="sample-btn" class="secondary">Load this client's files</button>
-            <span class="muted small">Or download a file and upload it yourself:</span>
-            <span id="sample-links" class="links"></span>
-          </div>
           <div id="up-msg" class="msg"></div>
+          <div id="sample-box" class="callout gap hidden"><div style="width:100%">
+            <b>Quick start: load a ready-made month</b>
+            <div class="small">Loads a bank statement, general ledger, invoices, vendor bills, documents and the customer &amp; vendor list in one click (synthetic data, marked SIMULATED).</div>
+            <div class="row"><button id="sample-btn" class="primary">Load all sample files</button></div>
+            <details><summary class="small muted">Or download a sample file and upload it yourself</summary><div id="sample-links" class="links gap"></div></details>
+          </div></div>
         </div>
         <div class="card">
           <div class="card-title">Source status</div>
@@ -118,54 +134,58 @@
         </div>
       </div>
       <div id="mapping" class="card gap hidden"></div>
-      <div class="card gap">
-        <div class="card-title">Where files can come from</div>
-        <div class="grid three">
-          <div><div class="srchead ok">Available now</div><ul class="plain small">
-            <li>CSV, TSV and text exports</li><li>Excel workbooks (.xlsx)</li><li>Bank downloads: OFX, QFX, QBO (QuickBooks Web Connect)</li>
-            <li>Invoice and receipt PDFs (text)</li><li>Customer &amp; vendor list</li><li>Several files in one go</li><li>Saved emails (.eml) with attachments</li><li>Google Drive files and Sheets (once connected)</li></ul></div>
-          <div><div class="srchead plan">Planned for the pilot (read-only)</div><ul class="plain small">
-            <li>QuickBooks Online or Xero, whichever you use</li><li>OneDrive / Dropbox folder</li><li>Live receipts inbox (clients forward to an address)</li>
-            <li>Photos and scanned receipts (OCR)</li></ul></div>
-          <div><div class="srchead no">Not accepted, by design</div><ul class="plain small">
-            <li>Macro workbooks (.xlsm) and old .xls</li><li>ZIP archives</li><li>PowerPoint and Word files: they don't hold transaction data</li>
-            <li>Tax returns, SSNs, bank logins</li></ul></div>
-        </div>
-      </div>
-      <div class="card gap"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
-      <div class="card gap">
-        <div class="card-title">Import health</div>
-        <div id="health"></div>
-      </div>
-    </section>
-
-    <section class="panel" id="p-recon">
-      <h2>Reconcile bank to ledger</h2>
-      <p class="sub">One action. Deterministic rules match what agrees exactly; anything uncertain is held back for you, not guessed.</p>
-      <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div>
-      <div id="tiles" class="tiles gap"></div>
+      <div class="card gap"><div class="card-title">Connections</div><div id="connectors"></div></div>
       <div class="grid two gap">
-        <div class="card"><div class="card-title">Matched automatically</div><div id="matches"></div></div>
-        <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Click any row to see the original bank and ledger lines side by side.</div></div>
+        <div class="card"><div class="card-title">Import health</div><div id="health"></div></div>
+        <div class="card"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
       </div>
     </section>
 
+    <!-- ================= Reconciliation ================= -->
+    <section class="panel" id="p-recon">
+      <div class="page-head"><div><h2>Reconciliation</h2>
+        <p class="sub">Fixed, explainable rules match what agrees exactly. Anything uncertain is held back for a person, never guessed.</p></div>
+        <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div></div>
+      <div id="recon-ready"></div>
+      <div id="tiles" class="tiles"></div>
+      <div class="card gap"><div class="card-title">Agent workflow <span class="muted small">TrustOps checks every step</span></div>
+        <div id="workflow" class="muted">Run a reconciliation to see each agent step.</div></div>
+      <div class="grid two gap">
+        <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
+        <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Select a matched row to compare the bank and ledger lines.</div></div>
+      </div>
+    </section>
+
+    <!-- ================= Agents ================= -->
+    <section class="panel" id="p-agents">
+      <div class="page-head"><div><h2>Agents</h2>
+        <p class="sub">The six LedgerSight agents for this client: what each is doing now, what it last did and what TrustOps decided. Built from the signed audit trail; refreshes every 2 seconds.</p></div>
+        <div class="row"><span id="ag-live" class="pill">● live</span><button id="ag-run" class="primary">Run reconciliation now</button></div></div>
+      <div class="row"><span class="pill">Run <b id="ag-runid">none</b></span><span class="pill">Trace <b id="ag-trace">–</b></span><span id="ag-msg" class="msg"></span></div>
+      <div id="ag-ready"></div>
+      <div id="ag-grid" class="grid three gap"></div>
+      <div class="card gap"><div class="card-title">Live activity <span class="muted small">newest first</span></div><div id="ag-feed" class="muted">No agent activity yet.</div></div>
+    </section>
+
+    <!-- ================= Review queue ================= -->
     <section class="panel" id="p-exceptions">
-      <h2>Exceptions for review</h2>
-      <p class="sub">Only the residual work. Each item shows the source rows, the rule that raised it and a suggested next step. The accountant decides; the decision is recorded and signed. Nothing is posted.</p>
+      <div class="page-head"><div><h2>Review queue</h2>
+        <p class="sub">Only what needs a person. Each item shows the source rows, the rule that raised it, the TrustOps decision and a suggested next step. Decisions are recorded and signed; nothing is posted.</p></div></div>
       <div id="exc-list"></div>
     </section>
 
+    <!-- ================= Guardrails ================= -->
     <section class="panel" id="p-controls">
-      <h2>What the AI is not allowed to do</h2>
-      <p class="sub">Each button asks the TrustOps gate for a forbidden action, live. The request is refused and the refusal is written to this client's evidence chain.</p>
+      <div class="page-head"><div><h2>Guardrails</h2>
+        <p class="sub">Try a forbidden action, as yourself or as one of the agents. TrustOps refuses it live and the refusal is written to the audit trail. Nothing is ever executed.</p></div></div>
       <div class="grid three" id="attack-grid"></div>
       <div class="card gap"><div class="card-title">Results</div><div id="attack-out" class="muted">No attempts yet.</div></div>
     </section>
 
+    <!-- ================= Counterparties ================= -->
     <section class="panel" id="p-parties">
-      <h2>Counterparties</h2>
-      <p class="sub">Every customer and vendor, with all of their transactions across the bank statement, ledger, invoices and documents. Each link shows the evidence behind it; anything uncertain waits for a person to confirm.</p>
+      <div class="page-head"><div><h2>Counterparties</h2>
+        <p class="sub">Every customer and vendor with all of their transactions across the bank statement, ledger, invoices and documents. Each link shows its evidence; anything uncertain waits for a person.</p></div></div>
       <div class="trace-grid">
         <div><div class="card"><div class="card-title">Customers &amp; vendors</div><div id="party-list" class="muted">Import files first.</div></div>
           <div class="card gap"><div class="card-title">Not linked to anyone</div><div id="party-unlinked" class="muted">–</div></div></div>
@@ -173,62 +193,72 @@
       </div>
     </section>
 
+    <!-- ================= Trace ================= -->
     <section class="panel" id="p-trace">
-      <h2>Trace a transaction</h2>
-      <p class="sub">Pick any bank line to follow it end to end: which file and row it came from, every check and decision along the way, who did it and when, and the signed record that proves each step.</p>
+      <div class="page-head"><div><h2>Trace a transaction</h2>
+        <p class="sub">Follow any bank line end to end: the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
       <div class="trace-grid">
         <div class="card"><div class="card-title">Bank lines</div><div id="trace-list" class="muted">Import files first.</div></div>
         <div id="trace-view" class="card"><div class="muted">Select a line on the left.</div></div>
       </div>
     </section>
 
+    <!-- ================= Ask ================= -->
+    <section class="panel" id="p-ask">
+      <div class="page-head"><div><h2>Ask LedgerSight</h2>
+        <p class="sub">Read-only questions about the open client book, answered from the latest run with sources cited. It cannot change anything, run database queries or look at other clients.</p></div></div>
+      <div class="card">
+        <div class="ask-row"><input id="ask-q" placeholder="Ask about unmatched items, a transaction, what's outstanding or who approved it…" maxlength="500"><button id="ask-btn" class="primary">Ask</button></div>
+        <div id="ask-chips" class="chips"></div>
+      </div>
+      <div id="ask-out"></div>
+    </section>
+
+    <!-- ================= Audit trail ================= -->
     <section class="panel" id="p-evidence">
-      <h2>Evidence &amp; export</h2>
-      <p class="sub">Every upload, run, decision and refusal is an Ed25519-signed, hash-chained record. Anyone with the public key can verify the export offline.</p>
-      <div class="row">
-        <span id="verify-badge" class="badge">-</span>
-        <button id="ev-refresh" class="secondary">Verify now</button>
-        <button id="tamper-btn" class="danger">Tamper test (on a copy)</button>
-        <a id="exp-csv" class="secondary btnlink disabled" href="#">Download review CSV</a>
-        <a id="exp-pack" class="secondary btnlink disabled" href="#">Download signed review pack</a>
-        <a id="exp-print" class="secondary btnlink disabled" href="#" target="_blank" rel="noopener">Printable review pack (PDF)</a>
-      </div>
+      <div class="page-head"><div><h2>Audit trail</h2>
+        <p class="sub">Every upload, agent step, decision and refusal is an Ed25519-signed, hash-chained record. Anyone with the public key can verify an export offline.</p></div>
+        <div class="row"><span id="verify-badge" class="badge">-</span><button id="ev-refresh" class="secondary">Verify now</button><button id="tamper-btn" class="danger">Tamper test (on a copy)</button></div></div>
       <div id="tamper-out" class="msg"></div>
-      <div class="card gap"><div id="events"></div></div>
+      <div class="row"><a id="exp-csv" class="secondary btnlink disabled" href="#">Review CSV</a><a id="exp-pack" class="secondary btnlink disabled" href="#">Signed review pack (JSON)</a>
+        <a id="exp-print" class="secondary btnlink disabled" href="#" target="_blank" rel="noopener">Printable review pack</a></div>
+      <div class="card gap"><div id="events" class="tablewrap"></div></div>
     </section>
 
-    <section class="panel" id="p-results">
-      <h2>Results</h2>
-      <p class="sub">Measured figures come from this run. The value estimate below is hypothetical until replaced with your own measured time study.</p>
-      <div id="measured" class="tiles"></div>
-      <div class="card gap warn">
-        <div class="card-title">Shadow estimate · HYPOTHETICAL · not a claim</div>
-        <div class="row wrap">
-          <label class="ctl2">Bank lines per client per month<input id="roi-lines" type="number" value="150"></label>
-          <label class="ctl2">Client books reconciled monthly<input id="roi-books" type="number" value="20"></label>
-          <label class="ctl2">Manual minutes per line today<input id="roi-min" type="number" value="1.5" step="0.1"></label>
-          <label class="ctl2">Review minutes per exception<input id="roi-exc" type="number" value="4"></label>
-        </div>
-        <div id="roi-out" class="gap"></div>
-      </div>
+    <!-- ================= Reports ================= -->
+    <section class="panel" id="p-reports">
+      <div class="page-head"><div><h2>Reports</h2>
+        <p class="sub">Two reports for the same run. The Finance Reconciliation Report says what happened to the records; the TrustOps Governance Report proves how: agents, policies, decisions, approvals and evidence.</p></div>
+        <div class="row"><span class="pill">Run <b id="rep-run">none</b></span><span class="pill">Trace <b id="rep-trace">–</b></span></div></div>
+      <div class="grid two" id="rep-cards"></div>
+      <div class="card gap"><div class="card-title" id="rep-prev-title">Preview</div><div id="rep-preview" class="muted">Run a reconciliation first.</div></div>
     </section>
 
+    <!-- ================= Rulebooks ================= -->
+    <section class="panel" id="p-rules">
+      <div class="page-head"><div><h2>Rulebooks</h2>
+        <p class="sub">The TrustOps policy set in force, read-only. Every decision in the audit trail names one of these policies and the policy-set version.</p></div></div>
+      <div id="rules" class="muted">Loading…</div>
+    </section>
+
+    <!-- ================= Data & security ================= -->
     <section class="panel" id="p-trust">
-      <h2>Trust &amp; data boundary</h2>
-      <p class="sub">What runs, where it is declared to run, which models are allowed and what is forbidden. Stated plainly, including what is not yet verified.</p>
+      <div class="page-head"><div><h2>Data &amp; security</h2>
+        <p class="sub">What runs, where it is declared to run, which models are allowed and what is forbidden, stated plainly, including what is not yet verified.</p></div></div>
       <div id="trust"></div>
     </section>
 
+    <!-- ================= People ================= -->
     <section class="panel" id="p-team">
-      <h2>Team &amp; access</h2>
-      <p class="sub">Invitation-only, per-client membership, 14-day access expiry, instant revocation.</p>
+      <div class="page-head"><div><h2>People</h2>
+        <p class="sub">Invitation-only, per-client membership, 14-day access expiry, instant revocation.</p></div></div>
       <div class="grid two">
         <div class="card">
           <div class="card-title">Invite someone</div>
           <label class="ctl2">User ID (email)<input id="inv-user"></label>
           <label class="ctl2">Name<input id="inv-name"></label>
           <label class="ctl2">Role
-            <select id="inv-role"><option value="preparer">Preparer</option><option value="owner_reviewer">Owner / reviewer</option></select>
+            <select id="inv-role"><option value="preparer">Staff preparer</option><option value="owner_reviewer">CPA reviewer</option></select>
           </label>
           <div class="ctl2"><span>Client access</span><div id="inv-ws" class="row wrap"></div></div>
           <button id="inv-btn" class="primary">Create invitation link</button>
@@ -241,6 +271,7 @@
   </div>
   </div>
 </div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="/static/avocet.js"></script>
 </body>
 </html>

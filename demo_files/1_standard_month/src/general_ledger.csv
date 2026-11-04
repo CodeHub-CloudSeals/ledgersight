@@ -1,0 +1,11 @@
+entry_id,posted_date,account,description,reference,debit,credit,currency
+GL-A-301,2026-10-02,1100 Accounts Receivable,Customer 21 payment,INV-2101,3200.00,,USD
+GL-A-302,2026-10-03,6100 Rent,October rent,LEASE-1026,,1500.00,USD
+GL-A-303,2026-10-06,6400 Hosting,Cloud hosting October,CH-7781,,129.00,USD
+GL-A-304,2026-10-09,1100 Accounts Receivable,Customer 22 part payment,INV-2105,1000.00,,USD
+GL-A-305,2026-10-15,6000 Payroll,Payroll 2026-10A,PAY-1015,,2600.00,USD
+GL-A-306,2026-10-18,1100 Accounts Receivable,Customer 23 payment,INV-2108,2750.00,,USD
+GL-A-307,2026-10-21,6200 Office Supplies,Office supplies,RC-4410,,186.40,USD
+GL-A-308,2026-10-31,6900 Bank Fees,Monthly service fee,FEE-1031,,15.00,USD
+GL-A-309,2026-10-29,6500 Training,Staff training,TR-551,,310.00,USD
+GL-A-310,2026-10-29,6700 Utilities,Electricity October,UT-1029,,95.00,USD

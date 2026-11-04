@@ -1,5 +1,5 @@
 {
-  "harborline": {
+  "client-a": {
     "bank_rows": 12,
     "ledger_rows": 9,
     "bank_net_cents": 190852,
@@ -39,7 +39,7 @@
       "HB012": "DOC-H-03"
     }
   },
-  "bayview": {
+  "client-b": {
     "bank_rows": 5,
     "ledger_rows": 4,
     "exceptions": {

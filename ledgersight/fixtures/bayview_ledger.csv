@@ -1,5 +1,0 @@
-entry_id,posted_date,account,description,reference,debit,credit,currency
-GL-B-201,2026-10-03,1100 Accounts Receivable,Harbour Charters,BV-INV-301,3200.00,,USD
-GL-B-202,2026-10-07,6100 Slip Rent,Marina slip October,SLIP-OCT,,780.00,USD
-GL-B-203,2026-10-15,6500 Fuel,Fuel dock,FD-1407,,412.35,USD
-GL-B-204,2026-10-30,6900 Bank Fees,Service fee,FEE-OCT,,15.00,USD

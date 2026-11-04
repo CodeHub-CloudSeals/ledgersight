@@ -1,0 +1,7 @@
+{
+  "engine_version": "recon-1.1.0",
+  "date_tolerance_days": 3,
+  "duplicate_window_days": 5,
+  "receipt_threshold_cents": 10000,
+  "bank_fee_hints": ["SERVICE FEE", "BANK FEE", "WIRE FEE"]
+}

@@ -6,25 +6,64 @@ One process, one worker: state and the evidence chains are in memory.
 from __future__ import annotations
 
 import os
+import re
 import sys
+import uuid
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .auth import REQUIRE_MFA, AuthStore, otpauth_uri
+from datetime import timedelta
+
+from datetime import datetime
+
+from .auth import REQUIRE_MFA, AuthStore, Invite, User, now, otpauth_uri
 from .core.ingest import IngestError, MAX_BYTES
+from .core.reports import FORMATS as REPORT_TYPES
 from .service import FIXTURES, WORKSPACES, Denied, Service
 
 BASE = Path(__file__).resolve().parent
 COOKIE = "ls_session"
 SECURE_COOKIE = os.environ.get("AVOCET_SECURE_COOKIE", "1") == "1"
 
-app = FastAPI(title="LedgerSight", version="0.5.0",
+APP_VERSION = "1.0.0"
+app = FastAPI(title="LedgerSight", version=APP_VERSION,
               docs_url=None, redoc_url=None, openapi_url=None)
 auth = AuthStore()
 svc = Service()
+
+
+# ---- user directory survives restarts (sessions do not: people sign in again) ----
+def _dt(v):
+    return datetime.fromisoformat(v) if v else None
+
+
+def load_users():
+    if not svc.store:
+        return
+    for d in svc.store.get("users", []):
+        auth.users[d["user_id"]] = User(d["user_id"], d["display_name"], d["role"], set(d["workspaces"]), d.get("pw_hash"),
+                                        d.get("totp"), d.get("active", False), _dt(d["expires_at"]), d.get("revoked", False),
+                                        d.get("failed", 0), _dt(d.get("terms_accepted_at")))
+    for d in svc.store.get("invites", []):
+        auth.invites[d["token"]] = Invite(d["token"], d["user_id"], _dt(d["expires_at"]), d["totp"], d.get("used", False))
+
+
+def save_users():
+    if not svc.store:
+        return
+    svc.store.put("users", [{**{k: getattr(u, k) for k in ("user_id", "display_name", "role", "pw_hash", "totp", "active",
+                                                            "revoked", "failed")},
+                             "workspaces": sorted(u.workspaces), "expires_at": u.expires_at.isoformat(),
+                             "terms_accepted_at": u.terms_accepted_at.isoformat() if u.terms_accepted_at else None}
+                            for u in auth.users.values()])
+    svc.store.put("invites", [{"token": i.token, "user_id": i.user_id, "expires_at": i.expires_at.isoformat(), "totp": i.totp,
+                               "used": i.used} for i in auth.invites.values()])
+
+
+load_users()
 _boot = auth.bootstrap(set(WORKSPACES))
 if _boot:
     print(f"[ledgersight] one-time presenter invite: /invite?token={_boot.token}", file=sys.stderr, flush=True)
@@ -41,9 +80,22 @@ CSP = ("default-src 'self'; img-src 'self' data:" + (" https://*.googleuserconte
        "; frame-ancestors 'none'")
 
 
+_WS_PATH = re.compile(r"^/v1/workspaces/([^/]+)")
+
+
 @app.middleware("http")
 async def headers(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
     resp = await call_next(request)
+    # Persist after every request: reads add evidence events too, so the audit trail is always on disk.
+    try:
+        m = _WS_PATH.match(request.url.path)
+        svc.save(m.group(1) if m else None)
+        if request.method != "GET" and request.url.path.startswith(("/v1/invites", "/v1/users", "/v1/login")):
+            save_users()
+    except Exception as e:  # storage trouble is reported by /readyz and in the server log
+        print(f"[ledgersight] storage error on {request.url.path} (request {rid}): {e!r}", file=sys.stderr, flush=True)
+    resp.headers["X-Request-ID"] = rid
     resp.headers.update({
         "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
         "Cache-Control": "no-store",
@@ -54,8 +106,29 @@ async def headers(request: Request, call_next):
     return resp
 
 
+# ---- local demo mode: no login screen ------------------------------------------
+# AVOCET_NO_LOGIN=1 skips sign-in for a presenter's laptop. It is honoured only when the local-demo
+# settings are also on (MFA off, insecure cookie), so a hosted deployment cannot be opened by accident.
+# The presenter switches between two demo people so maker-checker can still be shown.
+NO_LOGIN = os.environ.get("AVOCET_NO_LOGIN", "0") == "1" and not REQUIRE_MFA and not SECURE_COOKIE
+DEMO_COOKIE = "ls_demo_as"
+DEMO_PEOPLE = {"reviewer": ("cpa-reviewer", "CPA Reviewer", "owner_reviewer"),
+               "preparer": ("staff-preparer", "Staff Preparer", "preparer")}
+if NO_LOGIN:
+    print("[ledgersight] LOCAL DEMO MODE: login is switched off. Never use this setting on a shared or hosted server.",
+          file=sys.stderr, flush=True)
+
+
+def demo_user(key: str):
+    uid, name, role = DEMO_PEOPLE.get(key, DEMO_PEOPLE["reviewer"])
+    if uid not in auth.users:
+        auth.users[uid] = User(uid, name, role, set(WORKSPACES), active=True,
+                               expires_at=now() + timedelta(days=3650), terms_accepted_at=now())
+    return auth.users[uid]
+
+
 def current_user(request: Request):
-    u = auth.resolve(request.cookies.get(COOKIE))
+    u = demo_user(request.cookies.get(DEMO_COOKIE, "reviewer")) if NO_LOGIN else auth.resolve(request.cookies.get(COOKIE))
     if not u:
         raise HTTPException(401, "sign in required")
     # CSRF: mutating calls must carry the custom header (cross-site forms cannot set it).
@@ -70,7 +143,7 @@ def handle(fn, *a, **kw):
     except Denied as d:
         if d.conceal:
             raise HTTPException(404, "not found")
-        raise HTTPException(403, {"decision": "DENY", "reason_code": d.code})
+        raise HTTPException(403, {"decision": "DENY", "reason_code": d.code, "policy_id": d.policy_id})
     except (IngestError, ValueError) as e:
         raise HTTPException(422, str(e))
     except KeyError:
@@ -90,12 +163,33 @@ def invite_page():
 
 @app.get("/v1/auth-config")
 def auth_config():
-    return {"mfa": REQUIRE_MFA}
+    return {"mfa": REQUIRE_MFA, "login_required": not NO_LOGIN, "version": APP_VERSION,
+            "samples_enabled": os.environ.get("AVOCET_SHOW_SAMPLES", "0") == "1",
+            "demo_people": [{"key": k, "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else []}
+
+
+@app.post("/v1/demo/act-as")
+def act_as(body: dict = Body(...), u=Depends(current_user)):
+    """Local demo mode only: switch between the demo CPA reviewer and the demo staff preparer."""
+    if not NO_LOGIN:
+        raise HTTPException(404, "not found")
+    key = body.get("as")
+    if key not in DEMO_PEOPLE:
+        raise HTTPException(422, "choose reviewer or preparer")
+    resp = JSONResponse({"ok": True, **demo_user(key).public()})
+    resp.set_cookie(DEMO_COOKIE, key, httponly=True, samesite="strict")
+    return resp
 
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "service": "ledgersight"}
+    return {"status": "ok", "service": "ledgersight", "version": APP_VERSION}
+
+
+@app.get("/readyz")
+def readyz():
+    r = svc.ready()
+    return JSONResponse(status_code=200 if r["ready"] else 503, content={**r, "version": APP_VERSION})
 
 
 # ---- identity ------------------------------------------------------------
@@ -143,7 +237,7 @@ def logout(request: Request):
 
 @app.get("/v1/me")
 def me(u=Depends(current_user)):
-    return {**u.public(), "support_contact": os.environ.get("AVOCET_SUPPORT_CONTACT", "support@cloudseals.com")}
+    return {**u.public(), "support_contact": os.environ.get("AVOCET_SUPPORT_CONTACT", "your administrator")}
 
 
 @app.get("/v1/users")
@@ -266,15 +360,65 @@ def propose(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depend
 
 @app.post("/v1/workspaces/{wid}/actions/attempt")
 def attempt(wid: str, body: dict = Body(...), u=Depends(current_user)):
-    """Security demonstration: ask the gate for an action. Never executes anything."""
+    """Security demonstration: ask the gate for an action, as a person or as an agent
+    (`as_agent`: "AG-03"). Never executes anything; every answer is signed into the evidence chain."""
     action = body.get("action", "")
+    kw = {"data_class": body.get("data_class", "synthetic"), "model_route": body.get("model_route", "deterministic")}
     try:
-        svc.gate(u, wid, action, data_class=body.get("data_class", "synthetic"),
-                 model_route=body.get("model_route", "deterministic"), maker_id=body.get("maker_id"))
+        if body.get("as_agent"):
+            r = svc.agent_attempt(u, wid, body["as_agent"], action, **kw)
+            return JSONResponse(status_code=403 if r["decision"] == "DENY" else 200, content=r)
+        svc.gate(u, wid, action, maker_id=body.get("maker_id"), **kw)
     except Denied as d:
         return JSONResponse(status_code=404 if d.conceal else 403,
-                            content={"decision": "DENY", "reason_code": d.code, "executed": False})
+                            content={"decision": "DENY", "reason_code": d.code, "policy_id": d.policy_id, "executed": False})
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     return {"decision": "ALLOW", "executed": False, "note": "Gate allowed the request; this endpoint never executes."}
+
+
+@app.get("/v1/workspaces/{wid}/sources")
+def sources(wid: str, u=Depends(current_user)):
+    return handle(svc.sources, u, wid)
+
+
+@app.get("/v1/workspaces/{wid}/samples")
+def sample_list(wid: str, u=Depends(current_user)):
+    return handle(svc.sample_files, u, wid)
+
+
+@app.get("/v1/workspaces/{wid}/runs/{run_id}/reports/{kind}.{fmt}")
+def report(wid: str, run_id: str, kind: str, fmt: str, u=Depends(current_user)):
+    rep, blob = handle(svc.report, u, wid, run_id, kind, fmt)
+    if fmt == "json" and kind:
+        return Response(blob, media_type=REPORT_TYPES[fmt])
+    return Response(blob, media_type=REPORT_TYPES[fmt],
+                    headers={"Content-Disposition": f'attachment; filename="{rep["report_id"]}.{fmt}"'})
+
+
+@app.post("/v1/workspaces/{wid}/ask")
+def ask(wid: str, body: dict = Body(...), u=Depends(current_user)):
+    return handle(svc.ask, u, wid, body.get("question", ""))
+
+
+@app.get("/v1/workspaces/{wid}/ask/suggestions")
+def ask_suggestions(wid: str, u=Depends(current_user)):
+    return handle(svc.ask_suggestions, u, wid)
+
+
+@app.post("/v1/workspaces/{wid}/profile")
+def update_profile(wid: str, body: dict = Body(...), u=Depends(current_user)):
+    return handle(svc.update_profile, u, wid, body)
+
+
+@app.get("/v1/workspaces/{wid}/agents")
+def agents(wid: str, u=Depends(current_user)):
+    return handle(svc.agents_status, u, wid)
+
+
+@app.get("/v1/rulebooks")
+def rulebooks(u=Depends(current_user)):
+    return svc.rulebooks()
 
 
 @app.get("/v1/workspaces/{wid}/parties")

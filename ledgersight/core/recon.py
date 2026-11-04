@@ -15,10 +15,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from datetime import date
 
-ENGINE_VERSION = "recon-1.0.0"
-DATE_TOLERANCE_DAYS = 3
-RECEIPT_THRESHOLD_CENTS = 10_000
-BANK_FEE_HINTS = ("SERVICE FEE", "BANK FEE", "WIRE FEE")
+from ..config import load
+
+_M = load("matching.json")  # thresholds are configuration, not code
+ENGINE_VERSION = _M["engine_version"]
+DATE_TOLERANCE_DAYS = int(_M["date_tolerance_days"])
+DUPLICATE_WINDOW_DAYS = int(_M["duplicate_window_days"])
+RECEIPT_THRESHOLD_CENTS = int(_M["receipt_threshold_cents"])
+BANK_FEE_HINTS = tuple(h.upper() for h in _M["bank_fee_hints"])
 
 
 @dataclass
@@ -66,9 +70,11 @@ def _days(a: date, b: date) -> int:
 
 
 def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
-              invoices: list[dict] | None = None, documents: list[dict] | None = None) -> RunResult:
+              invoices: list[dict] | None = None, documents: list[dict] | None = None,
+              bills: list[dict] | None = None) -> RunResult:
     invoices = invoices or []
     documents = documents or []
+    bill_by_ref = {x["ref_norm"]: x for x in (bills or [])}  # AP: open vendor bills
     used_b: set[str] = set()
     used_l: set[str] = set()
     held_l: set[str] = set()  # ledger lines held by an ambiguous proposal (not reported missing)
@@ -145,16 +151,25 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
         if b["amount_cents"] < 0:
             twin = next((x for x in bank_sorted if x["id"] != b["id"] and x["amount_cents"] == b["amount_cents"]
                          and x["ref_norm"] == b["ref_norm"] and x["description"] == b["description"]
-                         and _days(x["date"], b["date"]) <= 5 and x["id"] in used_b), None)
+                         and _days(x["date"], b["date"]) <= DUPLICATE_WINDOW_DAYS and x["id"] in used_b), None)
             if twin:
                 add_exc("POSSIBLE_DUPLICATE", b=b, rule="R4_DUP",
-                        why=f"same amount, payee and reference as {twin['id']} within 5 days; ledger has only one entry",
+                        why=f"same amount, payee and reference as {twin['id']} within {DUPLICATE_WINDOW_DAYS} days; ledger has only one entry",
                         evidence_refs=[b["id"], twin["id"]],
                         suggestion="Confirm with bank/vendor whether charged twice; request refund if so. Do not book.")
             else:
-                add_exc("MISSING_GL", b=b, rule="R4_MISSING_GL",
-                        why="bank debit has no ledger entry",
-                        suggestion="Obtain vendor document, then preparer books entry in the accounting system.")
+                bill = bill_by_ref.get(b["ref_norm"])
+                if bill and bill["currency"] == b["currency"]:
+                    add_exc("MISSING_GL", b=b, rule="R4_MISSING_GL",
+                            why=f"bank debit has no ledger entry; open vendor bill {bill['id']} "
+                                f"({bill['open_cents']/100:.2f}) is on file for this reference",
+                            evidence_refs=[b["id"], bill["id"]],
+                            suggestion=f"Vendor bill {bill['id']} supports the payment. After CPA review, the preparer "
+                                       "books the entry in the accounting system. LedgerSight posts nothing.")
+                else:
+                    add_exc("MISSING_GL", b=b, rule="R4_MISSING_GL",
+                            why="bank debit has no ledger entry",
+                            suggestion="Obtain vendor document, then preparer books entry in the accounting system.")
         else:
             inv = inv_by_ref.get(b["ref_norm"])
             add_exc("UNMATCHED_DEPOSIT", b=b, rule="R4_UNMATCHED_DEP",

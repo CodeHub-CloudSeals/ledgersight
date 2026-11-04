@@ -1,0 +1,6 @@
+{
+  "rows": [
+    {"bill_id": "PK-3302", "vendor_alias": "VEND-PACKAGING", "issue_date": "2026-10-05", "amount": "420.00", "open_balance": "420.00", "currency": "USD"},
+    {"bill_id": "TR-551", "vendor_alias": "VEND-TRAINING", "issue_date": "2026-10-20", "amount": "310.00", "open_balance": "310.00", "currency": "USD"}
+  ]
+}
