@@ -1,0 +1,15 @@
+# Never upload local secrets, environments or data to Cloud Build
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ledgersight-data/
+.avocet-data/
+*.pem
+.vscode/
+.DS_Store
