@@ -434,13 +434,15 @@ async function openDrivePicker() {
         .setCallback(async (d) => {
           if (d.action !== google.picker.Action.PICKED) return;
           const files = [];
+          const EXPORT = { "application/vnd.google-apps.spreadsheet": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx"],
+            "application/vnd.google-apps.document": ["application/pdf", ".pdf"], "application/vnd.google-apps.presentation": ["application/pdf", ".pdf"] };
           for (const doc of d.docs) {
-            const sheet = doc.mimeType === "application/vnd.google-apps.spreadsheet";
-            const url = sheet ? `https://www.googleapis.com/drive/v3/files/${doc.id}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-                              : `https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`;
+            const exp = EXPORT[doc.mimeType];
+            const url = exp ? `https://www.googleapis.com/drive/v3/files/${doc.id}/export?mimeType=${encodeURIComponent(exp[0])}`
+                            : `https://www.googleapis.com/drive/v3/files/${doc.id}?alt=media`;
             const r = await fetch(url, { headers: { Authorization: "Bearer " + t.access_token } });
             if (!r.ok) { msg("up-msg", `Could not read ${doc.name} from Drive.`, "err"); continue; }
-            files.push(new File([await r.blob()], sheet ? doc.name + ".xlsx" : doc.name));
+            files.push(new File([await r.blob()], exp && !doc.name.endsWith(exp[1]) ? doc.name + exp[1] : doc.name));
           }
           if (files.length) queueFiles(files, "Google Drive");
         }).build().setVisible(true);

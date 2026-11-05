@@ -118,8 +118,13 @@
             <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.json,.ofx,.qfx,.qbo,.pdf,.eml,message/rfc822">
           </div>
           <div class="dz-connect row" id="dz-connect">
-            <span class="dz-connect-icon" aria-hidden="true">🔗</span>
-            <span class="small muted grow">Add files from Google Drive</span>
+            <span class="dz-connect-icons" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16"><path d="M5.6 1h4.8l4.8 8.3h-4.8z" fill="#ffba00"/><path d="M5.6 1L.8 9.3l2.4 4.1 4.8-8.3z" fill="#00ac47"/><path d="M3.2 13.4h9.6l2.4-4.1h-9.6z" fill="#2684fc"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 1h6l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="#4285f4"/><path d="M9 1v4h4" fill="#a1c2fa"/><rect x="4" y="8" width="6" height="1" fill="#fff"/><rect x="4" y="10" width="6" height="1" fill="#fff"/><rect x="4" y="12" width="4" height="1" fill="#fff"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 1h6l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="#0f9d58"/><path d="M9 1v4h4" fill="#87d3ab"/><rect x="4" y="8" width="2" height="1.3" fill="#fff"/><rect x="7" y="8" width="2" height="1.3" fill="#fff"/><rect x="10" y="8" width="2" height="1.3" fill="#fff"/><rect x="4" y="10.3" width="2" height="1.3" fill="#fff"/><rect x="7" y="10.3" width="2" height="1.3" fill="#fff"/><rect x="10" y="10.3" width="2" height="1.3" fill="#fff"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 1h6l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="#f4b400"/><path d="M9 1v4h4" fill="#fbdc8d"/><rect x="4" y="8.3" width="8" height="4.3" rx=".5" fill="#fff"/></svg>
+            </span>
+            <span class="small muted grow">Add files from Google Drive, Docs, Sheets and Slides</span>
             <button id="dz-drive-btn" class="ghost">Connect</button>
           </div>
           <div class="muted small">Select several files at once. Accepted: CSV, Excel (.xlsx), TSV, JSON, bank downloads (OFX/QFX/QBO), bank statements as text PDF, invoice and receipt PDFs, saved emails (.eml) with attachments. 10 MB / 5,000 rows per file. Formulas are never run; macro, archive and linked workbooks are refused.</div>

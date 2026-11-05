@@ -285,7 +285,8 @@ details.fold[open]>summary{margin-bottom:var(--sp-3)}
 .dz-icon svg{display:block;margin:0 auto}
 .dz-text{font-weight:600;font-size:var(--fs-md);color:var(--text)}
 .dz-connect{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;margin:var(--sp-3) 0 0}
-.dz-connect-icon{font-size:15px;line-height:1}
+.dz-connect-icons{display:flex;gap:4px;flex:0 0 auto}
+.dz-connect-icons svg{display:block}
 .grow{flex:1}
 
 /* review queue */
