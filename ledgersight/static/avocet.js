@@ -461,22 +461,22 @@ async function openGoogleConnectModal() {
   if (!driveCfg) driveCfg = (await api("/v1/integrations")).google_drive;
   const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
-  const row = (icon, title, desc, action) => el("div", { class: "connect-row" },
+  const go = () => { close(); put("em-view"); renderDrive(true); };
+  const btnLabel = driveCfg.enabled ? "Sign in" : "Connect";
+  const row = (icon, title, desc) => el("div", { class: "connect-row" },
     el("div", { class: "connect-row-icon" }, fromHTML(GOOGLE_ICON[icon])),
     el("div", { class: "connect-row-text" }, el("div", { class: "connect-row-title" }, title), el("div", { class: "small muted" }, desc)),
-    action);
-  const included = el("span", { class: "small muted" }, "Via Google Drive");
+    el("button", { class: "primary", onclick: go }, btnLabel));
   const overlay = el("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) close(); } },
     el("div", { class: "dialog connect-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Connect Google Drive" },
       el("div", { class: "connect-head" }, el("div", { class: "dialog-title" }, "Connect Google Drive"),
         el("button", { class: "iconbtn", "aria-label": "Close", onclick: close }, "✕")),
       el("div", { class: "dialog-body gap" }, "Pick reconciliation files from Google Drive. Access is read-only and limited to the files you select (drive.file scope) — nothing else in your Drive is visible."),
       el("div", { class: "connect-rows gap" },
-        row("drive", "Google Drive", driveCfg.enabled ? "Sign in and pick files" : "Not connected yet",
-          el("button", { class: "primary", onclick: () => { close(); put("em-view"); renderDrive(true); } }, driveCfg.enabled ? "Sign in" : "Connect")),
-        row("sheets", "Google Sheets", "Spreadsheets picked from Drive import as Excel", included.cloneNode(true)),
-        row("docs", "Google Docs", "Documents picked from Drive import as PDF", included.cloneNode(true)),
-        row("slides", "Google Slides", "Presentations picked from Drive import as PDF", included.cloneNode(true))),
+        row("drive", "Google Drive", driveCfg.enabled ? "Sign in and pick files" : "Not connected yet"),
+        row("sheets", "Google Sheets", "Spreadsheets picked from Drive import as Excel"),
+        row("docs", "Google Docs", "Documents picked from Drive import as PDF"),
+        row("slides", "Google Slides", "Presentations picked from Drive import as PDF")),
       el("div", { class: "connect-foot" }, el("span", { class: "small muted" }, "Sign-in opens in a separate window."),
         el("button", { class: "secondary", onclick: close }, "Not now"))));
   document.body.append(overlay); document.addEventListener("keydown", onKey);
