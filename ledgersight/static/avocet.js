@@ -390,7 +390,7 @@ dzTarget.addEventListener("drop", (e) => {
   const files = [...(e.dataTransfer?.files || [])];
   if (files.length) intakeFiles(files, "drag and drop");
 });
-$("dz-drive-btn").onclick = () => { put("em-view"); renderDrive(true); };
+$("dz-drive-btn").onclick = () => openGoogleConnectModal();
 function queueFiles(files, from) {
   S.queue = files; S.autoKind = true; S.queueTotal = files.length;
   msg("up-msg", `${files.length} file${files.length === 1 ? "" : "s"} from ${from}. Checking each one…`); nextInQueue();
@@ -449,6 +449,37 @@ async function openDrivePicker() {
     } });
     tc.requestAccessToken();
   } catch (e) { msg("up-msg", "Google Drive could not load: " + e.message, "err"); }
+}
+const fromHTML = (html) => { const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const GOOGLE_ICON = {
+  drive: '<svg width="22" height="22" viewBox="0 0 16 16"><path d="M5.6 1h4.8l4.8 8.3h-4.8z" fill="#ffba00"/><path d="M5.6 1L.8 9.3l2.4 4.1 4.8-8.3z" fill="#00ac47"/><path d="M3.2 13.4h9.6l2.4-4.1h-9.6z" fill="#2684fc"/></svg>',
+  docs: '<svg width="22" height="22" viewBox="0 0 16 16"><path d="M3 1h6l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="#4285f4"/><path d="M9 1v4h4" fill="#a1c2fa"/><rect x="4" y="8" width="6" height="1" fill="#fff"/><rect x="4" y="10" width="6" height="1" fill="#fff"/><rect x="4" y="12" width="4" height="1" fill="#fff"/></svg>',
+  sheets: '<svg width="22" height="22" viewBox="0 0 16 16"><path d="M3 1h6l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="#0f9d58"/><path d="M9 1v4h4" fill="#87d3ab"/><rect x="4" y="8" width="2" height="1.3" fill="#fff"/><rect x="7" y="8" width="2" height="1.3" fill="#fff"/><rect x="10" y="8" width="2" height="1.3" fill="#fff"/><rect x="4" y="10.3" width="2" height="1.3" fill="#fff"/><rect x="7" y="10.3" width="2" height="1.3" fill="#fff"/><rect x="10" y="10.3" width="2" height="1.3" fill="#fff"/></svg>',
+  slides: '<svg width="22" height="22" viewBox="0 0 16 16"><path d="M3 1h6l4 4v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z" fill="#f4b400"/><path d="M9 1v4h4" fill="#fbdc8d"/><rect x="4" y="8.3" width="8" height="4.3" rx=".5" fill="#fff"/></svg>',
+};
+async function openGoogleConnectModal() {
+  if (!driveCfg) driveCfg = (await api("/v1/integrations")).google_drive;
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const row = (icon, title, desc, action) => el("div", { class: "connect-row" },
+    el("div", { class: "connect-row-icon" }, fromHTML(GOOGLE_ICON[icon])),
+    el("div", { class: "connect-row-text" }, el("div", { class: "connect-row-title" }, title), el("div", { class: "small muted" }, desc)),
+    action);
+  const included = el("span", { class: "small muted" }, "Via Google Drive");
+  const overlay = el("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    el("div", { class: "dialog connect-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Connect Google Drive" },
+      el("div", { class: "connect-head" }, el("div", { class: "dialog-title" }, "Connect Google Drive"),
+        el("button", { class: "iconbtn", "aria-label": "Close", onclick: close }, "✕")),
+      el("div", { class: "dialog-body gap" }, "Pick reconciliation files from Google Drive. Access is read-only and limited to the files you select (drive.file scope) — nothing else in your Drive is visible."),
+      el("div", { class: "connect-rows gap" },
+        row("drive", "Google Drive", driveCfg.enabled ? "Sign in and pick files" : "Not connected yet",
+          el("button", { class: "primary", onclick: () => { close(); put("em-view"); renderDrive(true); } }, driveCfg.enabled ? "Sign in" : "Connect")),
+        row("sheets", "Google Sheets", "Spreadsheets picked from Drive import as Excel", included.cloneNode(true)),
+        row("docs", "Google Docs", "Documents picked from Drive import as PDF", included.cloneNode(true)),
+        row("slides", "Google Slides", "Presentations picked from Drive import as PDF", included.cloneNode(true))),
+      el("div", { class: "connect-foot" }, el("span", { class: "small muted" }, "Sign-in opens in a separate window."),
+        el("button", { class: "secondary", onclick: close }, "Not now"))));
+  document.body.append(overlay); document.addEventListener("keydown", onKey);
 }
 function nextInQueue() {
   const f = S.queue.shift();

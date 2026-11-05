@@ -246,6 +246,15 @@ tr.click{cursor:pointer}tr.sel-row td{background:var(--accent-soft)!important}
 .dialog{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);width:100%;max-width:440px;padding:24px}
 .dialog-title{font-size:16px;font-weight:650;margin-bottom:6px}.dialog-body{color:var(--text-2);font-size:13.5px;line-height:1.55}
 .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.connect-dialog{max-width:480px}
+.connect-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.connect-head .iconbtn{width:28px;height:28px;flex:0 0 auto}
+.connect-rows{display:flex;flex-direction:column;gap:10px}
+.connect-row{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:var(--r-lg);padding:12px 14px}
+.connect-row-icon{width:40px;height:40px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface-2);display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.connect-row-text{flex:1;min-width:0}
+.connect-row-title{font-weight:600;color:var(--text)}
+.connect-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px}
 
 /* ============ 5. pages ============ */
 /* overview */
