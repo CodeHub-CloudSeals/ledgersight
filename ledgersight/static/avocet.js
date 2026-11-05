@@ -431,6 +431,7 @@ async function openDrivePicker() {
       const view = new google.picker.DocsView(google.picker.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(false);
       new google.picker.PickerBuilder().addView(view).enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
         .setOAuthToken(t.access_token).setDeveloperKey(driveCfg.api_key).setAppId(driveCfg.app_id)
+        .setOrigin(window.location.protocol + "//" + window.location.host)
         .setCallback(async (d) => {
           if (d.action !== google.picker.Action.PICKED) return;
           const files = [];
