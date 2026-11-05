@@ -825,6 +825,13 @@ function outcome(s) {
 }
 const STATE_LABEL = { idle: "Not used yet", queued: "Queued", working: "Working…", done: "Done", escalated: "Escalated",
   blocked: "Blocked by TrustOps", stopped: "Not run · stopped" };
+const SVGNS = "http://www.w3.org/2000/svg";
+function icon(d) {
+  const s = document.createElementNS(SVGNS, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none");
+  s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "2.6"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round");
+  const p = document.createElementNS(SVGNS, "path"); p.setAttribute("d", d); s.append(p); return s;
+}
+const ICON = { done: "M5 12.5l4.5 4.5L19 7.5", escalated: "M12 7v6M12 17h.01", blocked: "M7 7l10 10M17 7L7 17", stopped: "M7 12h10" };
 function nodeFor(a, i) {
   const an = S.anim, forced = an && an.states[a.code];
   let state, step = null;
@@ -835,26 +842,30 @@ function nodeFor(a, i) {
   const live = !forced && a.status === "WORKING";
   let label = STATE_LABEL[state];
   if (state === "escalated" && escCount(step)) label = `${escCount(step)} sent to a person`;
-  if (live) label += " · just now";
   const dec = (d) => String(d).split(":")[0];
+  // a decision row shows the ALLOW/ESCALATE/DENY chip on the left and the policy id on the right, so nothing is cut off
+  const stats = (rows) => el("dl", { class: "pstats" }, rows.map(([k, v]) => k === "Decision"
+    ? el("div", { class: "pdec" }, el("dt", {}, el("span", { class: "dchip " + dec(v[0]) }, dec(v[0]))), el("dd", {}, v[1] || ""))
+    : el("div", {}, el("dt", {}, k), el("dd", {}, v))));
+  const decision = (d, pol) => [d, pol];
   let data;
-  if (state === "working") data = [el("div", {}, an.titles[a.code] || an.note || "")];
-  else if (state === "queued") data = [el("div", {}, "Waiting for the previous step")];
-  else if (state === "stopped") data = [el("div", {}, "The workflow stopped at the blocked step")];
-  else if (state === "blocked" && a.status === "BLOCKED" && a.last && !forced) data = [el("div", {}, el("b", {}, a.last.action)),
-    el("div", {}, el("span", { class: "badge DENY" }, "DENY"), " ", a.last.policy_id || ""), el("div", {}, ago(a.last.seconds_ago))];
-  else if (step) data = [el("div", {}, el("b", {}, `${step.rows_in} → ${step.rows_out}`), " rows"),
-    el("div", {}, el("span", { class: "badge " + dec(step.decision) }, dec(step.decision)), " ", step.policy_id || ""),
-    el("div", {}, `${step.duration_ms} ms`)];
-  else if (a.last) data = [el("div", {}, el("b", {}, a.last.action)),
-    el("div", {}, el("span", { class: "badge " + dec(a.last.decision) }, dec(a.last.decision)), " ", a.last.policy_id || ""), el("div", {}, ago(a.last.seconds_ago))];
-  else data = [el("div", {}, "No requests yet")];
-  const ico = { done: "✓", escalated: "!", blocked: "✕", stopped: "–" }[state] || String(i + 1);
-  return { live, el: el("li", { class: `pnode s-${state}` + (an && an.fresh === a.code && forced !== "working" ? " fresh" : ""), title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
-    el("div", { class: "ptop" }, el("span", { class: "pico" }, el("span", {}, ico)), el("div", { class: "pcode" }, a.code)),
-    el("div", { class: "pname" }, a.name),
-    el("div", { class: "pstate" }, live || state === "working" ? el("span", { class: "pulse" }) : null, label),
-    el("div", { class: "pdata" }, data)) };
+  if (state === "working") data = el("div", { class: "pnote" }, an.titles[a.code] || an.note || "");
+  else if (state === "queued") data = el("div", { class: "pnote" }, "Waiting for the previous step");
+  else if (state === "stopped") data = el("div", { class: "pnote" }, "The workflow stopped at the blocked step");
+  else if (state === "blocked" && a.status === "BLOCKED" && a.last && !forced)
+    data = stats([["Tried", a.last.action], ["Decision", decision("DENY", a.last.policy_id)], ["When", ago(a.last.seconds_ago)]]);
+  else if (step) data = stats([["Rows", `${step.rows_in} → ${step.rows_out}`], ["Decision", decision(step.decision, step.policy_id)], ["Time", `${step.duration_ms} ms`]]);
+  else if (a.last) data = stats([["Last", a.last.action], ["Decision", decision(a.last.decision, a.last.policy_id)], ["When", ago(a.last.seconds_ago)]]);
+  else data = el("div", { class: "pnote" }, "No requests yet");
+  const ico = ICON[state] ? icon(ICON[state]) : el("span", {}, String(i + 1));
+  const cls = `pnode s-${state}` + (live ? " live" : "") + (an && an.fresh === a.code && forced !== "working" ? " fresh" : "");
+  return { live, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
+    el("div", { class: "prail" }, el("span", { class: "pico" }, ico)),
+    el("div", { class: "pbody" },
+      el("div", { class: "pcode" }, a.code),
+      el("div", { class: "pname" }, a.name),
+      el("span", { class: "pstate" }, el("i"), label),
+      data)) };
 }
 function renderPipelines() {
   const d = S.agents, an = S.anim;
