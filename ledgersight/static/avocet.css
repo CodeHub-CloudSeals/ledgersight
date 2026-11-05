@@ -278,8 +278,15 @@ details.fold[open]>summary{margin-bottom:var(--sp-3)}
 .src-right{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 #health td,#docs td,#connectors td:not(.small){white-space:nowrap}
 .links{display:flex;flex-wrap:wrap;gap:6px}.links a{font-size:12px;background:var(--subtle);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 8px;color:var(--text-2)}
-.dropzone{border:1.5px dashed var(--line-2);border-radius:var(--r-lg);padding:18px;background:var(--surface-2)}
+.dropzone{border:1.5px dashed var(--line-2);border-radius:var(--r-lg);padding:32px 18px;background:var(--surface-2);text-align:center;transition:background .15s,border-color .15s}
 .dropzone .row{margin-top:0}
+.dropzone.drag{background:var(--accent-soft);border-color:var(--accent-line)}
+.dz-icon{color:var(--faint);margin-bottom:6px}
+.dz-icon svg{display:block;margin:0 auto}
+.dz-text{font-weight:600;font-size:var(--fs-md);color:var(--text)}
+.dz-connect{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;margin:var(--sp-3) 0 0}
+.dz-connect-icon{font-size:15px;line-height:1}
+.grow{flex:1}
 
 /* review queue */
 .type{font-weight:650;font-size:var(--fs-xs);letter-spacing:.05em;color:var(--warn);text-transform:uppercase}

@@ -381,6 +381,9 @@ $("src-select").onchange = () => {
   const src = $("src-select").value;
   $("choose-btn").textContent = src === "computer" ? "Choose files…" : src === "email" ? "Choose email…" : "Open Google Drive…";
   $("up-kind").disabled = src !== "computer";
+  $("dz-text").textContent = src === "computer" ? "Drag files here" : src === "email" ? "Pick a saved email" : "Pick files from Google Drive";
+  $("dz-sub").textContent = src === "computer" ? "Documents, spreadsheets and bank files" : src === "email" ? ".eml with attachments" : "Read-only, limited to what you select";
+  $("dz-connect").classList.toggle("hidden", src === "drive");
   put("em-view"); put("drive-view");
 };
 $("up-file").onchange = () => {
@@ -389,6 +392,19 @@ $("up-file").onchange = () => {
   S.queueTotal = S.queue.length; nextInQueue();
 };
 $("em-file").onchange = () => openEmail();
+// Drag and drop onto the dropzone (files from this computer only).
+const dzTarget = $("dz-target");
+["dragenter", "dragover"].forEach((ev) => dzTarget.addEventListener(ev, (e) => {
+  e.preventDefault(); e.stopPropagation();
+  if ($("src-select").value === "computer") dzTarget.classList.add("drag");
+}));
+["dragleave", "drop"].forEach((ev) => dzTarget.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); dzTarget.classList.remove("drag"); }));
+dzTarget.addEventListener("drop", (e) => {
+  if ($("src-select").value !== "computer") return;
+  const files = [...(e.dataTransfer?.files || [])];
+  if (files.length) queueFiles(files, "drag and drop");
+});
+$("dz-drive-btn").onclick = () => { $("src-select").value = "drive"; $("src-select").dispatchEvent(new Event("change")); renderDrive(true); };
 function queueFiles(files, from) {
   S.queue = files; S.autoKind = true; S.queueTotal = files.length;
   msg("up-msg", `${files.length} file${files.length === 1 ? "" : "s"} from ${from}. Checking each one…`); nextInQueue();
