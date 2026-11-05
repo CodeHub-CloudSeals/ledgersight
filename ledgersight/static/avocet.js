@@ -850,7 +850,7 @@ function nodeFor(a, i) {
     el("div", {}, el("span", { class: "badge " + dec(a.last.decision) }, dec(a.last.decision)), " ", a.last.policy_id || ""), el("div", {}, ago(a.last.seconds_ago))];
   else data = [el("div", {}, "No requests yet")];
   const ico = { done: "✓", escalated: "!", blocked: "✕", stopped: "–" }[state] || String(i + 1);
-  return { live, el: el("li", { class: `pnode s-${state}`, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
+  return { live, el: el("li", { class: `pnode s-${state}` + (an && an.fresh === a.code && forced !== "working" ? " fresh" : ""), title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
     el("div", { class: "ptop" }, el("span", { class: "pico" }, el("span", {}, ico)), el("div", { class: "pcode" }, a.code)),
     el("div", { class: "pname" }, a.name),
     el("div", { class: "pstate" }, live || state === "working" ? el("span", { class: "pulse" }) : null, label),
@@ -905,7 +905,7 @@ async function replay(run) {
     if (stopped) { an.states[s.agent] = "stopped"; continue; }
     an.states[s.agent] = "working"; an.titles[s.agent] = s.title; renderPipelines();
     if (!fast) await sleep(STEP_MS);
-    an.states[s.agent] = outcome(s); an.shown[s.agent] = s; renderPipelines();
+    an.states[s.agent] = outcome(s); an.shown[s.agent] = s; an.fresh = s.agent; renderPipelines(); an.fresh = null;
     if (an.states[s.agent] === "blocked") stopped = true;
   }
   for (const c of Object.keys(an.states)) if (an.states[c] === "queued") an.states[c] = stopped ? "stopped" : "idle";

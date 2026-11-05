@@ -423,3 +423,95 @@ details.fold[open]>summary{margin-bottom:var(--sp-3)}
   *,*::before,*::after{animation:none!important;transition:none!important}
   .pnode.s-working .pico{border-right-color:var(--accent)}
 }
+
+/* ============ 8. polish: depth, hover and motion ============ */
+:root{--ease:cubic-bezier(.2,.8,.2,1);--glow:0 6px 16px -6px color-mix(in srgb,var(--accent) 55%,transparent);
+  --shadow-hover:0 10px 24px -8px rgba(16,24,40,.14),0 2px 6px -2px rgba(16,24,40,.06)}
+:root[data-theme="dark"]{--shadow-hover:0 12px 28px -8px rgba(0,0,0,.6),0 0 0 1px var(--line-2)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--shadow-hover:0 12px 28px -8px rgba(0,0,0,.6),0 0 0 1px var(--line-2)}}
+
+/* page background: a faint accent wash at the top */
+main{background:radial-gradient(1200px 260px at 20% -40px,color-mix(in srgb,var(--accent) 7%,transparent),transparent 70%)}
+
+/* sidebar */
+.brandcard .logo{transition:transform .5s var(--ease)}.brandcard:hover .logo{transform:rotate(-12deg) scale(1.06)}
+.bname{background:linear-gradient(90deg,var(--side-strong),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+.tab{transition:background .15s,color .15s,padding .15s var(--ease)}
+.tab:hover{padding-left:13px}
+.tab .ico{transition:transform .2s var(--ease),color .15s}.tab:hover .ico{transform:scale(1.1)}
+.tab.active{background:linear-gradient(90deg,var(--accent-soft),transparent 140%);color:var(--accent)}
+.tab.active::before{content:"";position:absolute;left:-12px;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.tab .tag::before{animation:pulse 1.6s infinite}
+
+/* buttons */
+.primary{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 88%,#fff),var(--accent));transition:transform .12s var(--ease),box-shadow .2s,filter .15s}
+.primary:hover{background:linear-gradient(180deg,var(--accent),var(--accent-2));box-shadow:var(--glow);transform:translateY(-1px)}
+.secondary,.danger,.ok,.no,.ghost,.iconbtn,.chip{transition:transform .12s var(--ease),box-shadow .2s,background .15s,border-color .15s,color .15s}
+.secondary:hover{border-color:var(--accent-line);color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow)}
+.danger:hover,.no:hover{transform:translateY(-1px);box-shadow:0 6px 14px -6px color-mix(in srgb,var(--bad-solid) 50%,transparent)}
+.ok:hover{transform:translateY(-1px);box-shadow:0 6px 14px -6px color-mix(in srgb,var(--ok-solid) 60%,transparent)}
+.primary:active,.secondary:active,.danger:active,.ok:active,.no:active,.chip:active,.iconbtn:active{transform:translateY(0) scale(.97);box-shadow:none}
+.iconbtn:hover{border-color:var(--accent-line);color:var(--accent);transform:rotate(-15deg)}
+.avatar{transition:box-shadow .2s}.avatar:hover{box-shadow:0 0 0 4px var(--accent-soft)}
+.linkbtn,.card-title a.linkbtn{transition:gap .15s}.linkbtn:hover{text-decoration:none;color:var(--accent-2)}
+
+/* cards and tiles */
+.card,.exc,.qa,.how,.srcbox{transition:box-shadow .25s var(--ease),border-color .25s,transform .25s var(--ease)}
+.card:hover,.exc:hover,.qa:hover{box-shadow:var(--shadow-hover);border-color:var(--line-2)}
+.tile{overflow:hidden;transition:transform .22s var(--ease),box-shadow .22s,border-color .22s}
+.tile::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--line-2);opacity:.9}
+.tile.good::after{background:linear-gradient(90deg,var(--ok-solid),color-mix(in srgb,var(--ok-solid) 30%,transparent))}
+.tile.bad::after{background:linear-gradient(90deg,var(--bad-solid),color-mix(in srgb,var(--bad-solid) 30%,transparent))}
+.tile.amb::after{background:linear-gradient(90deg,var(--warn-solid),color-mix(in srgb,var(--warn-solid) 30%,transparent))}
+.tile:not(.good):not(.bad):not(.amb)::after{background:linear-gradient(90deg,var(--accent),color-mix(in srgb,var(--accent) 25%,transparent))}
+.tile:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover);border-color:var(--line-2)}
+.tile.good .k::before{box-shadow:0 0 0 3px var(--ok-bg)}.tile.amb .k::before{box-shadow:0 0 0 3px var(--warn-bg)}.tile.bad .k::before{box-shadow:0 0 0 3px var(--bad-bg)}
+.kpi{transition:transform .2s var(--ease),border-color .2s,background .2s}.kpi:hover{transform:translateY(-2px);border-color:var(--accent-line);background:var(--surface)}
+.srcbox:hover{border-color:var(--accent-line);background:var(--surface)}
+
+/* overview hero */
+.hero{position:relative;background:linear-gradient(120deg,var(--surface) 40%,color-mix(in srgb,var(--accent) 9%,var(--surface)));border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:20px 24px;box-shadow:var(--shadow-xs);overflow:hidden}
+.hero::after{content:"";position:absolute;right:-60px;top:-80px;width:260px;height:260px;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 18%,transparent),transparent 70%);pointer-events:none}
+.hero>*{position:relative;z-index:1}
+
+/* how it works */
+.how a{transition:background .2s}
+.how .n{transition:background .2s,color .2s,border-color .2s,transform .2s var(--ease)}
+.how a:hover .n{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);transform:scale(1.1)}
+.how a:hover b{color:var(--accent)}
+
+/* tables */
+table tr td{transition:background .12s}
+tr.click:hover td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+tr.click:hover td{background:color-mix(in srgb,var(--accent-soft) 60%,transparent)}
+
+/* stepper */
+.step .dot{transition:transform .2s var(--ease),box-shadow .2s}.step:hover .dot{transform:scale(1.12);box-shadow:var(--ring)}
+.bar.done{background:linear-gradient(90deg,var(--ok-solid),color-mix(in srgb,var(--ok-solid) 70%,var(--accent)))}
+
+/* agent pipeline */
+.pnode{transition:transform .25s var(--ease),box-shadow .25s,border-color .25s,background .25s;cursor:default}
+.pnode:hover{transform:translateY(-3px);box-shadow:var(--shadow-hover)}
+.pnode.fresh .pico{animation:pop .4s var(--ease)}.pnode.fresh{animation:flash .9s var(--ease)}
+@keyframes flash{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok-solid) 45%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
+.pnode.s-done{background:linear-gradient(180deg,color-mix(in srgb,var(--ok-solid) 6%,var(--surface)),var(--surface) 60%)}
+.pnode.s-escalated{background:linear-gradient(180deg,color-mix(in srgb,var(--warn-solid) 8%,var(--surface)),var(--surface) 60%)}
+.pnode.s-working{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 10%,var(--surface)),var(--surface) 70%)}
+.agent{transition:transform .25s var(--ease),box-shadow .25s,border-color .25s}.agent:hover{transform:translateY(-2px)}
+@keyframes pop{0%{transform:scale(.6)}70%{transform:scale(1.12)}100%{transform:scale(1)}}
+
+/* chips, toasts, details */
+.chip:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+.toast{backdrop-filter:blur(8px);background:color-mix(in srgb,var(--surface) 94%,transparent)}
+details>summary{transition:color .15s}details>summary:hover{color:var(--accent)}
+details[open]>*:not(summary){animation:fade .2s ease}
+
+/* page entrance: cards rise in, one after another */
+.panel.active>*{animation:rise .38s var(--ease) both}
+.panel.active>*:nth-child(2){animation-delay:.04s}.panel.active>*:nth-child(3){animation-delay:.08s}
+.panel.active>*:nth-child(4){animation-delay:.12s}.panel.active>*:nth-child(5){animation-delay:.16s}.panel.active>*:nth-child(n+6){animation-delay:.2s}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}.tile:hover,.pnode:hover,.agent:hover,.kpi:hover{transform:none}}
