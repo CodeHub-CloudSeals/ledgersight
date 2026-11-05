@@ -26,9 +26,9 @@
 <div id="app" class="hidden">
   <div class="shell">
   <aside class="sidebar">
-    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation · governed by TrustOps</div></div></div>
+    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation · Governed By TrustOps</div></div></div>
     <nav id="tabs" aria-label="Main">
-      <div class="navlabel">Work</div>
+      <div class="navlabel">WorkSpace</div>
       <button class="tab active" data-tab="home"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span class="lbl-t">Overview</span></button>
       <button class="tab" data-tab="import"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4M7 9l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></span><span class="lbl-t">Sources</span></button>
       <button class="tab" data-tab="recon"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h14l-4-4M20 17H6l4 4"/></svg></span><span class="lbl-t">Reconciliation</span></button>
@@ -37,7 +37,6 @@
       <button class="tab" data-tab="trace"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M8.5 19H17a3.5 3.5 0 0 0 0-7H7a3.5 3.5 0 0 1 0-7h8.5"/></svg></span><span class="lbl-t">Trace a transaction</span></button>
       <div class="navlabel">Outputs</div>
       <button class="tab" data-tab="reports"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></span><span class="lbl-t">Reports</span></button>
-      <button class="tab" data-tab="ask"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></span><span class="lbl-t">Ask LedgerSight</span></button>
       <div class="navlabel">Governance</div>
       <button class="tab" data-tab="agents"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span><span class="lbl-t">Agents</span><span class="tag">LIVE</span></button>
       <button class="tab" data-tab="rules"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H20v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H20M9 7.5h7M9 11h5"/></svg></span><span class="lbl-t">Rulebooks</span></button>
@@ -56,6 +55,9 @@
       <div class="ws-line"><select id="ws-select" class="ws-title" aria-label="Client"></select><span class="page-sub" id="page-sub">–</span></div>
     </div>
     <div class="tb-right">
+      <button id="ask-open" class="askbtn" aria-expanded="false" aria-controls="ask-drawer" title="Ask LedgerSight (read-only)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>
+        <span>Ask LedgerSight</span></button>
       <label id="act-as-wrap" class="tbl hidden"><span class="lbl">Acting as</span><select id="act-as" aria-label="Acting as"></select></label>
       <button id="theme" class="iconbtn" title="Light / dark" aria-label="Toggle light or dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor"/></svg></button>
       <span id="avatar" class="avatar">–</span>
@@ -82,7 +84,7 @@
         <div class="card-title">How it works <span class="muted">who does each step</span></div>
         <div class="how">
           <a href="#import" data-go="import"><span class="n">1</span><span class="tx"><b>Upload files</b><span>Bank statement, ledger, invoices: CSV, Excel or PDF.</span><em class="who you">YOU</em></span></a>
-          <a href="#agents" data-go="agents"><span class="n">2</span><span class="tx"><b>Agents do the work</b><span>Six agents check the files and match bank lines to the ledger.</span><em class="who ls">LEDGERSIGHT</em></span></a>
+          <a href="#agents" data-go="agents"><span class="n">2</span><span class="tx"><b>Agents do the work</b><span>Six agents check the files and match bank transactions to the ledger.</span><em class="who ls">LEDGERSIGHT</em></span></a>
           <a href="#rules" data-go="rules"><span class="n">3</span><span class="tx"><b>TrustOps checks every step</b><span>Allowed, sent to a person, or blocked.</span><em class="who to">TRUSTOPS</em></span></a>
           <a href="#exceptions" data-go="exceptions"><span class="n">4</span><span class="tx"><b>You decide the problems</b><span>Approve, reject or return each flagged item.</span><em class="who you">YOU</em></span></a>
           <a href="#reports" data-go="reports"><span class="n">5</span><span class="tx"><b>Download reports</b><span>Finance report and governance report, with proof.</span><em class="who ls">BOTH</em></span></a>
@@ -111,9 +113,9 @@
           <div class="dropzone" id="dz-target">
             <div class="dz-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
             <div class="dz-text">Drag files here</div>
-            <div class="small muted">Documents, spreadsheets and bank files</div>
+            <div class="small muted">Any document type. Bank files, ledgers and spreadsheets are imported; other documents are held for conversion to JSON.</div>
             <button id="choose-btn" class="primary gap">Choose files…</button>
-            <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.json,.ofx,.qfx,.qbo,.pdf,.eml,message/rfc822">
+            <input id="up-file" type="file" multiple class="hidden">
           </div>
           <div class="dz-connect row" id="dz-connect">
             <span class="dz-connect-icons" aria-hidden="true">
@@ -128,12 +130,11 @@
           <div id="em-view"></div>
           <div id="drive-view"></div>
           <div id="up-msg" class="msg"></div>
-          <div id="sample-box" class="callout gap hidden"><div style="width:100%">
-            <b>Quick start: load a ready-made month</b>
-            <div class="small">Loads a bank statement, general ledger, invoices, vendor bills, documents and the customer &amp; vendor list in one click (synthetic data, marked SIMULATED).</div>
-            <div class="row"><button id="sample-btn" class="primary">Load all sample files</button></div>
-            <details><summary class="small muted">Or download a sample file and upload it yourself</summary><div id="sample-links" class="links gap"></div></details>
-          </div></div>
+          <div id="sample-box" class="dz-connect row hidden">
+            <span class="dz-load-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg></span>
+            <span class="small muted grow">Bank statement, ledger, invoices, bills, documents and contacts in one click</span>
+            <button id="sample-btn" class="primary">Load All Files</button>
+          </div>
         </div>
         <div class="card">
           <div class="card-title">Source status</div>
@@ -145,6 +146,7 @@
       <div class="card gap"><div class="card-title">Connections</div><div id="connectors"></div></div>
       <div class="card gap"><div class="card-title">Import health</div><div id="health"></div></div>
       <div class="card gap"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
+      <div class="card gap" id="held-card"><div class="card-title">Held for conversion <span class="muted">stored safely · not opened · JSON conversion in development</span></div><div id="held"></div></div>
     </section>
 
     <!-- ================= Reconciliation ================= -->
@@ -200,8 +202,8 @@
     <!-- ================= Counterparties ================= -->
     <section class="panel" id="p-parties">
       <div class="page-head"><div><h2>Counterparties</h2>
-        <p class="sub">Every customer and vendor with all of their transactions across the bank statement, ledger, invoices and documents. Each link shows its evidence; anything uncertain waits for a person.</p></div></div>
-      <div class="trace-grid">
+        <p class="sub">Each customer and vendor with their transactions across bank, ledger, invoices and documents. Anything uncertain waits for a person.</p></div></div>
+      <div class="trace-grid party-grid">
         <div><div class="card"><div class="card-title">Customers &amp; vendors</div><div id="party-list" class="muted">Import files first.</div></div>
           <div class="card gap"><div class="card-title">Not linked to anyone</div><div id="party-unlinked" class="muted">–</div></div></div>
         <div id="party-view" class="card"><div class="muted">Select a customer or vendor.</div></div>
@@ -211,22 +213,11 @@
     <!-- ================= Trace ================= -->
     <section class="panel" id="p-trace">
       <div class="page-head"><div><h2>Trace a transaction</h2>
-        <p class="sub">Follow any bank line end to end: the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
+        <p class="sub">Follow any bank transaction end to end: the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
       <div class="trace-grid">
-        <div class="card"><div class="card-title">Bank lines</div><div id="trace-list" class="muted">Import files first.</div></div>
+        <div class="card"><div class="card-title">Bank transactions</div><div id="trace-list" class="muted">Import files first.</div></div>
         <div id="trace-view" class="card"><div class="muted">Select a line on the left.</div></div>
       </div>
-    </section>
-
-    <!-- ================= Ask ================= -->
-    <section class="panel" id="p-ask">
-      <div class="page-head"><div><h2>Ask LedgerSight</h2>
-        <p class="sub">Read-only questions about the open client book, answered from the latest run with sources cited. It cannot change anything, run database queries or look at other clients.</p></div></div>
-      <div class="card">
-        <div class="ask-row"><input id="ask-q" placeholder="Ask about unmatched items, a transaction, what's outstanding or who approved it…" maxlength="500"><button id="ask-btn" class="primary">Ask</button></div>
-        <div id="ask-chips" class="chips"></div>
-      </div>
-      <div id="ask-out"></div>
     </section>
 
     <!-- ================= Audit trail ================= -->
@@ -252,7 +243,7 @@
     <!-- ================= Rulebooks ================= -->
     <section class="panel" id="p-rules">
       <div class="page-head"><div><h2>Rulebooks</h2>
-        <p class="sub">The TrustOps policy set in force, read-only. Every decision in the audit trail names one of these policies and the policy-set version.</p></div></div>
+        <p class="sub">TrustOps policies in force. Every audit decision references one of these.</p></div></div>
       <div id="rules" class="muted">Loading…</div>
     </section>
 
@@ -286,6 +277,20 @@
   </div>
   </div>
 </div>
+<aside id="ask-drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="ask-title" aria-hidden="true">
+  <div class="drawer-head">
+    <div class="drawer-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></div>
+    <div class="grow"><div class="drawer-title" id="ask-title">Ask LedgerSight</div>
+      <div class="small muted">Read-only answers about this client book, with sources. It cannot change anything or see other clients.</div></div>
+    <button id="ask-close" class="iconbtn" aria-label="Close Ask LedgerSight">✕</button>
+  </div>
+  <div class="drawer-body" id="ask-scroll"><div id="ask-out"></div>
+    <div id="ask-empty" class="ask-empty"><b>Ask about this client book</b><span>Unmatched items, why something was flagged, what is outstanding or who approved it.</span></div></div>
+  <div class="drawer-foot">
+    <div id="ask-chips" class="chips"></div>
+    <div class="ask-row"><input id="ask-q" placeholder="Ask a question…" maxlength="500" aria-label="Question"><button id="ask-btn" class="primary">Ask</button></div>
+  </div>
+</aside>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="/static/avocet.js"></script>
 </body>

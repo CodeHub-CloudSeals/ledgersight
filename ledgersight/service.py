@@ -62,6 +62,7 @@ class Workspace:
         self.tables: dict[str, tuple] = {}  # "sha:<digest>" -> (header, rows) read from a PDF statement
         self.party_reviews: dict[str, dict] = {}  # line_id -> human confirmation of who the counterparty is
         self.runs: dict[str, dict] = {}
+        self.held: dict[str, dict] = {}  # files of any type, stored unopened until JSON conversion exists
         self.log = evidence.EvidenceLog(key, "ledgersight-ed25519-1")
         self.started_at = _ts()
         self.saved_events = 0  # how many evidence events are already in durable storage
@@ -71,7 +72,7 @@ class Workspace:
         return {"meta": self.meta, "uploads": self.uploads, "batches": self.batches,
                 "digests": [[k, s, uid] for (k, s), uid in self.digests.items()],
                 "tables": {k: [list(h), [list(r) for r in rows]] for k, (h, rows) in self.tables.items()},
-                "party_reviews": self.party_reviews, "runs": self.runs, "started_at": self.started_at}
+                "party_reviews": self.party_reviews, "runs": self.runs, "held": self.held, "started_at": self.started_at}
 
     @classmethod
     def from_state(cls, wid: str, key, state: dict, events: list[dict], files_dir: Path) -> "Workspace":
@@ -88,6 +89,7 @@ class Workspace:
         w.tables = {k: (h, rows) for k, (h, rows) in state.get("tables", {}).items()}
         w.party_reviews = state.get("party_reviews", {})
         w.runs = state.get("runs", {})
+        w.held = state.get("held", {})
         for r in w.runs.values():
             r["batch_key"] = tuple(r.get("batch_key") or ())
         w.started_at = state.get("started_at", w.started_at)
@@ -301,6 +303,32 @@ class Service:
         w.uploads[uid] = rec
         w.blobs[uid] = blob
         self._agent_or_stop(user, w, "agent:mapping", "mapping.propose", batch_sha=sha, data_class=data_class, refs=[kind])
+        return rec
+
+    HELD_NOTE = "Stored safely. Not opened, parsed or run. Conversion to JSON is in development."
+
+    def hold_file(self, user, wid, filename, blob, data_class="synthetic"):
+        """Accept a document of any type and keep it, unopened, until JSON conversion is built.
+
+        The bytes are written to disk under a neutral name and are never parsed, rendered or executed,
+        so a macro workbook, archive or Office file cannot do anything. A held file is not used by
+        reconciliation. The request is checked by TrustOps and signed into the evidence chain."""
+        if not blob:
+            raise ingest.IngestError("the file is empty")
+        if len(blob) > ingest.MAX_BYTES:
+            raise ingest.IngestError("file exceeds 10 MB limit")
+        name = Path(str(filename or "upload").replace("\\", "/")).name[:200] or "upload"
+        ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+        sha = hashlib.sha256(blob).hexdigest()
+        w = self.gate(user, wid, "upload.create", data_class=data_class, batch_sha=sha, refs=[f"held:{ext or 'no-extension'}"])
+        hid = "HF-" + uuid.uuid4().hex[:8]
+        prefix = DATA_DIR / TENANT / wid
+        prefix.mkdir(parents=True, exist_ok=True)
+        (prefix / f"{hid}.held").write_bytes(blob)
+        rec = {"id": hid, "filename": name, "extension": ext, "size": len(blob), "sha256": sha,
+               "state": "HELD_FOR_CONVERSION", "note": self.HELD_NOTE, "uploaded_by": user.user_id, "uploaded_at": _ts(),
+               "duplicate_of": next((h["id"] for h in w.held.values() if h["sha256"] == sha), None)}
+        w.held[hid] = rec
         return rec
 
     def commit_mapping(self, user, wid, upload_id, mapping):

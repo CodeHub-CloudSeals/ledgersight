@@ -280,7 +280,7 @@ def workspaces(u=Depends(current_user)):
 def workspace(wid: str, u=Depends(current_user)):
     w = handle(svc.gate, u, wid, "workspace.read")
     return {"id": wid, **w.meta, "status": svc.status(wid), "uploads": list(w.uploads.values()),
-            "documents": svc.documents(w),
+            "documents": svc.documents(w), "held": list(w.held.values()),
             "runs": [{"id": r["id"], "created_at": r["created_at"], "created_by": r["created_by"]} for r in w.runs.values()]}
 
 
@@ -289,6 +289,13 @@ async def upload(wid: str, kind: str = Form(...), data_class: str = Form("synthe
                  file: UploadFile = File(...), u=Depends(current_user)):
     blob = await file.read(MAX_BYTES + 1)
     return handle(svc.upload, u, wid, kind, file.filename or "upload", blob, data_class)
+
+
+@app.post("/v1/workspaces/{wid}/held-files")
+async def hold_file(wid: str, data_class: str = Form("synthetic"), file: UploadFile = File(...), u=Depends(current_user)):
+    """Any document type: stored unopened and marked for later conversion to JSON."""
+    blob = await file.read(MAX_BYTES + 1)
+    return handle(svc.hold_file, u, wid, file.filename or "upload", blob, data_class)
 
 
 @app.post("/v1/workspaces/{wid}/email")

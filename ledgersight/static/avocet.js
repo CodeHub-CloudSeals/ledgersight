@@ -15,6 +15,19 @@ function el(tag, attrs, ...kids) {
 }
 const put = (id, ...kids) => { const n = typeof id === "string" ? $(id) : id; n.replaceChildren(...kids.flat().filter((k) => k != null)); };
 const usd = (c) => (c < 0 ? "-" : "") + "$" + (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
+// Readable names on screen. Display only: the technical codes stay unchanged in config, the audit trail and exports.
+const ACRONYM = new Set(["GL", "AR", "AP", "CPA", "CSV", "JSON", "PDF", "OK", "ID", "AI", "LLM", "SHA", "URL", "MFA", "KYC", "OCR",
+  "QBO", "OFX", "QFX", "XLSX", "TSV", "EML", "UTC", "API", "SSO", "US", "SAP"]);
+const titleCase = (v) => String(v ?? "").replace(/[._:\-]+/g, " ").trim().split(/\s+/).filter(Boolean)
+  .map((w) => ACRONYM.has(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+const nice = (v) => (v == null || v === "" ? "" : titleCase(String(v).replace(/_cents$/, "")));  // amounts are shown in dollars, so drop "cents"
+const niceList = (v) => /^[a-z0-9_.]+(, ?[a-z0-9_.]+)*$/.test(String(v || "")) ? String(v).split(/, ?/).map(nice).join(", ") : v;
+function niceActor(id) {
+  const a = S.agents && S.agents.agents.find((x) => x.actor_id === id);
+  if (a) return `${a.name} Agent`;
+  return String(id ?? "").startsWith("agent:") ? `${nice(String(id).slice(6))} Agent` : id;
+}
+function niceDecision(d) { const [k, ...r] = String(d ?? "").split(":"); return r.length ? `${k} · ${nice(r.join(":"))}` : k; }
 const msg = (id, text, kind) => { const n = $(id); n.textContent = text || ""; n.className = "msg " + (kind || ""); };
 
 async function api(path, opts = {}) {
@@ -32,7 +45,7 @@ async function api(path, opts = {}) {
   if (r.status === 401 && path !== "/v1/login") { showLogin(); }
   if (!r.ok) {
     const d = body && body.detail;
-    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${d.reason_code}${d.policy_id ? " · " + d.policy_id : ""}` : `HTTP ${r.status}`;
+    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${nice(d.reason_code)}${d.policy_id ? " · " + d.policy_id : ""}` : `HTTP ${r.status}`;
     const err = new Error(text); err.status = r.status; err.body = body; throw err;
   }
   if (o.method === "POST" && S.ws && path.startsWith("/v1/workspaces")) setTimeout(progress, 0);
@@ -48,7 +61,7 @@ const authConfig = fetch("/v1/auth-config").then((r) => r.json()).then((c) => {
   S.noLogin = c.login_required === false; S.demoPeople = c.demo_people || [];
   S.samples = !!c.samples_enabled;
   $("sample-box").classList.toggle("hidden", !S.samples);
-  if (c.version) $("app-version").textContent = `LedgerSight ${c.version}`;
+  if (c.version) $("app-version").textContent = `LedgerSight v${c.version}`;
 }).catch(() => {});
 $("act-as").onchange = async (e) => {
   await api("/v1/demo/act-as", { method: "POST", json: { as: e.target.value } });
@@ -86,7 +99,8 @@ async function boot() {
   document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer" || !!S.noLogin);
   await switchWs();
   const fromHash = location.hash.slice(1);
-  if (fromHash && document.getElementById("p-" + fromHash)) go(fromHash);
+  if (fromHash === "ask") openAsk();
+  else if (fromHash && document.getElementById("p-" + fromHash)) go(fromHash);
 }
 const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", support: "Support" };
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
@@ -95,13 +109,11 @@ async function switchWs() {
   S.run = null; S.upload = null; S.agents = null; S.anim = null; renderPipelines();
   const w = await api(W());
   S.wsMeta = w;
-  const samples = await api(W("/samples")).catch(() => []);
-  put("sample-links", samples.map((n) => el("a", { href: W(`/samples/${encodeURIComponent(n)}`) }, n.slice(S.ws.length + 1))));
-  renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents);
+  renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
   $("mapping").classList.add("hidden");
   if (w.runs.length) S.run = await api(W(`/runs/${w.runs[w.runs.length - 1].id}`));
   renderRun(); renderExceptions(); renderControls(); await renderEvidence(); await renderTrust();
-  S.asks = S.asks.filter((x) => x.ws === S.ws); put("ask-out"); if (isActive("ask")) renderAsk(); if (isActive("reports")) renderReports();
+  S.asks = S.asks.filter((x) => x.ws === S.ws); renderAskLog(); if (S.askOpen) renderAsk(); if (isActive("reports")) renderReports();
   if (S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
   fillProfile(w);
   await progress();
@@ -150,7 +162,7 @@ async function renderOverview() {
   const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
   put("ov-kpis",
     tile("Sources imported", `${SOURCE_KINDS.filter((k) => st[k]).length} / ${SOURCE_KINDS.length}`, "", st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed"),
-    tile("Matched automatically", r ? `${r.matches.length}` : "–", r ? "good" : "", r ? `${pct}% of ${bankLines} bank lines` : "no run yet"),
+    tile("Matched automatically", r ? `${r.matches.length}` : "–", r ? "good" : "", r ? `${pct}% of ${bankLines} bank transactions` : "no run yet"),
     tile("Awaiting review", r ? st.open_exceptions : "–", r && st.open_exceptions ? "amb" : r ? "good" : "", r ? `${r.exceptions.length} raised in total` : ""),
     tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
     tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
@@ -162,7 +174,7 @@ async function renderOverview() {
     el("div", { class: "muted small" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
   const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
   put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => el("li", {}, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)),
-    el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : e.actor_id)), ` ${e.action} `,
+    el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)} `,
       el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0]),
       e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
   if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
@@ -187,27 +199,41 @@ document.addEventListener("click", (e) => { const a = e.target.closest("[data-go
 const LINK_BADGE = { CONFIRMED: ["Confirmed", "ACCEPTED"], LINKED: ["Linked", "PASS"], SUGGESTED: ["Check this", "OPEN"],
   AMBIGUOUS: ["Ambiguous", "OPEN"], UNLINKED: ["No evidence", ""], REJECTED: ["Rejected", "REJECTED"] };
 const KIND_LABEL = { bank: "Bank", ledger: "Ledger", ar: "Invoice", documents: "Document" };
-S.party = null;
+S.party = null; S.pfilter = "all"; S.pq = "";
+const signed = (c) => el("span", { class: "amt " + (c > 0 ? "in" : c < 0 ? "out" : "") }, (c > 0 ? "+" : "") + usd(c));
 async function renderParties() {
   let d; try { d = await api(W("/parties")); } catch (_) { return; }
   if (!d.register_loaded) {
-    put("party-list", el("div", { class: "muted" }, "No customer & vendor list yet. Import it under Import files."));
+    put("party-list", el("div", { class: "muted" }, "No customer & vendor list yet. Import it under Sources."));
     put("party-unlinked", "–"); return;
   }
-  put("party-list", el("table", {}, d.parties.map((p) => el("tr", { class: "click" + (p.id === S.party ? " sel-row" : ""), onclick: () => openParty(p.id) },
-    el("td", {}, el("b", {}, p.name), el("div", { class: "small muted" }, `${p.type} · ${p.transactions} bank txn${p.transactions === 1 ? "" : "s"}`)),
-    el("td", { class: "num small" }, p.money_in_cents ? el("div", {}, "in " + usd(p.money_in_cents)) : null, p.money_out_cents ? el("div", {}, "out " + usd(p.money_out_cents)) : null),
-    el("td", {}, p.needs_check ? el("span", { class: "badge OPEN" }, p.needs_check + " to check") : p.confirmed ? el("span", { class: "badge ACCEPTED" }, "confirmed") : null)))));
-  put("party-unlinked", d.unlinked.length ? el("table", {}, d.unlinked.map((l) => el("tr", {},
-    el("td", {}, el("b", {}, l.line_id), el("div", { class: "small muted" }, l.description)), el("td", { class: "num" }, usd(l.amount_cents)),
-    el("td", {}, el("span", { class: "badge " + LINK_BADGE[l.state][1] }, LINK_BADGE[l.state][0]),
-      el("div", { class: "small muted" }, l.state === "AMBIGUOUS" ? "Points at: " + l.candidates.join(", ") : "Nothing identifies the payer. Not guessed."),
-      assignBox(l, d.parties))))) : el("div", { class: "muted" }, "Every bank line is linked to someone."));
+  const counts = { all: d.parties.length, customer: d.parties.filter((p) => p.type === "customer").length,
+    vendor: d.parties.filter((p) => p.type === "vendor").length, check: d.parties.filter((p) => p.needs_check).length };
+  const shown = d.parties.filter((p) => (S.pfilter === "all" || (S.pfilter === "check" ? p.needs_check : p.type === S.pfilter))
+    && (!S.pq || p.name.toLowerCase().includes(S.pq.toLowerCase())));
+  const search = el("input", { class: "pl-search", type: "search", placeholder: "Search customers & vendors", value: S.pq, "aria-label": "Search customers and vendors",
+    oninput: (e) => { S.pq = e.target.value; renderParties().then(() => { const s = document.querySelector(".pl-search"); if (s) { s.focus(); s.setSelectionRange(S.pq.length, S.pq.length); } }); } });
+  const chip = (k, label) => el("button", { class: "pl-chip" + (S.pfilter === k ? " on" : ""), "aria-pressed": S.pfilter === k ? "true" : "false",
+    onclick: () => { S.pfilter = k; renderParties(); } }, label, el("span", { class: "pl-n" }, counts[k]));
+  put("party-list", search, el("div", { class: "pl-chips" }, chip("all", "All"), chip("customer", "Customers"), chip("vendor", "Vendors"), chip("check", "To check")),
+    shown.length ? el("table", { class: "tl pl" }, shown.map((p) => el("tr", { class: "click" + (p.id === S.party ? " sel-row" : ""), onclick: () => openParty(p.id) },
+      el("td", { class: "tl-main" }, el("b", {}, p.name),
+        el("div", { class: "small muted" }, `${nice(p.type)} · ${p.transactions} bank txn${p.transactions === 1 ? "" : "s"}`)),
+      el("td", { class: "tl-side" },
+        p.money_in_cents ? el("div", {}, signed(p.money_in_cents)) : null, p.money_out_cents ? el("div", {}, signed(-p.money_out_cents)) : null,
+        p.needs_check ? el("span", { class: "badge OPEN" }, p.needs_check + " to check") : p.confirmed ? el("span", { class: "badge ACCEPTED" }, "Confirmed") : null))))
+      : el("div", { class: "muted small pl-empty" }, "No matches."));
+  put("party-unlinked", d.unlinked.length ? el("div", { class: "pt-list" }, d.unlinked.map((l) => el("div", { class: "pt-card" },
+    el("div", { class: "pt-top" }, el("div", { class: "grow" }, el("b", {}, l.line_id), el("div", { class: "small muted" }, l.description)),
+      signed(l.amount_cents)),
+    el("div", { class: "pt-meta" }, el("span", { class: "badge " + LINK_BADGE[l.state][1] }, LINK_BADGE[l.state][0]),
+      el("span", { class: "small muted" }, l.state === "AMBIGUOUS" ? "Points at: " + l.candidates.join(", ") : "Nothing identifies the payer. Not guessed.")),
+    assignBox(l, d.parties)))) : el("div", { class: "muted" }, "Every bank transaction is linked to someone."));
 }
 function assignBox(l, parties) {
-  const sel = el("select", {}, el("option", { value: "" }, "Assign to…"), parties.map((p) => el("option", { value: p.id }, p.name)));
-  const note = el("input", { placeholder: "How do you know? (recorded)" });
-  return el("div", { class: "row" }, sel, note, el("button", { class: "secondary", onclick: async () => {
+  const sel = el("select", { "aria-label": "Assign to" }, el("option", { value: "" }, "Assign to…"), parties.map((p) => el("option", { value: p.id }, p.name)));
+  const note = el("input", { placeholder: "How do you know? (recorded)", "aria-label": "Reason" });
+  return el("div", { class: "pt-assign" }, sel, note, el("button", { class: "secondary", onclick: async () => {
     if (!sel.value) return;
     await api(W(`/parties/${sel.value}/links/${l.line_id}`), { method: "POST", json: { decision: "CONFIRM", note: note.value } });
     S.party = sel.value; renderParties(); openParty(sel.value);
@@ -223,37 +249,46 @@ async function openParty(pid) {
     const note = decision === "REJECT" ? "Not this party" : "Confirmed by reviewer";
     await api(W(`/parties/${pid}/links/${l.line_id}`), { method: "POST", json: { decision, note } }); openParty(pid);
   };
+  const open = d.transactions.filter((l) => l.state !== "CONFIRMED").length;
+  const txn = (l) => el("article", { class: "pt-card" + (l.state === "SUGGESTED" || l.state === "AMBIGUOUS" ? " attn" : "") },
+    el("div", { class: "pt-top" },
+      el("div", { class: "grow" }, el("div", { class: "pt-id" }, el("b", {}, l.line_id), el("span", { class: "pt-kind" }, KIND_LABEL[l.kind] || nice(l.kind)),
+        el("span", { class: "small muted" }, l.date)), el("div", { class: "pt-desc" }, l.description)),
+      el("div", { class: "pt-right" }, l.amount_cents != null ? signed(l.amount_cents) : null,
+        el("span", { class: "badge " + LINK_BADGE[l.state][1] }, LINK_BADGE[l.state][0]))),
+    l.attached.length ? el("div", { class: "pt-attached" }, el("span", { class: "pt-lbl" }, "Linked to"),
+      l.attached.map((x) => el("span", { class: "pt-tag" }, `${KIND_LABEL[x.kind] || nice(x.kind)} ${x.line_id}` + (x.kind === "ar" && x.open_cents != null ? ` · open ${usd(x.open_cents)}` : "")))) : null,
+    el("details", { class: "pt-why" }, el("summary", {}, "Why it's theirs", el("span", { class: "pl-n" }, l.signals.length + (l.review ? 1 : 0))),
+      el("ul", { class: "plain" }, (l.review ? [`${l.review.decision === "CONFIRM" ? "Confirmed" : "Rejected"} by ${l.review.by}: “${l.review.note}”`] : []).concat(l.signals).map((x) => el("li", {}, x)))),
+    el("div", { class: "pt-actions" },
+      ["bank", "ledger", "ar"].includes(l.kind) ? el("button", { class: "secondary", onclick: () => openTrace(l.line_id) }, "Trace →") : null,
+      el("span", { class: "grow" }),
+      l.state !== "CONFIRMED" ? el("button", { class: "no", onclick: act(l, "REJECT") }, "Not them") : null,
+      l.state !== "CONFIRMED" ? el("button", { class: "ok", onclick: act(l, "CONFIRM") }, "Confirm") : null));
   put("party-view",
-    el("div", { class: "client-head" }, el("div", {}, el("div", { class: "eyebrow2" }, p.type.toUpperCase() + " · " + p.id), el("div", { class: "client-name" }, p.name),
-      el("div", { class: "client-meta" }, "Known as: " + p.aliases.join(", ") + (p.ref_prefixes.length ? " · references " + p.ref_prefixes.join(", ") : ""))),
-      el("span", { class: "badge" }, `${d.transactions.length} transaction${d.transactions.length === 1 ? "" : "s"}`)),
-    el("div", { class: "kpis" }, [["Money in", usd(bank.filter((l) => l.amount_cents > 0).reduce((a, l) => a + l.amount_cents, 0))],
+    el("div", { class: "client-head" }, el("div", {}, el("div", { class: "eyebrow2" }, nice(p.type) + " · " + p.id), el("div", { class: "client-name" }, p.name),
+      el("div", { class: "client-meta" }, "Known as " + p.aliases.join(", ") + (p.ref_prefixes.length ? " · references " + p.ref_prefixes.join(", ") : ""))),
+      el("span", { class: "badge" + (open ? " OPEN" : " ACCEPTED") }, open ? `${open} to review` : "All confirmed")),
+    el("div", { class: "pt-stats" }, [["Money in", usd(bank.filter((l) => l.amount_cents > 0).reduce((a, l) => a + l.amount_cents, 0))],
       ["Money out", usd(-bank.filter((l) => l.amount_cents < 0).reduce((a, l) => a + l.amount_cents, 0))],
-      ["Invoiced, open", usd(d.owed_cents)], ["Still owed after payments", d.residual_cents ? usd(d.residual_cents) : "–"]]
-      .map(([k, v]) => el("div", { class: "kpi" }, el("div", { class: "k" }, k), el("div", { class: "v" }, v)))),
-    el("div", { class: "card-title" }, "Transactions with " + p.name),
-    el("div", { class: "muted small" }, "One row per transaction. The matching ledger entry, invoice and documents are shown inside it. Confirm or reject the link; your decision is signed into the audit trail."),
-    el("table", {}, el("tr", {}, ["Transaction", "Date", "Amount", "Why it's theirs", "Status", ""].map((h) => el("th", {}, h))),
-      d.transactions.map((l) => el("tr", {}, el("td", {}, el("b", {}, l.line_id), el("span", { class: "small muted" }, " · " + KIND_LABEL[l.kind]), el("div", { class: "small muted" }, l.description),
-          l.attached.length ? el("div", { class: "attached" }, l.attached.map((x) => el("div", {}, `${KIND_LABEL[x.kind]}: ${x.line_id}` + (x.kind === "ar" && x.open_cents != null ? ` (open ${usd(x.open_cents)})` : "")))) : null),
-        el("td", { class: "small" }, l.date), el("td", { class: "num" }, l.amount_cents != null ? usd(l.amount_cents) : ""),
-        el("td", { class: "small" }, el("ul", { class: "plain" }, (l.review ? [`${l.review.decision === "CONFIRM" ? "Confirmed" : "Rejected"} by ${l.review.by}: “${l.review.note}”`] : []).concat(l.signals).map((x) => el("li", {}, x)))),
-        el("td", {}, el("span", { class: "badge " + LINK_BADGE[l.state][1] }, LINK_BADGE[l.state][0])),
-        el("td", {}, l.state !== "CONFIRMED" ? el("button", { class: "ok", onclick: act(l, "CONFIRM") }, "Confirm") : null,
-          l.state !== "CONFIRMED" ? el("button", { class: "no", onclick: act(l, "REJECT") }, "Not them") : null,
-          ["bank", "ledger", "ar"].includes(l.kind) ? el("button", { class: "secondary", onclick: () => openTrace(l.line_id) }, "Trace") : null)))),
-    d.exceptions.length ? el("div", {}, el("div", { class: "card-title gap" }, "Open questions involving " + p.name),
-      d.exceptions.map((e) => el("div", { class: "sugg" }, `${e.id} · ${e.type.replace(/_/g, " ").toLowerCase()}: ${e.why} — ${e.status}`))) : null);
+      ["Open invoices", usd(d.owed_cents)], ["Still owed", d.residual_cents ? usd(d.residual_cents) : "–"]]
+      .map(([k, v]) => el("div", { class: "pt-stat" }, el("div", { class: "k" }, k), el("div", { class: "v" }, v)))),
+    el("div", { class: "pt-head" }, el("div", { class: "card-title" }, "Transactions with " + p.name, el("span", { class: "pl-n" }, d.transactions.length)),
+      el("div", { class: "small muted" }, "Confirm or reject each link. Decisions are signed into the audit trail.")),
+    el("div", { class: "pt-list" }, d.transactions.map(txn)),
+    d.exceptions.length ? el("div", {}, el("div", { class: "card-title gap" }, "Open questions"),
+      d.exceptions.map((e) => el("div", { class: "sugg" }, el("b", {}, e.id), ` · ${nice(e.type)}: ${e.why} `, el("span", { class: "badge " + (e.status === "OPEN" ? "OPEN" : "") }, nice(e.status))))) : null);
 }
 
 // ---------------- trace ----------------
 async function renderTraceList(selected) {
   let d; try { d = await api(W("/trace")); } catch (_) { return; }
   if (!d.lines.length) return put("trace-list", el("div", { class: "muted" }, "Import a bank statement first."));
-  put("trace-list", el("div", { class: "muted small" }, d.run_id ? `Status from ${d.run_id}` : "Not matched yet: run Match to see outcomes."),
-    el("table", {}, d.lines.map((l) => el("tr", { class: "click" + (l.id === selected ? " sel-row" : ""), onclick: () => openTrace(l.id) },
-      el("td", {}, el("b", {}, l.id), el("div", { class: "small muted" }, l.description)), el("td", { class: "num" }, usd(l.amount_cents)),
-      el("td", {}, el("span", { class: "badge " + ({ MATCHED: "ACCEPTED", OPEN: "OPEN", ACCEPTED: "ACCEPTED", REJECTED: "REJECTED" }[l.status] || "") }, l.label))))));
+  put("trace-list", el("div", { class: "muted small" }, d.run_id ? `Status from reconciliation run ${d.run_id}` : el("span", {}, "Not reconciled yet. ", el("a", { href: "#recon", "data-go": "recon" }, "Run reconciliation"), " to see each outcome.")),
+    el("table", { class: "tl" }, d.lines.map((l) => el("tr", { class: "click" + (l.id === selected ? " sel-row" : ""), onclick: () => openTrace(l.id), title: l.description },
+      el("td", { class: "tl-main" }, el("b", {}, l.id), el("div", { class: "tl-desc small muted" }, l.description),
+        el("span", { class: "badge " + ({ MATCHED: "ACCEPTED", OPEN: "OPEN", ACCEPTED: "ACCEPTED", REJECTED: "REJECTED" }[l.status] || "") }, l.label)),
+      el("td", { class: "tl-side" }, el("div", { class: "num tl-amt" }, usd(l.amount_cents)))))));
 }
 async function openTrace(id) {
   if (!document.getElementById("p-trace").classList.contains("active")) go("trace");
@@ -272,13 +307,13 @@ async function openTrace(id) {
       el("div", { class: "tl-body" }, el("div", { class: "tl-stage" }, s.stage), el("div", { class: "tl-title" }, s.title),
         el("div", { class: "small muted" }, [s.who ? "by " + s.who : null, when(s.when)].filter(Boolean).join(" · ")),
         Object.keys(s.detail || {}).length ? el("table", { class: "kv" }, Object.entries(s.detail).filter(([, v]) => v != null && v !== "")
-          .map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, k.replace(/_/g, " ")), el("td", { class: "small" }, (k.endsWith("cents") || k === "still_owed" || k === "amount") && v !== "" && !isNaN(+v) ? usd(+v) : fmt(v))))) : null,
+          .map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, nice(k)), el("td", { class: "small" }, (k.endsWith("cents") || k === "still_owed" || k === "amount") && v !== "" && !isNaN(+v) ? usd(+v) : fmt(v))))) : null,
         s.proof ? el("div", { class: "proof" }, "Proof: " + s.proof) : null)))),
     t.related.length ? el("div", {}, el("div", { class: "card-title gap" }, "Linked records"), el("div", { class: "side" }, t.related.map((r) => srcBox(r.id, KIND_SHORT[r.kind] || labelFor(r.id))))) : null,
     el("div", { class: "card-title gap" }, `Signed evidence for this transaction (${t.events.length} records)`),
     el("div", { class: "muted small" }, `Each record is chained to the one before and signed. Whole chain: ${t.chain.reason}.`),
     el("table", {}, el("tr", {}, ["#", "Time (UTC)", "Who", "Action", "Decision", "Record hash"].map((h) => el("th", {}, h))),
-      t.events.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)), el("td", {}, e.actor_id), el("td", {}, e.action),
+      t.events.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)), el("td", {}, niceActor(e.actor_id)), el("td", {}, nice(e.action)),
         el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0])), el("td", { class: "mono" }, e.event_hash.slice(0, 16) + "…")))));
 }
 
@@ -305,7 +340,6 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "evidence") renderEvidence();
   if (t.dataset.tab === "trace") renderTraceList();
   if (t.dataset.tab === "parties") renderParties();
-  if (t.dataset.tab === "ask") renderAsk();
   if (t.dataset.tab === "reports") renderReports();
   if (t.dataset.tab === "rules") renderRules();
   if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
@@ -321,12 +355,11 @@ async function renderSources() {
   SOURCE_KINDS = s.kinds.map((k) => k.kind);
   put("src-status", s.kinds.map((k) => el("div", {}, el("span", {}, k.label, k.required ? null : el("span", { class: "muted small" }, " · optional")),
     el("span", { class: "src-right" }, k.rows ? el("span", { class: "small muted" }, `${k.rows} rows `) : null,
-      el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, k.status === "NOT_CONNECTED" ? "Not yet" : k.status),
+      el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, k.status === "NOT_CONNECTED" ? "Not yet" : nice(k.status)),
       k.status !== "NOT_CONNECTED" ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null))));
   put("connectors", el("table", {}, el("tr", {}, ["Connection", "Status", "What the label means"].map((h) => el("th", {}, h))),
-    s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, c.status)),
-      el("td", { class: "small muted" }, s.status_labels[c.status])))),
-    el("div", { class: "small muted gap" }, "Not accepted, by design: " + s.not_accepted.join(" · ")));
+    s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, nice(c.status))),
+      el("td", { class: "small muted" }, s.status_labels[c.status])))));
   const sel = $("up-kind"), cur = sel.value;
   put(sel, el("option", { value: "auto" }, "Detect file type automatically"),
     s.kinds.map((k) => el("option", { value: k.kind }, `${k.label} · ${k.formats.filter((f) => f !== "PDF (text)").join(", ")}`)),
@@ -357,7 +390,7 @@ function renderHealth(uploads) {
   put("health", el("table", {},
     el("tr", {}, ["Source", "File", "State", "Rows received", "Accepted", "Rejected", "Debits", "Credits", "Control total", "SHA-256"].map((h) => el("th", {}, h))),
     done.map((u) => el("tr", {},
-      el("td", {}, KIND[u.kind]), el("td", {}, u.filename), el("td", {}, el("span", { class: "badge " + (u.state === "VALIDATED" ? "ACCEPTED" : "OPEN") }, u.state)),
+      el("td", {}, KIND[u.kind]), el("td", {}, u.filename), el("td", {}, el("span", { class: "badge " + (u.state === "VALIDATED" ? "ACCEPTED" : "OPEN") }, nice(u.state))),
       el("td", { class: "num" }, u.health.received), el("td", { class: "num" }, u.health.accepted),
       el("td", { class: "num" + (u.health.rejected.length ? " neg" : "") }, u.health.rejected.length),
       el("td", { class: "num" }, usd(u.health.debit_cents)), el("td", { class: "num" }, usd(u.health.credit_cents)),
@@ -499,7 +532,33 @@ function guessKind(name) {
   if (/document|receipt/.test(n)) return "documents";
   return "bank";
 }
+// Files the importer can read (bank files, ledgers, spreadsheets, text PDFs). Anything else is accepted too:
+// it is stored unopened and held until conversion to JSON is built, and is not used by reconciliation.
+const IMPORTABLE = /\.(csv|xlsx|tsv|txt|json|ofx|qfx|qbo|pdf)$/i;
+async function holdOne(f) {
+  const fd = new FormData(); fd.append("file", f);
+  msg("up-msg", `Storing ${f.name} for conversion…`);
+  try {
+    const r = await api(W("/held-files"), { method: "POST", form: fd });
+    toast(`${f.name}: held for conversion to JSON${r.duplicate_of ? ` (same file as ${r.duplicate_of})` : ""}. Not opened, and not used in reconciliation.`, "good");
+    msg("up-msg", ""); await refreshWs();
+  } catch (e) { msg("up-msg", `${f.name} could not be stored: ${e.message}`, "err"); }
+  nextInQueue();
+}
+const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+function renderHeld(held) {
+  const list = held || [];
+  $("held-card").classList.toggle("hidden", !list.length);
+  if (!list.length) return put("held");
+  put("held", el("div", { class: "tablewrap" }, el("table", {},
+    el("tr", {}, ["File", "Type", "Size", "Status", "Added by", "Added", "SHA-256"].map((h) => el("th", {}, h))),
+    list.slice().reverse().map((h) => el("tr", {}, el("td", {}, h.filename), el("td", {}, h.extension ? h.extension.slice(1).toUpperCase() : "—"),
+      el("td", { class: "num" }, kb(h.size)), el("td", {}, el("span", { class: "badge SIMULATED", title: h.note }, "Held · JSON conversion in development")),
+      el("td", { class: "small" }, h.uploaded_by), el("td", { class: "small" }, new Date(h.uploaded_at).toLocaleString()),
+      el("td", { class: "mono" }, h.sha256.slice(0, 12) + "…"))))));
+}
 async function uploadOne(f) {
+  if (!IMPORTABLE.test(f.name)) return holdOne(f);
   const kind = S.autoKind ? guessKind(f.name) : $("up-kind").value;
   const left = S.queue.length ? ` (${S.queue.length} more after this)` : "";
   const fd = new FormData(); fd.append("file", f);
@@ -525,7 +584,7 @@ function renderMapping() {
     el("div", { class: "muted small" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
     el("table", {}, el("tr", {}, el("th", {}, "LedgerSight field"), el("th", {}, "Your column")),
       fields.map((f) => { const s = el("select", {}, el("option", { value: "" }, "— not mapped —"), u.header.map((h) => el("option", { value: h, selected: h === u.proposed_mapping[f] }, h))); selects[f] = s;
-        return el("tr", {}, el("td", {}, f), el("td", {}, s)); })),
+        return el("tr", {}, el("td", {}, nice(f)), el("td", {}, s)); })),
     el("div", { class: "card-title gap" }, "Preview"),
     el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))),
     el("div", { class: "row gap" }, el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
@@ -538,17 +597,17 @@ function renderMapping() {
 }
 $("sample-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   msg("up-msg", "");
-  try { const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, "Checking the sample files", api(W("/samples/load"), { method: "POST" }));
-    toast(`${r.length} sample files imported: bank statement, ledger, invoices, vendor bills, documents and customer & vendor list. You can now run reconciliation.`, "good");
+  try { const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, "Loading all files", api(W("/samples/load"), { method: "POST" }));
+    toast(`${r.length} files loaded: bank statement, ledger, invoices, vendor bills, documents and customer & vendor list. You can now run reconciliation.`, "good");
     await refreshWs(); await progress(); }
   catch (e) { msg("up-msg", e.message, "err"); }
 }, "Loading…");
-async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); }
+async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held); }
 
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};
   box.classList.remove("hidden");
-  const type = el("select", {}, ["receipt", "vendor_invoice", "other"].map((t) => el("option", { value: t }, t)));
+  const type = el("select", {}, ["receipt", "vendor_invoice", "other"].map((t) => el("option", { value: t }, nice(t))));
   put(box, el("div", { class: "card-title" }, `Confirm document fields · ${u.filename} (${u.pages} page${u.pages > 1 ? "s" : ""})`),
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact PDF was already uploaded (${u.duplicate_of}). Confirming again replaces the same document; nothing is counted twice.`) : null,
     u.unsafe_content.length ? el("div", { class: "exc REJECTED" }, el("div", { class: "type" }, "⚠ Instruction-like text found in this document"),
@@ -557,7 +616,7 @@ function renderDocConfirm() {
     el("div", { class: "muted small" }, u.method),
     el("table", {}, el("tr", {}, ["Field", "Value (edit if wrong)", "Read from (page · exact text)", "Confidence"].map((h) => el("th", {}, h))),
       ["vendor", "reference", "date", "amount"].map((k) => { const f = u.fields[k]; const i = el("input", { value: f.value }); inputs[k] = i;
-        return el("tr", {}, el("td", {}, k), el("td", {}, i), el("td", { class: "small" }, f.page ? `p${f.page} · “${f.source_text}”` : f.source_text),
+        return el("tr", {}, el("td", {}, nice(k)), el("td", {}, i), el("td", { class: "small" }, f.page ? `p${f.page} · “${f.source_text}”` : f.source_text),
           el("td", {}, el("span", { class: "badge " + (f.confidence === "high" ? "PASS" : f.confidence === "none" ? "FAIL" : "UNKNOWN") }, f.confidence))); })),
     el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type,
       el("button", { class: "primary", onclick: async () => {
@@ -569,7 +628,7 @@ function renderDocConfirm() {
 function renderDocs(docs) {
   if (!docs || !docs.length) return put("docs", el("div", { class: "muted" }, "No supporting documents yet."));
   put("docs", el("table", {}, el("tr", {}, ["Doc", "Type", "Reference", "Vendor", "Amount", "File", "Confirmed by"].map((h) => el("th", {}, h))),
-    docs.map((d) => el("tr", {}, el("td", {}, d.id), el("td", {}, d.doc_type), el("td", {}, d.reference), el("td", {}, d.vendor_alias || ""),
+    docs.map((d) => el("tr", {}, el("td", {}, d.id), el("td", {}, nice(d.doc_type)), el("td", {}, d.reference), el("td", {}, d.vendor_alias || ""),
       el("td", { class: "num" }, d.amount_cents != null ? usd(d.amount_cents) : ""), el("td", { class: "small" }, d.file), el("td", { class: "small" }, d.confirmed_by || "index file")))));
 }
 
@@ -629,9 +688,9 @@ function renderWorkflow() {
   put("workflow", el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · policy set ${w[0].policy_version}. Each agent asked TrustOps before it acted; every answer is a signed record in the audit trail.`),
     el("ol", { class: "wf" }, w.map((s, i) => el("li", {},
       el("div", { class: "tl-dot" }, String(i + 1)),
-      el("div", {}, el("div", { class: "code" }, `${s.agent} · ${s.actor_id}`), el("div", { class: "tl-title" }, `${s.name}: ${s.title}`),
+      el("div", {}, el("div", { class: "code" }, `${s.agent} · ${niceActor(s.actor_id)}`), el("div", { class: "tl-title" }, `${s.name}: ${s.title}`),
         el("div", {}, s.summary || ""),
-        el("div", { class: "meta" }, `TrustOps ${s.decision} · ${s.policy_id} ${s.policy_name} · tool ${s.action} · step ${s.step_id}`)),
+        el("div", { class: "meta" }, `TrustOps ${s.decision} · ${s.policy_id} ${nice(s.policy_name)} · tool ${nice(s.action)} · step ${s.step_id}`)),
       el("div", { class: "nums" }, el("span", { class: "badge " + s.decision }, s.decision), el("div", {}, `${s.rows_in} in → ${s.rows_out} out`), el("div", {}, `${s.duration_ms} ms`))))));
 }
 function renderRun() {
@@ -660,12 +719,12 @@ const DENY_TEXT = {
 };
 function denyText(e) {
   const d = e.body && e.body.detail;
-  return d && d.reason_code ? `TrustOps DENY · ${d.reason_code} · ${d.policy_id || ""}. ${DENY_TEXT[d.reason_code] || ""} The refusal is recorded in the audit trail.` : e.message;
+  return d && d.reason_code ? `TrustOps DENY · ${nice(d.reason_code)} · ${d.policy_id || ""}. ${DENY_TEXT[d.reason_code] || ""} The refusal is recorded in the audit trail.` : e.message;
 }
 function govLine(t) {
   if (!t) return null;
   return el("div", { class: "gov" }, el("span", { class: "badge " + t.decision }, "TrustOps " + t.decision),
-    el("span", {}, `${t.policy_id} ${t.policy_name}`), t.required_role ? el("span", {}, `· needs a ${t.required_role_label || t.required_role}`) : null,
+    el("span", {}, `${t.policy_id} ${nice(t.policy_name)}`), t.required_role ? el("span", {}, `· needs a ${t.required_role_label || t.required_role}`) : null,
     el("span", { class: "muted small" }, `· policy set ${t.policy_version}`));
 }
 function renderExceptions() {
@@ -730,9 +789,9 @@ async function attempt(a) {
   catch (e) { r = e.body || { decision: "DENY", reason_code: e.message }; }
   attempts.unshift({ a, r, at: new Date() });
   put("attack-out", el("table", {}, el("tr", {}, ["Time", "Who", "Attempt", "Decision", "Reason", "Policy", "Executed"].map((h) => el("th", {}, h))),
-    attempts.map((x) => el("tr", {}, el("td", {}, x.at.toLocaleTimeString()), el("td", {}, x.r.actor || "You"), el("td", {}, x.a.t),
+    attempts.map((x) => el("tr", {}, el("td", {}, x.at.toLocaleTimeString()), el("td", {}, x.r.actor ? niceActor(x.r.actor) : "You"), el("td", {}, x.a.t),
       el("td", {}, el("span", { class: "badge " + x.r.decision }, x.r.decision)),
-      el("td", {}, x.r.reason_code || ""), el("td", {}, x.r.policy_id || ""), el("td", {}, String(!!x.r.executed))))),
+      el("td", {}, nice(x.r.reason_code)), el("td", {}, x.r.policy_id || ""), el("td", {}, String(!!x.r.executed))))),
     el("div", { class: "msg" }, "Each refusal is now a signed record in the Audit trail and appears in the Governance report."));
 }
 
@@ -752,8 +811,8 @@ async function renderEvidence() {
   put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first.`),
     el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Policy", "Source refs", "Hash"].map((h) => el("th", {}, h))),
       ev.events.slice().reverse().map((e) => el("tr", {}, el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)),
-        el("td", {}, e.agent_code ? el("span", {}, el("b", {}, e.agent_code), " " + e.actor_id) : e.actor_id),
-        el("td", {}, e.action), el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, e.policy_decision)),
+        el("td", {}, e.agent_code ? el("span", {}, el("b", {}, e.agent_code), " " + niceActor(e.actor_id)) : niceActor(e.actor_id)),
+        el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, niceDecision(e.policy_decision))),
         el("td", { class: "small" }, e.policy_id || ""),
         el("td", { class: "small" }, (e.source_line_refs || []).slice(0, 6).join(", ")), el("td", { class: "mono" }, e.event_hash.slice(0, 10) + "…")))));
 }
@@ -775,10 +834,10 @@ async function renderTrust() {
       el("li", {}, `Region declared: ${t.region_declared}. ${t.region_note}`), el("li", {}, "Data allowed: bank statements, ledgers, invoices and receipts only"),
       el("li", {}, t.hard_boundary), el("li", {}, `Storage: ${t.storage}`), el("li", {}, t.retention))),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "AI use"), el("div", { class: "sugg" }, t.ai_note),
-      el("table", {}, el("tr", {}, el("th", {}, "Worker"), el("th", {}, "Does"), el("th", {}, "Model")), t.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code || ""), " " + a.id), el("td", {}, a.does), el("td", {}, a.model)))),
-      el("div", { class: "muted small gap" }, `Allowlisted routes: ${t.model_routes_allowed.join(", ")} · in use: ${t.model_routes_in_use.join(", ")}`)),
-    el("div", { class: "card" }, el("div", { class: "card-title" }, "Never permitted (no grant exists)"), el("ul", { class: "plain" }, t.forbidden_actions.map((f) => el("li", {}, f)))),
-    el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, r)), el("td", { class: "small" }, a.join(", ")))))),
+      el("table", {}, el("tr", {}, el("th", {}, "Worker"), el("th", {}, "Does"), el("th", {}, "Model")), t.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code || ""), " " + niceActor(a.id)), el("td", {}, a.does), el("td", {}, a.model)))),
+      el("div", { class: "muted small gap" }, `Allowlisted routes: ${t.model_routes_allowed.map(nice).join(", ")} · in use: ${t.model_routes_in_use.map(nice).join(", ")}`)),
+    el("div", { class: "card" }, el("div", { class: "card-title" }, "Never permitted (no grant exists)"), el("ul", { class: "plain" }, t.forbidden_actions.map((f) => el("li", {}, nice(f))))),
+    el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, ROLE_NAME[r] || (String(r).startsWith("agent:") ? niceActor(r) : nice(r)))), el("td", { class: "small" }, a.map(nice).join(", ")))))),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Evidence signing"), el("div", {}, `${t.evidence.algorithm} · key: ${t.evidence.key_source} · policy ${t.policy_version}`),
       el("pre", {}, t.evidence.public_key_pem), el("div", { class: "muted small" }, `Security events outside client scope: ${t.security_events}`))));
 }
@@ -812,22 +871,22 @@ async function renderAgents() {
   put("ag-grid", d.agents.map((a) => {
     const s = a.last_run_step;
     return el("div", { class: "card agent " + a.status },
-      el("div", { class: "head" }, el("div", {}, el("div", { class: "code" }, `${a.code} · ${a.actor_id}`), el("div", { class: "card-title" }, a.name)),
+      el("div", { class: "head" }, el("div", {}, el("div", { class: "code" }, a.code), el("div", { class: "card-title" }, a.name)),
         el("span", { class: "badge " + a.status }, a.status === "WORKING" ? el("span", { class: "pulse" }) : null, AG_STATUS[a.status] || a.status)),
       el("div", { class: "muted small" }, a.does),
       el("div", { class: "counts" }, ["ALLOW", "ESCALATE", "DENY"].map((k) => el("span", { class: "badge " + (a.counts[k] ? k : "") }, `${k} ${a.counts[k]}`)),
         el("span", { class: "small muted" }, ` ${a.actions} request${a.actions === 1 ? "" : "s"} to TrustOps`)),
-      el("div", { class: "small" }, a.last ? [el("b", {}, "Last: "), `${a.last.action} · ${a.last.decision} · ${a.last.policy_id || ""} · ${ago(a.last.seconds_ago)}`] : el("span", { class: "muted" }, a.status_note)),
+      el("div", { class: "small" }, a.last ? [el("b", {}, "Last: "), `${nice(a.last.action)} · ${niceDecision(a.last.decision)} · ${a.last.policy_id || ""} · ${ago(a.last.seconds_ago)}`] : el("span", { class: "muted" }, a.status_note)),
       el("details", {}, el("summary", {}, "Details: run step, allowed tools"),
         el("div", { class: "sugg" }, a.status_note),
         s ? el("div", {}, el("b", {}, `In run ${d.run_id}: `), `${s.title}. ${s.summary || ""}`,
           el("div", { class: "muted small" }, `${s.rows_in} rows in → ${s.rows_out} out · ${s.duration_ms} ms · ${s.status} · step ${s.step_id}`)) : null,
-        el("div", { class: "tools gap" }, "Allowed tools: " + a.tools.join(", ") + " · model: " + a.model)));
+        el("div", { class: "tools gap" }, "Allowed tools: " + a.tools.map(nice).join(", ") + " · model: " + a.model)));
   }));
   put("ag-feed", d.feed.length ? el("div", { class: "tablewrap" }, el("table", {},
     el("tr", {}, ["#", "Time (UTC)", "Agent", "Action", "TrustOps decision", "Policy", "Run", "On behalf of"].map((h) => el("th", {}, h))),
-    d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small mono" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + e.actor_id),
-      el("td", {}, e.action), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, e.decision)),
+    d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small mono" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + niceActor(e.actor_id)),
+      el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, niceDecision(e.decision))),
       el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
     : empty("No agent activity yet", "Import files or press “Run reconciliation now”."));
 }
@@ -887,9 +946,9 @@ function nodeFor(a, i) {
   else if (state === "queued") data = el("div", { class: "pnote" }, "Waiting for the previous step");
   else if (state === "stopped") data = el("div", { class: "pnote" }, "The workflow stopped at the blocked step");
   else if (state === "blocked" && a.status === "BLOCKED" && a.last && !forced)
-    data = stats([["Tried", a.last.action], ["Decision", decision("DENY", a.last.policy_id)], ["When", ago(a.last.seconds_ago)]]);
+    data = stats([["Tried", nice(a.last.action)], ["Decision", decision("DENY", a.last.policy_id)], ["When", ago(a.last.seconds_ago)]]);
   else if (step) data = stats([["Rows", `${step.rows_in} → ${step.rows_out}`], ["Decision", decision(step.decision, step.policy_id)], ["Time", `${step.duration_ms} ms`]]);
-  else if (a.last) data = stats([["Last", a.last.action], ["Decision", decision(a.last.decision, a.last.policy_id)], ["When", ago(a.last.seconds_ago)]]);
+  else if (a.last) data = stats([["Last", nice(a.last.action)], ["Decision", decision(a.last.decision, a.last.policy_id)], ["When", ago(a.last.seconds_ago)]]);
   else data = el("div", { class: "pnote" }, "No requests yet");
   const ico = ICON[state] ? icon(ICON[state]) : el("span", {}, String(i + 1));
   const cls = `pnode s-${state}` + (live ? " live" : "") + (an && an.fresh === a.code && forced !== "working" ? " fresh" : "");
@@ -993,22 +1052,46 @@ async function renderAsk() {
 }
 async function askNow() {
   const q = $("ask-q").value.trim(); if (!q) return;
-  let a; try { a = await api(W("/ask"), { method: "POST", json: { question: q } }); }
-  catch (e) { a = { status: "ERROR", answer: e.message, rows: [], columns: [], citations: [] }; }
-  S.asks.unshift({ q, a, ws: S.ws });
   $("ask-q").value = "";
-  const chip = (s) => el("button", { class: "chip", onclick: () => { $("ask-q").value = s; askNow(); } }, s);
-  put("ask-out", S.asks.filter((x) => x.ws === S.ws).map(({ q, a }) => el("div", { class: "qa" },
-    el("div", { class: "row" }, el("div", { class: "q" }, q),
-      a.trustops ? el("span", { class: "badge " + a.trustops.decision, title: `${a.trustops.policy_id} ${a.trustops.policy_name}` }, `TrustOps ${a.trustops.decision} · ${a.trustops.policy_id}`) : null,
-      el("span", { class: "badge " + ({ ANSWERED: "PASS", REFUSED: "DENY" }[a.status] || "UNKNOWN") }, a.status)),
-    el("div", { class: "a" }, a.answer),
-    a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c) => el("td", {}, String(c))))))) : null,
-    a.suggestions ? el("div", { class: "chips" }, a.suggestions.map(chip)) : null,
-    a.citations.length ? el("div", { class: "cites" }, "Sources", el("ul", { class: "plain" }, a.citations.map((c) => el("li", {}, el("b", {}, c.ref), ` · ${c.kind} · ${c.source}`,
-      c.sha256 ? el("span", { class: "mono" }, ` · sha256 ${c.sha256.slice(0, 12)}…`) : null,
-      c.kind === "source row" ? el("button", { class: "linkbtn", onclick: () => openTrace(c.ref) }, " Trace →") : null)))) : null)));
+  S.asks.push({ q, a: null, ws: S.ws }); renderAskLog();
+  const item = S.asks[S.asks.length - 1];
+  try { item.a = await api(W("/ask"), { method: "POST", json: { question: q } }); }
+  catch (e) { item.a = { status: "ERROR", answer: e.message, rows: [], columns: [], citations: [] }; }
+  renderAskLog();
 }
+// The conversation, oldest first like a chat. Answers come only from the server; nothing is generated here.
+function renderAskLog() {
+  const mine = S.asks.filter((x) => x.ws === S.ws);
+  $("ask-empty").classList.toggle("hidden", mine.length > 0);
+  const chip = (t) => el("button", { class: "chip", onclick: () => { $("ask-q").value = t; askNow(); } }, t);
+  put("ask-out", mine.map(({ q, a }) => el("div", { class: "qa" },
+    el("div", { class: "q-bubble" }, q),
+    !a ? el("div", { class: "a-bubble" }, el("span", { class: "typing" }, el("i"), el("i"), el("i"))) : el("div", { class: "a-bubble" },
+      el("div", { class: "row" },
+        el("span", { class: "badge " + ({ ANSWERED: "PASS", REFUSED: "DENY" }[a.status] || "UNKNOWN") }, nice(a.status)),
+        a.trustops ? el("span", { class: "badge " + a.trustops.decision, title: `${a.trustops.policy_id} ${nice(a.trustops.policy_name)}` }, `TrustOps ${a.trustops.decision} · ${a.trustops.policy_id}`) : null),
+      el("div", { class: "a" }, a.answer),
+      a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c) => el("td", {}, String(c))))))) : null,
+      a.suggestions ? el("div", { class: "chips" }, a.suggestions.map(chip)) : null,
+      a.citations.length ? el("div", { class: "cites" }, "Sources", el("ul", { class: "plain" }, a.citations.map((c) => el("li", {}, el("b", {}, c.ref), ` · ${c.kind} · ${c.source}`,
+        c.sha256 ? el("span", { class: "mono" }, ` · sha256 ${c.sha256.slice(0, 12)}…`) : null,
+        c.kind === "source row" ? el("button", { class: "linkbtn", onclick: () => { closeAsk(); openTrace(c.ref); } }, " Trace →") : null)))) : null))));
+  const sc = $("ask-scroll"); sc.scrollTop = sc.scrollHeight;
+}
+S.askOpen = false;
+function setAsk(open) {
+  S.askOpen = open;
+  const d = $("ask-drawer");
+  d.classList.toggle("open", open); d.setAttribute("aria-hidden", String(!open)); d.inert = !open;
+  $("ask-open").setAttribute("aria-expanded", String(open)); $("ask-open").classList.toggle("on", open);
+  document.body.classList.toggle("ask-open", open);
+}
+function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => $("ask-q").focus(), 120); }
+function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
+$("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
+$("ask-close").onclick = closeAsk;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.askOpen && !document.querySelector(".overlay")) closeAsk(); });
+$("ask-drawer").inert = true;
 $("ask-btn").onclick = askNow;
 $("ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter") askNow(); });
 
@@ -1016,20 +1099,20 @@ $("ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter") askNow();
 async function renderRules() {
   let r; try { r = await api("/v1/rulebooks"); } catch (e) { return put("rules", el("div", { class: "msg err" }, e.message)); }
   const roleLabel = (id) => (r.roles.find((x) => x.role === id) || {}).label || id;
-  put("rules", el("div", { class: "muted small" }, `Policy set ${r.version}. ${r.editing}`),
+  put("rules", el("div", { class: "row" }, el("span", { class: "badge" }, `Policy set ${r.version}`), el("span", { class: "badge" }, "Read-only")),
     el("div", { class: "card gap" }, el("div", { class: "card-title" }, "Policies"), el("div", { class: "tablewrap" }, el("table", {},
       el("tr", {}, ["Policy", "Name", "Version", "Effect", "Applies to", "Required role", "Rule"].map((h) => el("th", {}, h))),
-      r.policies.map((p) => el("tr", {}, el("td", {}, el("b", {}, p.id)), el("td", {}, p.name), el("td", {}, p.version),
+      r.policies.map((p) => el("tr", {}, el("td", {}, el("b", {}, p.id)), el("td", {}, nice(p.name)), el("td", {}, p.version),
         el("td", {}, el("span", { class: "badge " + p.effect }, p.effect)),
-        el("td", { class: "small" }, p.exception_types ? p.exception_types.map((t) => t === "*" ? "all other exceptions" : t).join(", ") : p.applies_to),
+        el("td", { class: "small" }, p.exception_types ? p.exception_types.map((t) => t === "*" ? "All other exceptions" : nice(t)).join(", ") : niceList(p.applies_to)),
         el("td", { class: "small" }, p.required_role ? roleLabel(p.required_role) : "—"), el("td", { class: "small" }, p.rule)))))),
     el("div", { class: "grid two gap" },
       el("div", { class: "card" }, el("div", { class: "card-title" }, "Registered agents and the only tools they may use"),
         el("table", {}, r.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code), el("div", { class: "small muted" }, a.name)),
-          el("td", { class: "small" }, a.tools.join(", ")), el("td", { class: "small muted" }, a.model))))),
+          el("td", { class: "small" }, a.tools.map(nice).join(", ")), el("td", { class: "small muted" }, a.model))))),
       el("div", { class: "card" }, el("div", { class: "card-title" }, "People: role permissions"),
-        el("table", {}, r.roles.map((x) => el("tr", {}, el("td", {}, el("b", {}, x.label)), el("td", { class: "small" }, x.actions.join(", "))))),
-        el("div", { class: "card-title gap" }, "Never permitted to anyone"), el("div", { class: "small" }, r.forbidden_actions.join(" · ")))));
+        el("table", {}, r.roles.map((x) => el("tr", {}, el("td", {}, el("b", {}, x.label)), el("td", { class: "small" }, x.actions.map(nice).join(", "))))),
+        el("div", { class: "card-title gap" }, "Never permitted to anyone"), el("div", { class: "small" }, r.forbidden_actions.map(nice).join(" · ")))));
 }
 
 // ---------------- team ----------------
