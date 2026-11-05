@@ -416,7 +416,7 @@ async function renderDrive(open) {
   if (driveCfg.enabled && open) return openDrivePicker();
   if (!driveCfg.enabled) return put("drive-view", el("div", { class: "card gap" },
     el("div", { class: "card-title" }, "Google Drive is not connected yet"),
-    el("ol", { class: "plain small" }, el("li", {}, "In Google Cloud Console, enable the Google Drive API and Google Picker API."),
+    el("ol", { class: "plain small" }, el("li", {}, "In Google Cloud Console, enable the Google Drive API."),
       el("li", {}, "Create an OAuth client (Web application) with origin http://127.0.0.1:8090, and an API key."),
       el("li", {}, "Add GOOGLE_CLIENT_ID=… and GOOGLE_API_KEY=… to the .env file, then restart LedgerSight.")),
     el("div", { class: "small muted" }, "Access is read-only and limited to the files you pick (drive.file scope). Nothing else in your Drive is visible.")));
