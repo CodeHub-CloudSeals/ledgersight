@@ -369,50 +369,35 @@ function renderHealth(uploads) {
 }
 // Several files can be chosen at once; each one is checked and confirmed in turn.
 S.queue = [];
-// One "Choose files…" button; the source dropdown decides where files come from.
-$("choose-btn").onclick = () => {
-  const src = $("src-select").value;
-  put("em-view"); put("drive-view");
-  if (src === "computer") $("up-file").click();
-  else if (src === "email") $("em-file").click();
-  else renderDrive(true);
-};
-$("src-select").onchange = () => {
-  const src = $("src-select").value;
-  $("choose-btn").textContent = src === "computer" ? "Choose files…" : src === "email" ? "Choose email…" : "Open Google Drive…";
-  $("up-kind").disabled = src !== "computer";
-  $("dz-text").textContent = src === "computer" ? "Drag files here" : src === "email" ? "Pick a saved email" : "Pick files from Google Drive";
-  $("dz-sub").textContent = src === "computer" ? "Documents, spreadsheets and bank files" : src === "email" ? ".eml with attachments" : "Read-only, limited to what you select";
-  $("dz-connect").classList.toggle("hidden", src === "drive");
-  put("em-view"); put("drive-view");
-};
+const isEml = (f) => /\.eml$/i.test(f.name) || f.type === "message/rfc822";
+function intakeFiles(files, from) {
+  put("drive-view");
+  const emails = files.filter(isEml), normal = files.filter((f) => !isEml(f));
+  if (normal.length) queueFiles(normal, from);
+  emails.forEach((f) => openEmail(f));
+}
+$("choose-btn").onclick = () => $("up-file").click();
 $("up-file").onchange = () => {
-  S.queue = [...$("up-file").files]; S.autoKind = $("up-kind").value === "auto";
-  if (!S.queue.length) return;
-  S.queueTotal = S.queue.length; nextInQueue();
+  const files = [...$("up-file").files];
+  $("up-file").value = "";
+  if (files.length) intakeFiles(files, "this computer");
 };
-$("em-file").onchange = () => openEmail();
-// Drag and drop onto the dropzone (files from this computer only).
+// Drag and drop onto the dropzone.
 const dzTarget = $("dz-target");
-["dragenter", "dragover"].forEach((ev) => dzTarget.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation();
-  if ($("src-select").value === "computer") dzTarget.classList.add("drag");
-}));
+["dragenter", "dragover"].forEach((ev) => dzTarget.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); dzTarget.classList.add("drag"); }));
 ["dragleave", "drop"].forEach((ev) => dzTarget.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); dzTarget.classList.remove("drag"); }));
 dzTarget.addEventListener("drop", (e) => {
-  if ($("src-select").value !== "computer") return;
   const files = [...(e.dataTransfer?.files || [])];
-  if (files.length) queueFiles(files, "drag and drop");
+  if (files.length) intakeFiles(files, "drag and drop");
 });
-$("dz-drive-btn").onclick = () => { $("src-select").value = "drive"; $("src-select").dispatchEvent(new Event("change")); renderDrive(true); };
+$("dz-drive-btn").onclick = () => { put("em-view"); renderDrive(true); };
 function queueFiles(files, from) {
   S.queue = files; S.autoKind = true; S.queueTotal = files.length;
   msg("up-msg", `${files.length} file${files.length === 1 ? "" : "s"} from ${from}. Checking each one…`); nextInQueue();
 }
 
 const b64file = (a) => { const bin = atob(a.data_b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new File([u], a.name); };
-async function openEmail() {
-  const f = $("em-file").files[0]; if (!f) return msg("up-msg", "Choose a saved email (.eml) first.", "err");
+async function openEmail(f) {
   const fd = new FormData(); fd.append("file", f);
   let r; try { r = await api(W("/email"), { method: "POST", form: fd }); } catch (e) { return msg("up-msg", "Refused: " + e.message, "err"); }
   const boxes = r.attachments.map((a) => el("input", { type: "checkbox", checked: true }));
@@ -423,7 +408,6 @@ async function openEmail() {
       r.attachments.map((a, i) => el("label", { class: "row small" }, boxes[i], `${a.name} · ${(a.size / 1024).toFixed(1)} KB`))) : el("div", { class: "muted" }, "No usable attachments."),
     r.skipped.map((s) => el("div", { class: "small muted" }, `Skipped ${s.name}: ${s.reason}`)),
     r.attachments.length ? el("button", { class: "primary gap", onclick: () => { put("em-view"); queueFiles(r.attachments.filter((_, i) => boxes[i].checked).map(b64file), "the email"); } }, "Import selected attachments") : null));
-  $("em-file").value = "";
 }
 let driveCfg = null;
 const loadScript = (src) => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.append(s); });

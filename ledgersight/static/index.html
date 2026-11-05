@@ -109,28 +109,20 @@
       <div class="grid two">
         <div class="card">
           <div class="card-title">Upload files</div>
-          <div class="row">
-            <select id="src-select" aria-label="Where from">
-              <option value="computer">From this computer</option>
-              <option value="email">From a saved email (.eml)</option>
-              <option value="drive">From Google Drive</option>
-            </select>
-            <select id="up-kind" aria-label="File type"><option value="auto">Detect file type automatically</option></select>
-          </div>
+          <select id="up-kind" aria-label="File type" class="hidden"><option value="auto">Detect file type automatically</option></select>
           <div class="dropzone" id="dz-target">
             <div class="dz-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
-            <div id="dz-text" class="dz-text">Drag files here</div>
-            <div id="dz-sub" class="small muted">Documents, spreadsheets and bank files</div>
+            <div class="dz-text">Drag files here</div>
+            <div class="small muted">Documents, spreadsheets and bank files</div>
             <button id="choose-btn" class="primary gap">Choose files…</button>
-            <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.json,.ofx,.qfx,.qbo,.pdf">
-            <input id="em-file" type="file" class="hidden" accept=".eml,message/rfc822">
+            <input id="up-file" type="file" multiple class="hidden" accept=".csv,.xlsx,.tsv,.txt,.json,.ofx,.qfx,.qbo,.pdf,.eml,message/rfc822">
           </div>
           <div class="dz-connect row" id="dz-connect">
             <span class="dz-connect-icon" aria-hidden="true">🔗</span>
             <span class="small muted grow">Add files from Google Drive</span>
             <button id="dz-drive-btn" class="ghost">Connect</button>
           </div>
-          <div class="muted small">Select several files at once. Accepted: CSV, Excel (.xlsx), TSV, JSON, bank downloads (OFX/QFX/QBO), bank statements as text PDF, invoice and receipt PDFs. 10 MB / 5,000 rows per file. Formulas are never run; macro, archive and linked workbooks are refused.</div>
+          <div class="muted small">Select several files at once. Accepted: CSV, Excel (.xlsx), TSV, JSON, bank downloads (OFX/QFX/QBO), bank statements as text PDF, invoice and receipt PDFs, saved emails (.eml) with attachments. 10 MB / 5,000 rows per file. Formulas are never run; macro, archive and linked workbooks are refused.</div>
           <div id="em-view"></div>
           <div id="drive-view"></div>
           <div id="up-msg" class="msg"></div>
