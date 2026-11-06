@@ -72,8 +72,8 @@
       <div id="ov-hero" class="hero"></div>
       <div id="ov-kpis" class="tiles"></div>
       <div class="card gap pipe" id="ov-pipe">
-        <div class="pipe-head"><div class="card-title">Agent pipeline</div>
-          <div class="pipe-meta"><span class="pipe-count" data-pipe="count"><i></i>0 of 6 agents active</span><a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div></div>
+        <div class="pipe-head"><div class="card-title">Agent workflow</div>
+          <div class="pipe-meta"><a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div></div>
         <div id="ov-agents"></div>
       </div>
       <div class="grid ov gap">
@@ -91,7 +91,7 @@
         </div>
       </div>
       <details class="card gap fold" id="ov-profile">
-        <summary>Client profile <span class="muted">name, period, industry · clear data</span></summary>
+        <summary>Client profile</summary>
         <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
         <div class="form-grid gap">
           <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
@@ -113,7 +113,7 @@
           <div class="dropzone" id="dz-target">
             <div class="dz-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
             <div class="dz-text">Drag files here</div>
-            <div class="small muted">Any document type. Bank files, ledgers and spreadsheets are imported; other documents are held for conversion to JSON.</div>
+            <div class="small muted">Any document type. Bank files, ledgers and spreadsheets are imported. Other documents are held for conversion to JSON.</div>
             <button id="choose-btn" class="primary gap">Choose files…</button>
             <input id="up-file" type="file" multiple class="hidden">
           </div>
@@ -158,9 +158,9 @@
       <div id="tiles" class="tiles"></div>
       <div class="card gap pipe" id="rc-pipe">
         <div class="pipe-head"><div class="card-title">Agent workflow</div>
-          <div class="pipe-meta"><span class="pipe-count" data-pipe="count"><i></i>0 of 6 agents active</span><span class="muted">TrustOps checks every step</span></div></div>
+          <div class="pipe-meta"><span class="muted">TrustOps checks every step</span></div></div>
         <div id="rc-pipeline"></div>
-        <details class="gap"><summary class="small muted">Step-by-step detail</summary><div id="workflow" class="muted">Run a reconciliation to see each agent step.</div></details>
+        <div id="workflow" class="hidden"></div>
       </div>
       <div class="grid two gap">
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
@@ -171,12 +171,12 @@
     <!-- ================= Agents ================= -->
     <section class="panel" id="p-agents">
       <div class="page-head"><div><h2>Agents</h2>
-        <p class="sub">The six LedgerSight agents for this client: what each is doing now, what it last did and what TrustOps decided. Built from the signed audit trail; refreshes every 2 seconds.</p></div>
+        <p class="sub">The six LedgerSight agents for this client. See what each one is doing now, what it last did and what TrustOps decided. Built from the signed audit trail and refreshed every 2 seconds.</p></div>
         <div class="row"><span id="ag-live" class="pill live">● live</span><button id="ag-run" class="primary">Run reconciliation now</button></div></div>
       <div id="ag-ready"></div>
       <div class="card pipe" id="ag-pipe">
-        <div class="pipe-head"><div class="card-title">Pipeline</div>
-          <div class="pipe-meta"><span class="pipe-count" data-pipe="count"><i></i>0 of 6 agents active</span><span class="pill">Run <b id="ag-runid">none</b></span><span class="pill">Trace <b id="ag-trace">–</b></span></div></div>
+        <div class="pipe-head"><div class="card-title">Agent workflow</div>
+          <div class="pipe-meta"></div></div>
         <div id="ag-pipeline"></div>
         <div id="ag-msg" class="msg"></div>
       </div>
@@ -187,7 +187,7 @@
     <!-- ================= Review queue ================= -->
     <section class="panel" id="p-exceptions">
       <div class="page-head"><div><h2>Review queue</h2>
-        <p class="sub">Only what needs a person. Each item shows the source rows, the rule that raised it, the TrustOps decision and a suggested next step. Decisions are recorded and signed; nothing is posted.</p></div></div>
+        <p class="sub">Only what needs a person. Each item shows the source rows, the rule that raised it, the TrustOps decision and a suggested next step. Decisions are recorded and signed. Nothing is posted.</p></div></div>
       <div id="exc-list"></div>
     </section>
 
@@ -213,7 +213,7 @@
     <!-- ================= Trace ================= -->
     <section class="panel" id="p-trace">
       <div class="page-head"><div><h2>Trace a transaction</h2>
-        <p class="sub">Follow any bank transaction end to end: the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
+        <p class="sub">Follow any bank transaction end to end. See the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
       <div class="trace-grid">
         <div class="card"><div class="card-title">Bank transactions</div><div id="trace-list" class="muted">Import files first.</div></div>
         <div id="trace-view" class="card"><div class="muted">Select a line on the left.</div></div>
@@ -234,7 +234,7 @@
     <!-- ================= Reports ================= -->
     <section class="panel" id="p-reports">
       <div class="page-head"><div><h2>Reports</h2>
-        <p class="sub">Two reports for the same run. The Finance Reconciliation Report says what happened to the records; the TrustOps Governance Report proves how: agents, policies, decisions, approvals and evidence.</p></div>
+        <p class="sub">Two reports for the same run. The Finance Reconciliation Report shows what happened to the records. The TrustOps Governance Report proves how it happened, with the agents, policies, decisions, approvals and evidence behind it.</p></div>
         <div class="row"><span class="pill">Run <b id="rep-run">none</b></span><span class="pill">Trace <b id="rep-trace">–</b></span></div></div>
       <div class="grid two" id="rep-cards"></div>
       <div class="card gap"><div class="card-title" id="rep-prev-title">Preview</div><div id="rep-preview" class="muted">Run a reconciliation first.</div></div>

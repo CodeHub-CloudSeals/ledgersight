@@ -140,81 +140,76 @@ def to_csv(rep: dict) -> bytes:
 
 def to_xlsx(rep: dict) -> bytes:
     from openpyxl import Workbook
-    from openpyxl.styles import Font
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    ink, muted, accent = "101828", "667085", "4F46E5"
+    head_fill = PatternFill("solid", fgColor="EEF2FF")
+    thin = Border(bottom=Side(style="thin", color="E4E7EC"))
+    usd_fmt = '"$"#,##0.00;[Red]-"$"#,##0.00'
+
+    def val(v, money=False):
+        if isinstance(v, str) and _NUM.match(v):
+            v = float(v) if "." in v or money else int(v)
+        return v
+
+    def put(c, v, money=False):
+        c.value = val(v, money)
+        if isinstance(c.value, str) and c.value.startswith("="):
+            c.data_type = "s"  # text, never a formula
+        if money and isinstance(c.value, (int, float)):
+            c.number_format = usd_fmt
+        return c
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
+    ws.sheet_view.showGridLines = False
+    ws["A1"].value = rep["title"]
+    ws["A1"].font = Font(size=18, bold=True, color=ink)
+    ws["A2"].value = f"Report {rep['report_id']}  ·  Run {rep['run_id']}"
+    ws["A2"].font = Font(size=10, color=muted)
+    for i, (k, v) in enumerate(rep["summary"], start=4):
+        kc = ws.cell(row=i, column=1, value=k)
+        kc.font = Font(color=muted)
+        kc.border = thin
+        vc = put(ws.cell(row=i, column=2), v, money="(USD)" in k)
+        vc.font = Font(bold=True, color=ink)
+        vc.alignment = Alignment(horizontal="left", wrap_text=True, vertical="top")
+        vc.border = thin
+    ws.column_dimensions["A"].width, ws.column_dimensions["B"].width = 40, 80
 
-    def put(sheet, row, vals, bold=False):
-        for col, v in enumerate(vals, start=1):
-            if isinstance(v, str) and _NUM.match(v):
-                v = float(v)
-            c = sheet.cell(row=row, column=col, value=v)
-            if isinstance(v, str) and v.startswith("="):
-                c.data_type = "s"  # text, never a formula
-            if bold:
-                c.font = Font(bold=True)
-
-    put(ws, 1, [rep["title"]], bold=True)
-    for i, (k, v) in enumerate(rep["summary"], start=3):
-        put(ws, i, [k, v])
-    ws.column_dimensions["A"].width, ws.column_dimensions["B"].width = 38, 70
     used = set()
-    for s in rep["sections"]:
-        name = re.sub(r"[\[\]:*?/\\]", "", s["title"])[:31]
+    for s_ in rep["sections"]:
+        name = re.sub(r"[\[\]:*?/\\]", "", s_["title"])[:31]
         while name in used:
             name = name[:29] + str(len(used))
         used.add(name)
         sh = wb.create_sheet(name)
-        put(sh, 1, s["columns"], bold=True)
-        for i, r in enumerate(s["rows"], start=2):
-            put(sh, i, r)
-        for col, h in enumerate(s["columns"], start=1):
-            width = max([len(str(h))] + [len(str(r[col - 1])) for r in s["rows"]])
-            sh.column_dimensions[sh.cell(row=1, column=col).column_letter].width = min(60, max(10, width + 2))
+        sh.sheet_view.showGridLines = False
+        cols = s_["columns"]
+        money = ["(USD)" in c for c in cols]
+        for col, h in enumerate(cols, start=1):
+            c = sh.cell(row=1, column=col, value=h)
+            c.font = Font(bold=True, color=accent)
+            c.fill = head_fill
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+            c.border = Border(bottom=Side(style="medium", color=accent))
+        sh.row_dimensions[1].height = 24
+        for i, r in enumerate(s_["rows"], start=2):
+            for col, v in enumerate(r, start=1):
+                c = put(sh.cell(row=i, column=col), v, money=money[col - 1])
+                c.border = thin
+                c.alignment = Alignment(vertical="top", wrap_text=isinstance(c.value, str) and len(c.value) > 40)
+        for col, h in enumerate(cols, start=1):
+            width = max([len(str(h))] + [len(str(r[col - 1])) for r in s_["rows"]])
+            sh.column_dimensions[get_column_letter(col)].width = min(60, max(12, width + 3))
+        sh.freeze_panes = "A2"
+        if s_["rows"]:
+            sh.auto_filter.ref = f"A1:{get_column_letter(len(cols))}{len(s_['rows']) + 1}"
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
-
-
-def to_pdf(rep: dict) -> bytes:
-    """Small self-contained PDF writer (standard fonts, landscape Letter). No extra dependency."""
-    W, M = 792, 36  # landscape Letter width and margin, used to fit tables
-    lines: list[tuple[str, float, str]] = []  # (font, size, text)
-    lines.append(("F2", 15, rep["title"]))
-    lines.append(("F1", 8, f"Report {rep['report_id']} · Run {rep['run_id']}"))
-    lines.append(("F1", 6, ""))
-    for k, v in rep["summary"]:
-        for i, part in enumerate(textwrap.wrap(f"{k}: {v}", 150) or [""]):
-            lines.append(("F1", 8.5, part if i == 0 else "    " + part))
-    cw = 7 * 0.6  # Courier 7pt character width
-    max_chars = int((W - 2 * M) / cw)
-    for s in rep["sections"]:
-        lines.append(("F1", 6, ""))
-        lines.append(("F2", 11, s["title"]))
-        if not s["rows"]:
-            lines.append(("F1", 8.5, "None."))
-            continue
-        cols = s["columns"]
-        nat = [max([len(str(c))] + [len(str(r[i])) for r in s["rows"]]) for i, c in enumerate(cols)]
-        widths = nat[:]
-        while sum(widths) + 2 * len(widths) > max_chars:  # shrink the widest column until the table fits
-            j = widths.index(max(widths))
-            widths[j] -= 1
-            if widths[j] < 6:
-                break
-
-        def emit(cells):
-            wrapped = [textwrap.wrap(str(c), w) or [""] for c, w in zip(cells, widths)]
-            for n in range(max(len(x) for x in wrapped)):
-                lines.append(("F3", 7, "  ".join((x[n] if n < len(x) else "").ljust(w) for x, w in zip(wrapped, widths))))
-        emit(cols)
-        lines.append(("F3", 7, "  ".join("-" * w for w in widths)))
-        for r in s["rows"]:
-            emit(r)
-
-    return write_pdf(lines, footer=lambda i, n: f"{rep['report_id']} · run {rep['run_id']} · page {i} of {n}")
 
 
 def write_pdf(lines: list[tuple[str, float, str]], *, footer=None, landscape=True, title: str = "",
@@ -267,6 +262,351 @@ def write_pdf(lines: list[tuple[str, float, str]], *, footer=None, landscape=Tru
     info = b" /Info %d 0 R" % len(objs) if title else b""
     out += b"trailer\n<< /Size %d /Root %d 0 R%s >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, cat, info, xref)
     return bytes(out)
+
+
+# ---- professional PDF layout ------------------------------------------------------
+# Same report data as JSON/CSV; only the presentation is richer. Pure Python, standard PDF fonts.
+_HELV = ("278 278 355 556 556 889 667 191 333 333 389 584 278 333 278 278 556 556 556 556 556 556 556 556 556 556 278 278 584 584 584 556 "
+         "1015 667 667 722 722 667 611 778 722 278 500 667 556 833 722 778 667 778 722 667 611 722 667 944 667 667 611 278 278 278 469 556 "
+         "333 556 556 500 556 556 278 556 556 222 222 500 222 833 556 556 556 556 333 500 278 556 500 722 500 500 500 334 260 334 584")
+_HELVB = ("278 333 474 556 556 889 722 238 333 333 389 584 278 333 278 278 556 556 556 556 556 556 556 556 556 556 333 333 584 584 584 611 "
+          "975 722 722 722 722 667 611 778 722 278 556 722 611 833 722 778 667 778 722 667 611 722 667 944 667 667 611 333 278 333 584 556 "
+          "333 556 611 556 611 556 333 611 611 278 278 556 278 889 611 611 611 611 389 556 333 611 556 778 556 556 500 389 280 389 584")
+_W = {"F1": [int(x) for x in _HELV.split()], "F2": [int(x) for x in _HELVB.split()]}
+
+INK, MUTED, ACCENT, LINE, HEAD_BG, ZEBRA = (.063, .094, .157), (.40, .44, .52), (.31, .275, .898), (.894, .906, .925), (.949, .957, .969), (.98, .984, .988)
+TONE = {"ALLOW": (.024, .463, .278), "ACCEPTED": (.024, .463, .278), "PASS": (.024, .463, .278), "VALIDATED": (.024, .463, .278),
+        "ESCALATE": (.71, .28, .03), "OPEN": (.71, .28, .03), "RETURNED": (.71, .28, .03),
+        "DENY": (.71, .14, .09), "REJECTED": (.71, .14, .09), "FAIL": (.71, .14, .09)}
+_ISO = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(\.\d+)?(\+00:00|Z)?$")
+_AMT = re.compile(r"(?<![\w.$-])(-?\d+)\.(\d{2})(?![\d.%])")
+
+
+def _tw(s: str, font: str, size: float) -> float:
+    if font in ("F3", "F4"):
+        return len(s) * 0.6 * size
+    t = _W.get(font, _W["F1"])
+    return sum(t[ord(c) - 32] if 32 <= ord(c) <= 126 else 556 for c in s) * size / 1000
+
+
+def _wrap(s: str, font: str, size: float, maxw: float) -> list[str]:
+    out = []
+    for para in str(s).split("\n"):
+        line = ""
+        for word in para.split(" "):
+            cand = word if not line else line + " " + word
+            if _tw(cand, font, size) <= maxw + 0.5:
+                line = cand; continue
+            if line:
+                out.append(line)
+            while _tw(word, font, size) > maxw + 0.5 and len(word) > 1:  # break very long tokens (hashes, ids)
+                n = max(1, int(len(word) * maxw / max(_tw(word, font, size), 1)))
+                while n > 1 and _tw(word[:n], font, size) > maxw:
+                    n -= 1
+                out.append(word[:n]); word = word[n:]
+            line = word
+        out.append(line)
+    return out or [""]
+
+
+def _usd(v) -> str:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return ("-" if x < 0 else "") + f"${abs(x):,.2f}"
+
+
+def _prose(s: str) -> str:
+    """Sentence case and $1,234.56 amounts inside explanatory text (display only)."""
+    s = _AMT.sub(lambda m: _usd(f"{m.group(1)}.{m.group(2)}"), str(s))
+    return s[:1].upper() + s[1:]
+
+
+_ACRONYMS = {"AI", "CPA", "LLC", "LLP", "UK", "US", "USA", "IT", "HR"}
+
+
+def _proper(v) -> str:
+    """Names typed all in lowercase ("cloud seals") are shown capitalised ("Cloud Seals"); others exactly as typed."""
+    t = str(v or "")
+    if not re.search(r"[a-z]", t) or t != t.lower():
+        return t
+    return re.sub(r"[a-z0-9]+", lambda m: m.group(0).upper() if m.group(0).upper() in _ACRONYMS else m.group(0).capitalize(), t)
+
+
+def _when(v: str) -> str:
+    m = _ISO.match(str(v))
+    return f"{m.group(1)} {m.group(2)} UTC" if m else str(v)
+
+
+class _Pdf:
+    def __init__(self, landscape=True):
+        self.W, self.H = (792, 612) if landscape else (612, 792)
+        self.M = 40
+        self.pages: list[list[bytes]] = []
+        self.new_page()
+
+    def new_page(self):
+        self.ops: list[bytes] = []
+        self.pages.append(self.ops)
+        self.y = self.H - self.M
+
+    @staticmethod
+    def _esc(t: str) -> bytes:
+        b = str(t).replace("→", "->").encode("cp1252", "replace")
+        return b.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+
+    def text(self, x, y, s, font="F1", size=9, color=INK, align="left"):
+        if s in (None, ""):
+            return
+        if align == "right":
+            x -= _tw(str(s), font, size)
+        elif align == "center":
+            x -= _tw(str(s), font, size) / 2
+        self.ops.append(b"%.3f %.3f %.3f rg BT /%s %.2f Tf %.2f %.2f Td (%s) Tj ET\n"
+                        % (*color, font.encode(), size, x, y, self._esc(s)))
+
+    def rect(self, x, y, w, h, fill=None, stroke=None, lw=0.6):
+        if fill:
+            self.ops.append(b"%.3f %.3f %.3f rg %.2f %.2f %.2f %.2f re f\n" % (*fill, x, y, w, h))
+        if stroke:
+            self.ops.append(b"%.3f %.3f %.3f RG %.2f w %.2f %.2f %.2f %.2f re S\n" % (*stroke, lw, x, y, w, h))
+
+    def line(self, x1, y1, x2, y2, color=LINE, lw=0.6):
+        self.ops.append(b"%.3f %.3f %.3f RG %.2f w %.2f %.2f m %.2f %.2f l S\n" % (*color, lw, x1, y1, x2, y2))
+
+    def build(self, title="", footer=None) -> bytes:
+        objs: list[bytes] = []
+        add = lambda b: objs.append(b) or len(objs)
+        cat, pages_id = add(b""), add(b"")
+        fonts = [add(f"<< /Type /Font /Subtype /Type1 /BaseFont /{n} /Encoding /WinAnsiEncoding >>".encode())
+                 for n in ("Helvetica", "Helvetica-Bold", "Courier", "Courier-Bold")]
+        kids, n = [], len(self.pages)
+        for i, ops in enumerate(self.pages, start=1):
+            self.ops = ops
+            if footer:
+                footer(self, i, n)
+            body = b"".join(ops)
+            content = add(b"<< /Length %d >>\nstream\n" % len(body) + body + b"\nendstream")
+            kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] /Contents %d 0 R "
+                            b"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R >> >> >>"
+                            % (pages_id, self.W, self.H, content, *fonts)))
+        objs[cat - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % pages_id
+        objs.append(b"<< /Title (%s) /Producer (LedgerSight) >>" % self._esc(title))
+        objs[pages_id - 1] = b"<< /Type /Pages /Kids [%s] /Count %d >>" % (b" ".join(b"%d 0 R" % k for k in kids), len(kids))
+        out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets = []
+        for k, o in enumerate(objs, start=1):
+            offsets.append(len(out))
+            out += b"%d 0 obj\n" % k + o + b"\nendobj\n"
+        xref = len(out)
+        out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+        out += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+        out += b"trailer\n<< /Size %d /Root %d 0 R /Info %d 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, cat, len(objs), xref)
+        return bytes(out)
+
+
+_KPIS = {
+    "finance": [("Bank net movement (USD)", "Bank net movement"), ("Ledger net movement (USD)", "Ledger net movement"),
+                ("Variance (USD)", "Variance"), ("Unexplained variance (USD)", "Unexplained variance"),
+                ("Matched automatically", "Matched automatically"), ("Exceptions raised", "Exceptions raised"),
+                ("Awaiting review", "Awaiting review"), ("Outstanding on partial receipts (USD)", "Still owed on invoices")],
+    "governance": [("ALLOW decisions", "Allowed"), ("ESCALATE decisions", "Escalated to a person"), ("DENY decisions", "Denied"),
+                   ("Human decisions recorded", "Human decisions"), ("Agents in this run", "Agents in this run"),
+                   ("Evidence verification", "Evidence chain")],
+}
+_SKIP = {"Report", "Boundary", "Client", "Period"}
+_MONO_COLS = {"SHA-256", "Event hash", "Step ID"}
+_PROSE_COLS = {"Reason", "Why", "Rule", "Note"}
+_CODE_COLS = {"Type"}
+
+
+def to_pdf(rep: dict) -> bytes:
+    doc = _Pdf(landscape=True)
+    W, M = doc.W, doc.M
+    S = {k: v for k, v in rep["summary"]}
+    client, period = _proper(S.get("Client", "")), _proper(S.get("Period", ""))
+    kind = rep.get("report", "finance")
+
+    # header band
+    doc.rect(0, doc.H - 6, W, 6, fill=ACCENT)
+    top = doc.H - M
+    doc.text(M, top - 4, "LEDGERSIGHT  ·  GOVERNED BY TRUSTOPS", "F2", 7.5, ACCENT)
+    doc.text(M, top - 28, rep["title"], "F2", 20, INK)
+    doc.text(M, top - 46, " · ".join(str(x) for x in (client, period) if x), "F1", 10.5, MUTED)
+    rx = W - M
+    for i, (k, v) in enumerate([("Report", rep["report_id"]), ("Run", rep["run_id"]), ("Generated", _when(S.get("Generated at (UTC)", "")))]):
+        yy = top - 6 - i * 15
+        doc.text(rx - 150, yy, k.upper(), "F2", 6.5, MUTED)
+        doc.text(rx, yy, str(v), "F1", 8.5, INK, align="right")
+    doc.y = top - 62
+    doc.line(M, doc.y, W - M, doc.y, LINE, 0.8)
+    doc.y -= 16
+
+    # key figures
+    kp = [(lbl, S[k], k) for k, lbl in _KPIS.get(kind, []) if k in S]
+    if kp:
+        per = 4
+        gap = 10
+        bw = (W - 2 * M - gap * (per - 1)) / per
+        bh = 50
+        for r0 in range(0, len(kp), per):
+            for j, (lbl, v, key) in enumerate(kp[r0:r0 + per]):
+                x = M + j * (bw + gap)
+                doc.rect(x, doc.y - bh, bw, bh, fill=(.988, .988, .996), stroke=LINE)
+                doc.rect(x, doc.y - 2, bw, 2, fill=ACCENT)
+                doc.text(x + 12, doc.y - 17, lbl, "F1", 8, MUTED)
+                val = str(v)
+                if "(USD)" in key:
+                    val = _usd(v)
+                elif key == "Evidence verification":
+                    val = val.split(":")[0]
+                tone = INK
+                if key in ("Variance (USD)", "Awaiting review", "ESCALATE decisions", "Outstanding on partial receipts (USD)") and str(v) not in ("0", "0.00"):
+                    tone = TONE["ESCALATE"]
+                if key in ("Unexplained variance (USD)", "DENY decisions") and str(v) not in ("0", "0.00"):
+                    tone = TONE["DENY"]
+                if key == "Evidence verification":
+                    tone = TONE.get(val, INK)
+                doc.text(x + 12, doc.y - 39, val, "F2", 16, tone)
+            doc.y -= bh + gap
+        doc.y -= 6
+
+    # details grid (everything else in the summary)
+    det = [(k, v) for k, v in rep["summary"] if k not in _SKIP and k not in {x[0] for x in _KPIS.get(kind, [])}]
+    if det:
+        doc.text(M, doc.y, "Report details", "F2", 11, INK)
+        doc.y -= 14
+        colw = (W - 2 * M) / 2
+        rows = [det[i:i + 2] for i in range(0, len(det), 2)]
+        for pair in rows:
+            hgt = 0
+            for j, (k, v) in enumerate(pair):
+                x = M + j * colw
+                v = _when(v) if k.startswith("Generated at") else v
+                lines = _wrap(str(v), "F1", 8.5, colw - 150)
+                doc.text(x, doc.y - 10, k, "F1", 8.5, MUTED)
+                for n, ln in enumerate(lines):
+                    doc.text(x + 140, doc.y - 10 - n * 11, ln, "F1", 8.5, INK)
+                hgt = max(hgt, 6 + len(lines) * 11)
+            doc.y -= hgt + 2
+            doc.line(M, doc.y, W - M, doc.y, LINE, 0.4)
+            doc.y -= 2
+        doc.y -= 10
+
+    if S.get("Boundary"):
+        lines = _wrap(S["Boundary"], "F1", 8.5, W - 2 * M - 24)
+        h = 10 + len(lines) * 11
+        doc.rect(M, doc.y - h, W - 2 * M, h, fill=(.937, .945, 1))
+        doc.rect(M, doc.y - h, 3, h, fill=ACCENT)
+        for n, ln in enumerate(lines):
+            doc.text(M + 14, doc.y - 14 - n * 11, ln, "F1", 8.5, INK)
+        doc.y -= h + 16
+
+    # sections
+    avail = W - 2 * M
+    pad = 6
+    for s in rep["sections"]:
+        cols, rows = s["columns"], s["rows"]
+        if doc.y - 60 < M + 20:
+            doc.new_page(); _running(doc, rep, client)
+        doc.text(M, doc.y - 4, s["title"], "F2", 12, INK)
+        doc.text(M + _tw(s["title"], "F2", 12) + 8, doc.y - 4, f"{len(rows)}", "F1", 9, MUTED)
+        doc.y -= 14
+        if not rows:
+            doc.text(M, doc.y - 8, "None recorded.", "F1", 8.5, MUTED)
+            doc.y -= 26
+            continue
+        money = [("(USD)" in c) for c in cols]
+        numeric = [m or all(isinstance(r[i], (int, float)) or (isinstance(r[i], str) and _NUM.match(r[i] or "x")) or r[i] == "" for r in rows)
+                   for i, m in enumerate(money)]
+        fonts = [("F3", 6.5) if c in _MONO_COLS else ("F1", 7.5) for c in cols]
+
+        def cell(i, v):
+            if v is None or v == "":
+                return "—" if money[i] else ""
+            if money[i]:
+                return _usd(v)
+            if cols[i] in _PROSE_COLS:
+                return _prose(v)
+            if cols[i] in _CODE_COLS and isinstance(v, str):
+                return v.replace("_", " ")
+            return _when(v) if isinstance(v, str) else str(v)
+
+        texts = [[cell(i, v) for i, v in enumerate(r)] for r in rows]
+        flexible = [cols[i] in _PROSE_COLS or fonts[i][0] == "F3" for i in range(len(cols))]
+        nat = [max([_tw(c.upper(), "F2", 6.5) + 2 * pad] + [_tw(t[i], *fonts[i]) + 2 * pad for t in texts]) for i, c in enumerate(cols)]
+        # short values (IDs, statuses, names) never break mid-word; long text and hashes wrap
+        minw = [60 if flexible[i] else max([_tw(max(c.upper().split(" "), key=len), "F2", 6.5)]
+                                            + [_tw(x, *fonts[i]) for tx in texts for x in tx[i].split(" ")]) + 2 * pad
+                for i, c in enumerate(cols)]
+        nat = [min(n, avail * 0.5) for n in nat]
+        w = [max(a, b) for a, b in zip(nat, minw)]
+        over = sum(w) - avail
+        if over > 0:
+            excess = sum(x - m for x, m in zip(w, minw))
+            if excess >= over:
+                w = [x - over * (x - m) / excess for x, m in zip(w, minw)]
+            else:  # even the minimums do not fit: scale everything
+                w = [x * avail / sum(w) for x in w]
+        elif over < 0 and sum(w) > avail * 0.6:  # wide tables fill the page; small ones keep their natural width
+            grow = [i for i in range(len(cols)) if flexible[i]] or [i for i in range(len(cols)) if not numeric[i]] or list(range(len(cols)))
+            for i in grow:
+                w[i] += -over / len(grow)
+        tw = sum(w)
+        xs = [M + sum(w[:i]) for i in range(len(w))]
+
+        def header():
+            heads = [_wrap(c.upper(), "F2", 6.5, w[i] - 2 * pad) for i, c in enumerate(cols)]
+            hh = 10 + max(len(x) for x in heads) * 8
+            doc.rect(M, doc.y - hh, tw, hh, fill=HEAD_BG)
+            for i, lines in enumerate(heads):
+                for n, ln in enumerate(lines):
+                    yy = doc.y - 12 - n * 8
+                    if numeric[i]:
+                        doc.text(xs[i] + w[i] - pad, yy, ln, "F2", 6.5, MUTED, align="right")
+                    else:
+                        doc.text(xs[i] + pad, yy, ln, "F2", 6.5, MUTED)
+            doc.y -= hh
+
+        header()
+        for ri, t in enumerate(texts):
+            wrapped = [_wrap(t[i], *fonts[i], w[i] - 2 * pad) for i in range(len(cols))]
+            rh = 8 + max(len(x) for x in wrapped) * 10
+            if doc.y - rh < M + 20:
+                doc.new_page(); _running(doc, rep, client); header()
+            if ri % 2:
+                doc.rect(M, doc.y - rh, tw, rh, fill=ZEBRA)
+            for i, lines in enumerate(wrapped):
+                f, sz = fonts[i]
+                tone = TONE.get(t[i]) if t[i] in TONE else (TONE.get(t[i].split(":")[0]) if ":" in t[i] and t[i].split(":")[0] in TONE else None)
+                if tone:
+                    f = "F2"
+                for n, ln in enumerate(lines):
+                    yy = doc.y - 12 - n * 10
+                    if numeric[i]:
+                        doc.text(xs[i] + w[i] - pad, yy, ln, "F2" if money[i] else f, sz, INK, align="right")
+                    else:
+                        doc.text(xs[i] + pad, yy, ln, f, sz, tone or (INK if i == 0 or not fonts[i][0] == "F3" else MUTED))
+            doc.y -= rh
+            doc.line(M, doc.y, M + tw, doc.y, LINE, 0.4)
+        doc.y -= 20
+
+    def footer(d, i, n):
+        d.line(M, M - 4, W - M, M - 4, LINE, 0.6)
+        d.text(M, M - 16, "LedgerSight  ·  Read-only review output  ·  Confidential", "F1", 7, MUTED)
+        d.text(W - M, M - 16, f"{rep['report_id']}  ·  Page {i} of {n}", "F1", 7, MUTED, align="right")
+
+    return doc.build(title=f"{rep['title']} {rep['report_id']}", footer=footer)
+
+
+def _running(doc: _Pdf, rep: dict, client: str):
+    """Small running header on continuation pages."""
+    doc.rect(0, doc.H - 4, doc.W, 4, fill=ACCENT)
+    doc.text(doc.M, doc.H - doc.M + 6, f"{rep['title']}  ·  {client}", "F2", 8, INK)
+    doc.text(doc.W - doc.M, doc.H - doc.M + 6, f"Run {rep['run_id']}", "F1", 8, MUTED, align="right")
+    doc.line(doc.M, doc.H - doc.M, doc.W - doc.M, doc.H - doc.M, LINE, 0.6)
+    doc.y = doc.H - doc.M - 14
 
 
 RENDER = {"json": to_json, "csv": to_csv, "xlsx": to_xlsx, "pdf": to_pdf}
