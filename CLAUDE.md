@@ -73,8 +73,8 @@ URLs, sandbox pipeline, production URL, email access.
 `POST /v1/login/google` verifies a Google ID token (google-auth, same pattern as cloudseals-trustops-core's
 `security.py`); unverified or wrong-domain emails are rejected (`AVOCET_GOOGLE_LOGIN_DOMAIN`, reuses the
 existing `GOOGLE_CLIENT_ID`). Any verified account on that domain is let in: a never-seen email is
-auto-provisioned least-privileged (preparer); an email already on file (bootstrap owner, or invited via
-`/v1/invites`) keeps whatever role it was given there instead. `/v1/auth-config` exposes
+auto-provisioned full admin (owner_reviewer/CPA reviewer); an email already on file (bootstrap owner, or
+invited via `/v1/invites`) keeps whatever role it was given there instead. `/v1/auth-config` exposes
 `google_login`/`google_client_id`; the login screen shows a "Sign in with Google" button only when both are
 configured.
 
