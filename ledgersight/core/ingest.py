@@ -24,8 +24,11 @@ OLE_MAGIC = b"\xd0\xcf\x11\xe0"  # legacy .xls / macro containers
 CANONICAL = {
     "bank": ["line_id", "date", "description", "reference", "amount", "currency"],
     "ledger": ["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
-    "ar": ["invoice_id", "customer_alias", "issue_date", "amount", "open_balance", "currency"],
-    "ap": ["bill_id", "vendor_alias", "issue_date", "amount", "open_balance", "currency"],
+    # The trailing AR/AP fields are optional facts for CPA review (state tax readiness, foreign supplier).
+    # Files without them import exactly as before; nothing is ever computed from them, only flagged.
+    "ar": ["invoice_id", "customer_alias", "issue_date", "amount", "open_balance", "currency",
+           "ship_from_state", "ship_to_state", "taxability", "nexus_status", "dest_registration"],
+    "ap": ["bill_id", "vendor_alias", "issue_date", "amount", "open_balance", "currency", "vendor_country"],
     "documents": ["doc_id", "doc_type", "reference", "vendor_alias", "amount", "file"],
     "parties": ["party_id", "name", "type", "aliases", "ref_prefixes"],
 }
@@ -49,6 +52,12 @@ SYNONYMS = {
     "customer_alias": ["customer", "customer name", "client"],
     "issue_date": ["issue date", "bill date", "invoice date", "date"],
     "open_balance": ["open balance", "balance due", "amount due", "open amount"],
+    "ship_from_state": ["ship from state", "origin state", "from state", "seller state"],
+    "ship_to_state": ["ship to state", "destination state", "to state", "customer state"],
+    "taxability": ["taxable", "tax status", "taxability code"],
+    "nexus_status": ["nexus", "economic nexus"],
+    "dest_registration": ["registered in destination", "destination registration", "sales tax registration"],
+    "vendor_country": ["country", "supplier country", "vendor country code"],
 }
 
 
@@ -269,13 +278,21 @@ def _canon(kind: str, raw: dict) -> dict:
                 "description": s("description"), "reference": s("reference"),
                 "ref_norm": norm_ref(s("reference")), "amount_cents": amt, "currency": s("currency").upper()}
     if kind == "ar":
-        return {"id": s("invoice_id"), "ref_norm": norm_ref(s("invoice_id")),
-                "customer_alias": s("customer_alias"), "amount_cents": to_cents(raw["amount"]),
-                "open_cents": to_cents(raw["open_balance"]), "currency": s("currency").upper()}
+        rec = {"id": s("invoice_id"), "ref_norm": norm_ref(s("invoice_id")),
+               "customer_alias": s("customer_alias"), "amount_cents": to_cents(raw["amount"]),
+               "open_cents": to_cents(raw["open_balance"]), "currency": s("currency").upper()}
+        if s("ship_to_state") or s("ship_from_state"):  # only carried when the file supplies them
+            rec.update(issue_date=s("issue_date"), ship_from_state=s("ship_from_state").upper(),
+                       ship_to_state=s("ship_to_state").upper(), taxability=s("taxability"),
+                       nexus_status=s("nexus_status"), dest_registration=s("dest_registration"))
+        return rec
     if kind == "ap":
-        return {"id": s("bill_id"), "ref_norm": norm_ref(s("bill_id")),
-                "vendor_alias": s("vendor_alias"), "amount_cents": to_cents(raw["amount"]),
-                "open_cents": to_cents(raw["open_balance"]), "currency": s("currency").upper()}
+        rec = {"id": s("bill_id"), "ref_norm": norm_ref(s("bill_id")),
+               "vendor_alias": s("vendor_alias"), "amount_cents": to_cents(raw["amount"]),
+               "open_cents": to_cents(raw["open_balance"]), "currency": s("currency").upper()}
+        if s("vendor_country"):
+            rec["vendor_country"] = s("vendor_country").upper()
+        return rec
     if kind == "documents":
         return {"id": s("doc_id"), "doc_type": s("doc_type"), "reference": s("reference"),
                 "ref_norm": norm_ref(s("reference")),

@@ -1,7 +1,20 @@
 {
-  "engine_version": "recon-1.1.0",
+  "engine_version": "recon-1.2.0",
   "date_tolerance_days": 3,
   "duplicate_window_days": 5,
   "receipt_threshold_cents": 10000,
-  "bank_fee_hints": ["SERVICE FEE", "BANK FEE", "WIRE FEE"]
+  "bank_fee_hints": ["SERVICE FEE", "BANK FEE", "WIRE FEE"],
+  "tax_review": {
+    "note": "Interstate sales are flagged for CPA review when any of these facts is missing. LedgerSight never decides nexus or taxability and never computes, files or remits tax.",
+    "required_inputs": {
+      "taxability": "taxability of the goods or service in the destination state",
+      "nexus_status": "seller's nexus status in the destination state",
+      "dest_registration": "seller's sales-tax registration in the destination state",
+      "issue_date": "effective (tax point) date"
+    }
+  },
+  "fx": {
+    "note": "Exchange-rate sources approved by the firm, e.g. {\"from\": \"GBP\", \"to\": \"USD\", \"source\": \"...\"}. Empty means none is approved, so a cross-currency payment is never converted or auto-matched.",
+    "approved_rate_sources": []
+  }
 }

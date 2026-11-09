@@ -1,3 +1,4 @@
-bill_id,vendor_alias,issue_date,amount,open_balance,currency
-GP-5531,VEND-PRINT,2026-10-03,315.00,315.00,USD
-VS-212,VEND-STOCKMEDIA,2026-10-20,239.00,239.00,USD
+bill_id,vendor_alias,issue_date,amount,open_balance,currency,vendor_country
+GP-5531,VEND-PRINT,2026-10-03,315.00,315.00,USD,US
+VS-212,VEND-STOCKMEDIA,2026-10-20,239.00,239.00,USD,US
+UKS-2210,VEND-UKSUPPLIER,2026-10-20,1250.00,1250.00,GBP,UK

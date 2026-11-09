@@ -341,10 +341,17 @@ def sample_file(wid: str, name: str, u=Depends(current_user)):
     return FileResponse(FIXTURES / name, filename=name)
 
 
+def _run_view(r: dict) -> dict:
+    """A run as the UI sees it. Stage status is recomputed so 'Complete' always reflects open cases."""
+    out = {k: v for k, v in r.items() if k != "batch_key"}
+    if r.get("workflow"):
+        out["stages"] = svc._stages(r["workflow"], r["result"])
+    return out
+
+
 @app.post("/v1/workspaces/{wid}/reconciliation-runs")
 def create_run(wid: str, u=Depends(current_user)):
-    r = handle(svc.run, u, wid)
-    return {k: v for k, v in r.items() if k != "batch_key"}
+    return _run_view(handle(svc.run, u, wid))
 
 
 @app.get("/v1/workspaces/{wid}/runs/{run_id}")
@@ -352,7 +359,16 @@ def get_run(wid: str, run_id: str, u=Depends(current_user)):
     w = handle(svc.gate, u, wid, "workspace.read", run_id=run_id)
     if run_id not in w.runs:
         raise HTTPException(404, "not found")
-    return {k: v for k, v in w.runs[run_id].items() if k != "batch_key"}
+    return _run_view(w.runs[run_id])
+
+
+@app.get("/v1/workspaces/{wid}/trustops/proof")
+def trustops_proof(wid: str, u=Depends(current_user)):
+    """The four TrustOps decisions a CPA should see, each taken from the signed evidence log."""
+    def role_of(uid):
+        x = auth.users.get(uid)
+        return x.role if x else None
+    return handle(svc.trustops_proof, u, wid, role_of)
 
 
 @app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/decisions")
@@ -399,6 +415,13 @@ def report(wid: str, run_id: str, kind: str, fmt: str, u=Depends(current_user)):
     rep, blob = handle(svc.report, u, wid, run_id, kind, fmt)
     if fmt == "json" and kind:
         return Response(blob, media_type=REPORT_TYPES[fmt])
+    return Response(blob, media_type=REPORT_TYPES[fmt],
+                    headers={"Content-Disposition": f'attachment; filename="{rep["report_id"]}.{fmt}"'})
+
+
+@app.get("/v1/workspaces/{wid}/audit-trail.{fmt}")
+def audit_trail(wid: str, fmt: str, u=Depends(current_user)):
+    rep, blob = handle(svc.audit_trail, u, wid, fmt)
     return Response(blob, media_type=REPORT_TYPES[fmt],
                     headers={"Content-Disposition": f'attachment; filename="{rep["report_id"]}.{fmt}"'})
 

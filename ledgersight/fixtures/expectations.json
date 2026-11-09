@@ -1,14 +1,15 @@
 {
   "client-a": {
-    "bank_rows": 12,
-    "ledger_rows": 9,
-    "bank_net_cents": 190852,
-    "ledger_net_cents": 181351,
-    "variance_cents": 9501,
+    "bank_rows": 14,
+    "ledger_rows": 10,
+    "bank_net_cents": 279612,
+    "ledger_net_cents": 431351,
+    "variance_cents": -151739,
     "variance_explained_by": {
       "HB010": 50000,
       "HB006": -31500,
-      "HB004": -8999
+      "HB004": -8999,
+      "HB014": -161240
     },
     "matches": {
       "HB001": "GL-H-101",
@@ -19,14 +20,17 @@
       "HB008": "GL-H-106",
       "HB009": "GL-H-107",
       "HB011": "GL-H-108",
-      "HB012": "GL-H-109"
+      "HB012": "GL-H-109",
+      "HB013": "GL-H-110"
     },
     "exceptions": {
       "HB004": "POSSIBLE_DUPLICATE",
       "HB005": "PARTIAL_RECEIPT",
       "HB006": "MISSING_GL",
       "HB009": "MISSING_RECEIPT",
-      "HB010": "UNMATCHED_DEPOSIT"
+      "HB010": "UNMATCHED_DEPOSIT",
+      "HB013": "TAX_REVIEW",
+      "HB014": "FX_REVIEW"
     },
     "partial_receipts": {
       "HB005": {
@@ -37,6 +41,27 @@
     },
     "supported_by_document": {
       "HB012": "DOC-H-03"
+    },
+    "review_cases": {
+      "CA-TAX-01": {
+        "type": "TAX_REVIEW",
+        "client_status": "TAX_REVIEW",
+        "invoice": "INV-1012",
+        "amount_cents": 250000,
+        "ship_from_state": "FL",
+        "ship_to_state": "CA",
+        "missing_inputs": ["taxability", "nexus_status", "dest_registration"],
+        "policy_id": "POL-11"
+      },
+      "UK-FX-01": {
+        "type": "FX_REVIEW",
+        "client_status": "FX_REVIEW",
+        "reason_code": "APPROVED_FX_RATE_MISSING",
+        "bill": "UKS-2210",
+        "bill_currency": "GBP",
+        "paid_currency": "USD",
+        "policy_id": "POL-12"
+      }
     }
   },
   "client-b": {
@@ -46,5 +71,5 @@
       "BV004": "UNMATCHED_DEPOSIT"
     }
   },
-  "note": "Signed-off business expectations for synthetic data. Not app output, not an ROI claim."
+  "note": "Signed-off business expectations for synthetic data. Not app output, not an ROI claim. HB013/HB014 (CA-TAX-01, UK-FX-01) added 2026-11-09 for the Avocet CPA demo; HB001-HB012 results are unchanged."
 }

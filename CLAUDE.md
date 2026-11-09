@@ -10,7 +10,8 @@ Synthetic data only. Read-only: never post to a ledger, pay, or email anyone.
 - App: Run and Debug -> "LedgerSight (local demo)" (F5) -> http://127.0.0.1:8090. Launch config sets AVOCET_NO_LOGIN=1 (local demo: no login screen, "Acting as" switch
   between CPA Reviewer / Staff Preparer). Honoured only with MFA off + insecure cookie; hosted keeps login.
   Without it: user `presenter`, password from `.env` (gitignored; template `.env.example`). Upload test pack: `demo_files/` (see its README).
-- Tests: `python -m pytest -q` (baseline: 107 passed across test_ledgersight, test_governance, test_demo_pack, test_persistence). Keep all existing tests green; add tests for every change.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-09: 152 passed, incl. tests/test_cpa_demo.py). Keep all existing tests green; add tests for every change.
+  Use the .venv: with a user-site (Windows Store) Python, the isolated PDF subprocess (`python -I`) cannot import pdfplumber and 13 PDF tests fail.
 - State persists in AVOCET_DATA_DIR (SQLite ledgersight.db + uploaded files + signing-key.pem). Restart keeps
   everything; delete the folder for a truly empty start. AVOCET_PERSIST=0 = memory only. See PRODUCTION.md.
 
@@ -36,6 +37,19 @@ Gaps 1–6 below are implemented: ESCALATE + policy ids, agents gated as actors 
 workflow timeline per run, RETURN + MAKER_CHECKER reason, two reports sharing run_id in 4 formats, Ask LedgerSight,
 Rulebooks tab, source labels, live Agents monitor (GET /agents, built from the evidence log). Also: AP (vendor bills) source kind + JSON file format. UI is functional but
 not yet restyled (Praveen owns dashboard/UI/generic-names items). Policy editing in-app: in development.
+
+## Built 2026-11-09 for the Avocet CPA demo (tests in tests/test_cpa_demo.py)
+Delivery note C02–C09. Client 1 fixtures gained HB013/HB014: CA-TAX-01 (FL->CA sale, missing taxability/nexus/registration
+-> TAX_REVIEW, POL-11, no tax computed) and UK-FX-01 (GBP bill paid in USD, no approved FX source -> FX_REVIEW
+APPROVED_FX_RATE_MISSING, POL-12, not converted or matched). HB001–HB012 results unchanged. Every exception has
+case_id, client_status, run/trace/agent/rulebook linkage and source_record_refs; run has six stages (Intake..Complete)
+and match_linkage. Sources show a source envelope. GET /trustops/proof reads ALLOW/ESCALATE/DENY/DENY from the audit
+trail. Ask: other configured client names are refused; "1–31 October 2026" ranges; case ids queryable. Finance pack:
+totals by status, source totals, tax/FX items, CPA next steps. UI: Overview case cards -> review queue, run stages,
+source envelope, proof panel on Guardrails, demo/synthetic label.
+Diana review 06/11: Ask LedgerSight is a floating button bottom-right; GET /audit-trail.{pdf,csv,xlsx,json} exports the
+whole signed audit trail (button on the Audit trail tab). NOT built here (infra/ops): C10 HTTPS domain + DNS, tenant
+URLs, sandbox pipeline, production URL, email access.
 
 ## Gaps vs engineering spec (original list, now built)
 1. TrustOps decisions: policy only returns ALLOW/DENY. Add ESCALATE + policy IDs/versions

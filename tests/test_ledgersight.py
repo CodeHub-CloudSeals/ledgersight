@@ -235,7 +235,7 @@ def test_trace_shows_source_to_decision_with_evidence(sam):
     assert any(e["action"] == "exception.accept" for e in t["events"]) and t["chain"]["state"] == "PASS"
     assert {r["id"] for r in t["related"]} >= {"GL-H-104", "INV-1005"}
     idx = sam.get("/v1/workspaces/client-a/trace").json()
-    assert len(idx["lines"]) == 12
+    assert len(idx["lines"]) == EXP["client-a"]["bank_rows"]
 
 
 def test_trace_other_client_concealed(alex, sam):
@@ -297,7 +297,7 @@ def test_bank_download_qbo_and_tsv_ledger_reconcile_like_csv(sam):
         assert r["health"]["rejected"] == []
     run = sam.post("/v1/workspaces/client-a/reconciliation-runs", headers=H).json()
     assert run["result"]["variance_cents"] == EXP["client-a"]["variance_cents"]
-    assert len(run["result"]["matches"]) == 9
+    assert len(run["result"]["matches"]) == len(EXP["client-a"]["matches"])
 
 
 @pytest.mark.parametrize("name", ["deck.pptx", "letter.docx"])

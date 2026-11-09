@@ -41,7 +41,7 @@ def test_restart_keeps_signing_key_and_matching_still_works():
     assert again["id"] == run["id"]
     svc2.clear_source(u, "client-a", "ar")
     rerun = svc2.run(u, "client-a")  # a genuinely new run on reloaded data
-    assert rerun["id"] != run["id"] and len(rerun["result"]["matches"]) == 9
+    assert rerun["id"] != run["id"] and len(rerun["result"]["matches"]) == len(run["result"]["matches"])
 
 
 def test_clearing_a_client_archives_its_audit_trail():

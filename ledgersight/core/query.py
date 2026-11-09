@@ -29,8 +29,17 @@ TYPE_WORDS = [
     (re.compile(r"ambiguous", re.I), "AMBIGUOUS"),
     (re.compile(r"overpa", re.I), "OVERPAYMENT"),
     (re.compile(r"missing\s+bank|not\s+in\s+(the\s+)?bank", re.I), "MISSING_BANK"),
+    (re.compile(r"\btax\b|nexus|sales[\s-]tax|state[\s-]tax", re.I), "TAX_REVIEW"),
+    (re.compile(r"\bfx\b|foreign|exchange[\s-]rate|currenc", re.I), "FX_REVIEW"),
 ]
-UNMATCHED_TYPES = {"MISSING_GL", "UNMATCHED_DEPOSIT", "POSSIBLE_DUPLICATE", "AMBIGUOUS", "MISSING_BANK"}
+UNMATCHED_TYPES = {"MISSING_GL", "UNMATCHED_DEPOSIT", "POSSIBLE_DUPLICATE", "AMBIGUOUS", "MISSING_BANK", "FX_REVIEW"}
+MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august",
+                                       "september", "october", "november", "december"], start=1)}
+_MON = r"(january|february|march|april|may|june|july|august|september|october|november|december)"
+_DASH = r"\s*(?:-|–|—|to|through)\s*"
+DAY_RANGE = re.compile(rf"\b(\d{{1,2}}){_DASH}(\d{{1,2}})\s+{_MON},?\s+(20\d\d)\b", re.I)       # 1–31 October 2026
+MON_RANGE = re.compile(rf"\b{_MON}\s+(\d{{1,2}}){_DASH}(\d{{1,2}}),?\s+(20\d\d)\b", re.I)       # October 1-31, 2026
+MON_ONLY = re.compile(rf"\b{_MON},?\s+(20\d\d)\b", re.I)                                        # October 2026
 
 REFUSAL_TEXT = {
     "WORKSPACE_SCOPE": "I can only answer about the client book you have open. I can't search, list or confirm anything outside it.",
@@ -64,12 +73,18 @@ def _foreign_names(q: str, allowed_terms: list[str]) -> list[str]:
     return out
 
 
-def classify(question: str, allowed_terms: list[str]) -> str:
+def _names_other_client(q: str, other_terms) -> bool:
+    """True if the question names another configured client book (e.g. "Client 2", "client-b")."""
+    low = q.lower()
+    return any(re.search(rf"(?<![\w-]){re.escape(t.lower())}(?![\w-])", low) for t in other_terms if t and len(t) >= 3)
+
+
+def classify(question: str, allowed_terms: list[str], other_terms=()) -> str:
     """read | sql | write | cross_client. TrustOps turns anything but read into DENY."""
     q = question or ""
     if SQL.search(q):
         return "sql"
-    if CROSS.search(q) or _foreign_names(q, allowed_terms):
+    if CROSS.search(q) or _names_other_client(q, other_terms) or _foreign_names(q, allowed_terms):
         return "cross_client"
     if WRITE.search(q):
         return "write"
@@ -120,7 +135,8 @@ class _Ctx:
         return str(r.get("date") or "")[:10]
 
     def related(self, rid):
-        return [e for e in self.exc if rid in (e["id"], e.get("bank_id"), e.get("ledger_id"), e.get("approval_id")) or rid in e["evidence_refs"]]
+        return [e for e in self.exc if rid in (e["id"], e.get("case_id"), e.get("bank_id"), e.get("ledger_id"), e.get("approval_id"))
+                or rid in e["evidence_refs"]]
 
 
 def _ok(intent, answer, rows=None, columns=None, citations=None):
@@ -128,9 +144,33 @@ def _ok(intent, answer, rows=None, columns=None, citations=None):
             "citations": citations or []}
 
 
+def _iso(y, m, d) -> str:
+    return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+
+
+def _month_end(y: int, m: int) -> int:
+    import calendar
+    return calendar.monthrange(y, m)[1]
+
+
 def _date_filter(q):
     ds = ISO_DATE.findall(q)
     low = q.lower()
+    if not ds:  # plain-English ranges: "1–31 October 2026", "October 1-31, 2026", "October 2026"
+        m = DAY_RANGE.search(q)
+        if m:
+            d1, d2, mon, y = int(m.group(1)), int(m.group(2)), MONTHS[m.group(3).lower()], int(m.group(4))
+        elif (m := MON_RANGE.search(q)):
+            mon, d1, d2, y = MONTHS[m.group(1).lower()], int(m.group(2)), int(m.group(3)), int(m.group(4))
+        elif (m := MON_ONLY.search(q)):
+            mon, y = MONTHS[m.group(1).lower()], int(m.group(2))
+            d1, d2 = 1, _month_end(y, mon)
+        else:
+            return None, ""
+        last = _month_end(y, mon)
+        a, b = _iso(y, mon, max(1, min(d1, last))), _iso(y, mon, max(1, min(d2, last)))
+        a, b = min(a, b), max(a, b)
+        return (lambda d: a <= d <= b), f"between {a} and {b}"
     if len(ds) >= 2:
         a, b = sorted(ds[:2]); return lambda d: a <= d <= b, f"between {a} and {b}"
     if len(ds) == 1:
@@ -156,7 +196,8 @@ def answer(question: str, ctx: dict) -> dict:
                 "rows": [], "columns": [], "citations": []}
     c = _Ctx(ctx)
     up = q.upper()
-    known = set(c.lines) | {e["id"] for e in c.exc} | {e.get("approval_id") for e in c.exc if e.get("approval_id")}
+    known = set(c.lines) | {e["id"] for e in c.exc} | {e.get("approval_id") for e in c.exc if e.get("approval_id")} \
+        | {e.get("case_id") for e in c.exc if e.get("case_id")}
     hits = sorted((k for k in known if k and re.search(rf"(?<![A-Z0-9-]){re.escape(k.upper())}(?![A-Z0-9])", up)), key=len, reverse=True)
     low = q.lower()
     if hits:
@@ -207,8 +248,8 @@ def _list(c: _Ctx, q: str, types: set[str]):
     total = sum(e["amount_cents"] for e in rows)
     return _ok("list_exceptions", f"{len(rows)} item{'s' if len(rows) != 1 else ''} ({what}) for {scope}, totalling {usd(total)}.",
                [[e["id"], e.get("bank_id") or e.get("ledger_id"), c.bank_date(e), usd(e["amount_cents"]), _type_label(e["type"]),
-                 e["status"], (e.get("trustops") or {}).get("policy_id", "")] for e in rows],
-               ["Exception", "Line", "Date", "Amount", "Type", "Status", "Policy"], c.cites(rows))
+                 e["status"], (e.get("trustops") or {}).get("policy_id", ""), e.get("case_id") or ""] for e in rows],
+               ["Exception", "Line", "Date", "Amount", "Type", "Status", "Policy", "Case"], c.cites(rows))
 
 
 def _why(c: _Ctx, rid: str):
@@ -242,13 +283,24 @@ def _who(c: _Ctx, rid: str):
         return _ok("who_approved", f"No review item involves {rid}, so there is no approval to report.", citations=c.cites(line_ids=[rid]))
     parts, rows = [], []
     for e in ex:
-        if e["status"] in ("OPEN",):
-            parts.append(f"{e['id']}: no approval recorded. It is waiting for a CPA reviewer.")
+        t = e.get("trustops") or {}
+        pol = f"{t.get('policy_id', '')} {t.get('policy_name', '')}".strip()
+        flagged = f"Flagged as {_type_label(e['type'])} by rule {e['rule_id']}" + (f" under {pol}" if pol else "") + f": {e['why']}."
+        if e["status"] == "OPEN":
+            parts.append(f"{e['id']} ({e.get('case_id') or rid}): awaiting approval, no approval recorded. It is waiting for a "
+                         f"{t.get('required_role_label') or 'CPA reviewer'}. {flagged}")
+        elif e["status"] == "RETURNED":
+            parts.append(f"{e['id']} ({e.get('case_id') or rid}): awaiting approval. Returned to the preparer by {e['reviewer']} on "
+                         f"{str(e.get('reviewed_at'))[:19].replace('T', ' ')} UTC" + (f" (“{e['review_note']}”)" if e.get("review_note") else "")
+                         + f". {flagged}")
         else:
-            parts.append(f"{e['id']}: {e['status'].lower()} by {e['reviewer']} on {str(e.get('reviewed_at'))[:19].replace('T', ' ')} UTC "
-                         f"(approval {e['approval_id']}).")
-        rows.append([e["id"], e["status"], e.get("reviewer") or "—", e.get("approval_id") or "—", e.get("proposed_by") or "agent:recon"])
-    return _ok("who_approved", " ".join(parts), rows, ["Exception", "Status", "Reviewer", "Approval ID", "Proposed by"], c.cites(ex))
+            parts.append(f"{e['id']} ({e.get('case_id') or rid}): {e['status'].lower()} by {e['reviewer']} on "
+                         f"{str(e.get('reviewed_at'))[:19].replace('T', ' ')} UTC (approval {e['approval_id']}, {e.get('approval_policy') or 'POL-06'})"
+                         + (f", note “{e['review_note']}”" if e.get("review_note") else "") + f". {flagged}")
+        rows.append([e["id"], e["status"], e.get("reviewer") or "—", e.get("approval_id") or "—", e.get("proposed_by") or "agent:recon",
+                     e["rule_id"], t.get("policy_id", ""), str(e.get("reviewed_at") or "")[:19] or "—"])
+    return _ok("who_approved", " ".join(parts), rows,
+               ["Exception", "Status", "Reviewer", "Approval ID", "Proposed by", "Rule", "Policy", "When (UTC)"], c.cites(ex))
 
 
 def _outstanding(c: _Ctx, rid: str):
@@ -310,6 +362,18 @@ def suggestions(ctx: dict) -> list[str]:
         return ["Give me a summary of this run"]
     exc = run["result"]["exceptions"]
     out = ["Show unmatched transactions", "Show open exceptions"]
+    client = ctx.get("client") or {}
+    pm = MON_ONLY.search(str(client.get("period") or ""))
+    if pm:  # the bounded client/date query for this book's period
+        y, mon = int(pm.group(2)), MONTHS[pm.group(1).lower()]
+        out.insert(0, f"Show {client.get('name', 'this client')} exceptions from 1–{_month_end(y, mon)} {pm.group(1).title()} {y}")
+    for t in ("TAX_REVIEW", "FX_REVIEW"):
+        e = next((e for e in exc if e["type"] == t and e.get("case_id")), None)
+        if e:
+            out.append(f"Why was {e['case_id']} flagged?")
+    gl = next((e for e in exc if e["type"] == "MISSING_GL"), None)
+    if gl:
+        out.append(f"Who reviewed {gl['bank_id'] or gl['id']} and why?")
     for t in ("POSSIBLE_DUPLICATE", "MISSING_GL"):
         e = next((e for e in exc if e["type"] == t), None)
         if e:

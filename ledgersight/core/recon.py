@@ -7,6 +7,14 @@ Passes (plan 8.2):
   3. AR         - bank credits vs open invoices: full or PARTIAL_RECEIPT with residual
   4. exceptions - POSSIBLE_DUPLICATE, MISSING_GL, UNMATCHED_DEPOSIT, MISSING_BANK
   5. support    - matched non-bank-fee debits > USD 100 need a linked document -> MISSING_RECEIPT
+  6. tax        - interstate sale with missing taxability / nexus / registration / date facts -> TAX_REVIEW
+                  (a flag for a CPA; no tax is determined, computed, filed or remitted)
+  FX (in pass 4) - a payment in one currency against a bill in another, with no approved rate source
+                  -> FX_REVIEW, reason APPROVED_FX_RATE_MISSING (no conversion, no auto-match)
+
+Every exception carries a case id (bank/ledger line id, or e.g. CA-TAX-01 / UK-FX-01 for review cases)
+and a client-facing status (MATCHED / PARTIAL / UNMATCHED / DUPLICATE / TAX_REVIEW / FX_REVIEW /
+APPROVAL_REQUIRED); an unresolved case is never shown as completed.
 
 Invariants: one source line consumed at most once; nothing is ever "posted".
 """
@@ -23,6 +31,16 @@ DATE_TOLERANCE_DAYS = int(_M["date_tolerance_days"])
 DUPLICATE_WINDOW_DAYS = int(_M["duplicate_window_days"])
 RECEIPT_THRESHOLD_CENTS = int(_M["receipt_threshold_cents"])
 BANK_FEE_HINTS = tuple(h.upper() for h in _M["bank_fee_hints"])
+TAX_INPUTS: dict[str, str] = (_M.get("tax_review") or {}).get("required_inputs", {})
+APPROVED_FX = {(s["from"].upper(), s["to"].upper()) for s in (_M.get("fx") or {}).get("approved_rate_sources", [])}
+
+# exception type -> what the client-facing status says (never "completed" while a case is open)
+CLIENT_STATUS = {"POSSIBLE_DUPLICATE": "DUPLICATE", "PARTIAL_RECEIPT": "PARTIAL", "MISSING_GL": "UNMATCHED",
+                 "UNMATCHED_DEPOSIT": "UNMATCHED", "MISSING_BANK": "UNMATCHED", "TAX_REVIEW": "TAX_REVIEW",
+                 "FX_REVIEW": "FX_REVIEW", "AMBIGUOUS": "APPROVAL_REQUIRED", "OVERPAYMENT": "APPROVAL_REQUIRED",
+                 "MISSING_RECEIPT": "APPROVAL_REQUIRED"}
+# types whose amount is part of the bank-vs-ledger variance (TAX_REVIEW is on a matched line, so it is not)
+VARIANCE_TYPES = ("POSSIBLE_DUPLICATE", "MISSING_GL", "UNMATCHED_DEPOSIT", "FX_REVIEW")
 
 
 @dataclass
@@ -48,6 +66,11 @@ class Exception_:
     alternatives: list[str] = field(default_factory=list)
     residual_cents: int | None = None
     status: str = "OPEN"  # OPEN -> ACCEPTED / REJECTED by a named human (never POSTED)
+    case_id: str = ""
+    client_status: str = ""
+    reason_code: str | None = None
+    missing_inputs: list[str] = field(default_factory=list)
+    facts: dict = field(default_factory=dict)  # source facts shown to the CPA (states, currencies...), never computed values
 
 
 @dataclass
@@ -159,7 +182,23 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
                         suggestion="Confirm with bank/vendor whether charged twice; request refund if so. Do not book.")
             else:
                 bill = bill_by_ref.get(b["ref_norm"])
-                if bill and bill["currency"] == b["currency"]:
+                if bill and bill["currency"] != b["currency"]:
+                    pair = (bill["currency"], b["currency"])
+                    approved = pair in APPROVED_FX
+                    add_exc("FX_REVIEW", b=b, rule="R4_FX",
+                            why=f"bank paid {b['currency']} {-b['amount_cents']/100:,.2f} against vendor bill {bill['id']} "
+                                f"of {bill['currency']} {bill['open_cents']/100:,.2f}; "
+                                + ("an approved rate source exists, but conversion is not automated"
+                                   if approved else f"no approved {bill['currency']}->{b['currency']} exchange-rate source in policy")
+                                + "; amounts are not converted and the payment is not matched",
+                            evidence_refs=[b["id"], bill["id"]],
+                            reason_code="FX_CONVERSION_NOT_AUTOMATED" if approved else "APPROVED_FX_RATE_MISSING",
+                            facts={"bill_currency": bill["currency"], "bill_amount": f"{bill['open_cents']/100:.2f}",
+                                   "paid_currency": b["currency"], "paid_amount": f"{-b['amount_cents']/100:.2f}",
+                                   "vendor_country": bill.get("vendor_country", ""), "vendor": bill.get("vendor_alias", "")},
+                            suggestion="CPA confirms the rate source and the realised FX difference, then the preparer books the "
+                                       "entry in the accounting system. LedgerSight invents no rate and posts nothing.")
+                elif bill and bill["currency"] == b["currency"]:
                     add_exc("MISSING_GL", b=b, rule="R4_MISSING_GL",
                             why=f"bank debit has no ledger entry; open vendor bill {bill['id']} "
                                 f"({bill['open_cents']/100:.2f}) is on file for this reference",
@@ -196,9 +235,50 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
                     evidence_refs=[b["id"], m.ledger_id],
                     suggestion="Request receipt from client before sign-off.")
 
+    # Pass 6: state tax readiness. Facts are organised for a CPA; nothing is decided or calculated.
+    bank_by_ref = {}
+    for b in bank_sorted:
+        if b["amount_cents"] > 0 and b["ref_norm"]:
+            bank_by_ref.setdefault(b["ref_norm"], b)
+    for inv in sorted(invoices, key=lambda i: i["id"]):
+        frm, to = inv.get("ship_from_state") or "", inv.get("ship_to_state") or ""
+        if not to or not frm or frm == to:
+            continue
+        missing = [k for k in TAX_INPUTS if not str(inv.get(k) or "").strip()]
+        if not missing:
+            continue
+        b = bank_by_ref.get(inv["ref_norm"])
+        excs.append(Exception_(
+            f"EX-{len(excs) + 1:03d}", "TAX_REVIEW", b and b["id"], None, inv["amount_cents"], "R6_STATE_TAX_REVIEW",
+            f"sale on invoice {inv['id']} ships from {frm} to {to}; missing: " + ", ".join(TAX_INPUTS[k] for k in missing)
+            + ". Potential tax/nexus review; no tax liability or amount is asserted",
+            [x for x in ((b or {}).get("id"), inv["id"]) if x],
+            suggestion="CPA reviews nexus, registration and taxability for the destination state and records the "
+                       "determination outside LedgerSight. No tax is computed, filed or paid here.",
+            reason_code="TAX_INPUTS_MISSING", missing_inputs=missing,
+            facts={"invoice": inv["id"], "customer": inv.get("customer_alias", ""), "ship_from_state": frm,
+                   "ship_to_state": to, "invoice_date": inv.get("issue_date", ""), "invoice_amount": f"{inv['amount_cents']/100:.2f}",
+                   "currency": inv["currency"]}))
+
+    # case ids and client-facing status, derived from the data (never typed in)
+    seq: dict[str, int] = {}
+    for e in excs:
+        if e.type == "TAX_REVIEW":
+            key = f"{e.facts['ship_to_state']}-TAX"
+        elif e.type == "FX_REVIEW":
+            key = f"{e.facts.get('vendor_country') or e.facts['bill_currency'][:2]}-FX"
+        else:
+            key = None
+        if key:
+            seq[key] = seq.get(key, 0) + 1
+            e.case_id = f"{key}-{seq[key]:02d}"
+        else:
+            e.case_id = e.bank_id or e.ledger_id or e.id
+        e.client_status = CLIENT_STATUS.get(e.type, "APPROVAL_REQUIRED")
+
     bank_net = sum(r["amount_cents"] for r in bank)
     ledger_net = sum(r["amount_cents"] for r in ledger)
-    explained = sum(e.amount_cents for e in excs if e.type in ("POSSIBLE_DUPLICATE", "MISSING_GL", "UNMATCHED_DEPOSIT")) \
+    explained = sum(e.amount_cents for e in excs if e.type in VARIANCE_TYPES) \
         - sum(e.amount_cents for e in excs if e.type == "MISSING_BANK")
     return RunResult(ENGINE_VERSION, workspace_id, bank_net, ledger_net, bank_net - ledger_net,
                      matches, excs, (bank_net - ledger_net) - explained)

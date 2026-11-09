@@ -187,7 +187,7 @@ def test_finance_and_governance_reports_share_run_and_show_decisions(rev):
     assert any(r[1] == "agent:recon" and r[3] == "ledger.post" for r in titles["Denied actions"]["rows"])
     assert {"POL-03", "POL-05", "POL-04"} <= {r[0] for r in titles["Policies applied"]["rows"]}
     fs = dict(fin["summary"])
-    assert fs["Outstanding on partial receipts (USD)"] == "300.00" and fs["Exceptions raised"] == 5
+    assert fs["Outstanding on partial receipts (USD)"] == "300.00" and fs["Exceptions raised"] == len(EXP["client-a"]["exceptions"])
 
 
 def test_report_csv_guards_against_formula_injection():
@@ -234,7 +234,7 @@ def test_ask_why_flagged_outstanding_and_who_approved(rev):
 def test_ask_date_filter_and_unknown_id(rev):
     golden_run(rev)
     a = ask(rev, "Show exceptions after 2026-10-09")
-    assert {r[1] for r in a["rows"]} == {"HB009", "HB010"}
+    assert {r[1] for r in a["rows"]} == {"HB009", "HB010", "HB013", "HB014"}  # HB013 CA tax review, HB014 UK FX review
     assert ask(rev, "Why was HB099 flagged?")["status"] == "NO_DATA"
 
 
@@ -267,7 +267,7 @@ def test_source_labels_are_honest(rev):
     golden_run(rev)
     s = rev.get(WS + "/sources").json()
     k = {x["kind"]: x for x in s["kinds"]}
-    assert k["bank"]["status"] == "SIMULATED" and k["ap"]["status"] == "SIMULATED" and k["bank"]["rows"] == 12
+    assert k["bank"]["status"] == "SIMULATED" and k["ap"]["status"] == "SIMULATED" and k["bank"]["rows"] == EXP["client-a"]["bank_rows"]
     c = {x["id"]: x["status"] for x in s["connectors"]}
     assert c["quickbooks"] == "PLANNED" and c["xero"] == "PLANNED" and c["google-drive"] == "PLANNED"
     blob = (FIXTURES / "client-a_bank.csv").read_bytes()

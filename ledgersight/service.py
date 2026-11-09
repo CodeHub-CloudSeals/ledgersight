@@ -484,11 +484,26 @@ class Service:
     def sources(self, user, wid):
         w = self.gate(user, wid, "workspace.read")
         kinds = []
+        now = datetime.now(timezone.utc)
         for k in SOURCES["kinds"]:
             b = w.batches.get(k["kind"])
             status = "NOT_CONNECTED" if not b else ("SIMULATED" if b.get("origin") == "sample" and not b.get("pdf_added") else "VERIFIED_UPLOAD")
-            kinds.append({**k, "status": status, "rows": len(b["rows"]) if b else 0, "sha256": b["sha256"] if b else None,
-                          "filename": b.get("filename") if b else None})
+            rec = {**k, "status": status, "rows": len(b["rows"]) if b else 0, "sha256": b["sha256"] if b else None,
+                   "filename": b.get("filename") if b else None}
+            if b:  # source envelope: where these rows came from, in this client's context
+                up = w.uploads.get(b.get("upload_id") or "") or {}
+                dates = sorted(str(r.get("date") or r.get("issue_date") or "")[:10] for r in b["rows"]
+                               if r.get("date") or r.get("issue_date"))
+                at = up.get("uploaded_at")
+                rec["envelope"] = {
+                    "tenant_id": TENANT, "client_id": wid, "client_name": w.meta.get("name"),
+                    "source_file": b.get("filename"), "document_type": k["label"], "source_digest": b["sha256"],
+                    "upload_time": at, "uploaded_by": up.get("uploaded_by"), "confirmed_by": up.get("committed_by"),
+                    "currency": sorted({r.get("currency") for r in b["rows"] if r.get("currency")}),
+                    "period": w.meta.get("period"), "date_range": [dates[0], dates[-1]] if dates else None,
+                    "row_count": len(b["rows"]), "access": "READ_ONLY", "origin": b.get("origin", "upload"),
+                    "freshness_seconds": round((now - datetime.fromisoformat(at)).total_seconds()) if at else None}
+            kinds.append(rec)
         conns = []
         for c in SOURCES["connectors"]:
             st = c["status"]
@@ -515,13 +530,17 @@ class Service:
         trace = "TR-" + uuid.uuid4().hex[:12]
         steps: list[dict] = []
         ctx = {}
+        # where every row came from: "<file> row <n>", so each match/exception cites its source records
+        src_of = {r["id"]: f"{v.get('filename') or k} row {r.get('source_row')}"
+                  for k, v in b.items() for r in v.get("rows", []) if r.get("id")}
 
         def step(agent_actor, action, title, rows_in, work, **gate_kw):
             """One agent step: ask TrustOps first, then do the work, then record what happened."""
             agent = policy.AGENT_BY_ACTOR[agent_actor]
             t0 = time.perf_counter()
             d = self.agent_gate(user, w, agent_actor, action, run_id=rid, trace_id=trace, **gate_kw)
-            rec = {"agent": agent["code"], "name": agent["name"], "actor_id": agent_actor, "action": action, "title": title,
+            rec = {"agent": agent["code"], "stage": self.STAGE_OF_AGENT.get(agent["code"], ""),
+                   "name": agent["name"], "actor_id": agent_actor, "action": action, "title": title,
                    "decision": d.decision, "reason_code": d.reason_code, "policy_id": d.policy_id,
                    "policy_name": d.policy_name, "policy_version": d.policy_version, "rows_in": rows_in, "rows_out": 0,
                    "trace_id": trace, "step_id": f"{trace}.{len(steps) + 1}", "started_at": _ts(), "status": "DONE"}
@@ -557,7 +576,15 @@ class Service:
             n = len(b["bank"]["rows"]) + len(b["ledger"]["rows"])
             if bad:
                 raise ValueError(f"rows not in canonical form: {bad[:5]}")
-            return n, f"{n} bank and ledger rows in canonical form (amounts in integer cents, ISO currency, dates)", None
+            # Map: the column mapping each source was imported with, and the person who confirmed it
+            maps = {}
+            for k, v in b.items():
+                up = w.uploads.get(v.get("upload_id") or "") or {}
+                maps[k] = {"file": v.get("filename"), "confirmed_by": up.get("committed_by"),
+                           "columns": {f: c for f, c in (up.get("committed_mapping") or {}).items() if c}}
+            confirmed = sum(1 for m in maps.values() if m["confirmed_by"])
+            return n, (f"{n} bank and ledger rows in canonical form (amounts in integer cents, ISO currency, dates); "
+                       f"column mappings confirmed by a person for {confirmed} of {len(maps)} sources"), {"mappings": maps}
         step("agent:mapping", "canonical.verify", "Check every row is in the standard format",
              len(b["bank"]["rows"]) + len(b["ledger"]["rows"]), mapper)
 
@@ -573,6 +600,13 @@ class Service:
         step("agent:recon", "run.compute", "Match bank to ledger", len(b["bank"]["rows"]) + len(b["ledger"]["rows"]),
              reconcile, rule=recon.ENGINE_VERSION)
         result = ctx["res"].to_dict()
+        # run linkage for every proposed match, kept beside the matches so the match records themselves stay
+        # identical whatever file format the rows came from
+        match_linkage = [{"bank_id": m["bank_id"], "ledger_id": m["ledger_id"], "client_status": "MATCHED",
+                          "run_id": rid, "trace_id": trace, "agent_id": "AG-03", "rule_id": m["rule_id"],
+                          "rulebook_version": policy.POLICY_VERSION,
+                          "source_record_refs": [src_of[x] for x in (m["bank_id"], m["ledger_id"]) if x in src_of]}
+                         for m in result["matches"]]
 
         # AG-04: TrustOps decides how each exception must be handled
         def triage():
@@ -581,6 +615,9 @@ class Service:
                 d = self.agent_gate(user, w, "agent:triage", "exception.route", run_id=rid, trace_id=trace,
                                     refs=e["evidence_refs"], rule=e["rule_id"], exception_type=e["type"])
                 e["trustops"] = {**d.to_dict(), "required_role_label": policy.ROLE_LABELS.get(d.required_role or "", d.required_role)}
+                e.update(run_id=rid, trace_id=trace, agent_id="AG-03", routed_by="AG-04",
+                         rulebook_version=d.policy_version,
+                         source_record_refs=[src_of[x] for x in e["evidence_refs"] if x in src_of])
                 routed[d.policy_id] = routed.get(d.policy_id, 0) + 1
             return (len(result["exceptions"]),
                     f"{len(result['exceptions'])} exception(s) sent to TrustOps: " +
@@ -602,10 +639,52 @@ class Service:
 
         run = {"id": rid, "trace_id": trace, "batch_key": key, "created_by": user.user_id, "created_at": _ts(),
                "engine_version": result["engine_version"], "result": result, "workflow": steps,
+               "stages": self._stages(steps, result), "rulebook_version": policy.POLICY_VERSION,
+               "match_linkage": match_linkage,
                "lines": {k: {kk: (str(vv) if kk == "date" else vv) for kk, vv in v.items()} for k, v in lines.items()},
                "decisions": {}}
         w.runs[rid] = run
         return run
+
+    # The customer-facing six stages of a run. The six registered agents carry them; AG-02 both validates the
+    # canonical form and proves the column mapping, and AG-05/AG-06 together complete the run.
+    STAGES = [("Intake", ("AG-01",)), ("Validate", ("AG-02",)), ("Map", ("AG-02",)), ("Reconcile", ("AG-03",)),
+              ("Exception", ("AG-04",)), ("Complete", ("AG-05", "AG-06"))]
+    STAGE_OF_AGENT = {"AG-01": "Intake", "AG-02": "Validate · Map", "AG-03": "Reconcile", "AG-04": "Exception",
+                      "AG-05": "Complete", "AG-06": "Complete"}
+
+    @staticmethod
+    def _stages(steps: list[dict], result: dict) -> list[dict]:
+        by = {s["agent"]: s for s in steps}
+        exc = result["exceptions"]
+        open_ = [e for e in exc if e["status"] in ("OPEN", "RETURNED")]
+        out = []
+        for name, agents in Service.STAGES:
+            ss = [by[a] for a in agents if a in by]
+            status = ("BLOCKED" if any(s["status"] == "BLOCKED" for s in ss)
+                      else "DONE" if len(ss) == len(agents) and all(s["status"] == "DONE" for s in ss) else "NOT_RUN")
+            s0 = ss[0] if ss else {}
+            if name == "Validate":
+                summary = f"{s0.get('rows_in', 0)} bank and ledger rows checked: integer cents, ISO currency, dates"
+            elif name == "Map":
+                maps = s0.get("mappings") or {}
+                summary = (f"column mappings confirmed by a person for {sum(1 for m in maps.values() if m.get('confirmed_by'))} "
+                           f"of {len(maps)} sources: " + ", ".join(sorted(str(m.get('file')) for m in maps.values())))
+            elif name == "Exception":
+                counts: dict[str, int] = {}
+                for e in exc:
+                    counts[e.get("client_status") or e["type"]] = counts.get(e.get("client_status") or e["type"], 0) + 1
+                summary = (f"{len(exc)} case(s) routed for CPA review: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+                           if exc else "no exceptions")
+            elif name == "Complete":
+                summary = (f"Reports ready; {len(open_)} case(s) still awaiting a CPA decision, so they are not complete"
+                           if open_ else "Reports ready; every case has a CPA decision")
+            else:
+                summary = s0.get("summary", "")
+            out.append({"stage": name, "agents": list(agents), "status": status, "summary": summary,
+                        "step_ids": [s["step_id"] for s in ss], "trace_id": s0.get("trace_id"),
+                        "case_ids": [e.get("case_id") for e in exc] if name == "Exception" else []})
+        return out
 
     DECISIONS = {"ACCEPT": "ACCEPTED", "REJECT": "REJECTED", "RETURN": "RETURNED"}
 
@@ -937,12 +1016,32 @@ class Service:
                             refs=[f"{kind}.{fmt}"])
         common = {"client": w.meta, "run": run, "generated_by": user.user_id, "generated_at": _ts()}
         if kind == "finance":
-            rep = reports.finance_report(inputs={k: {"sha256": v["sha256"], "rows": len(v["rows"])} for k, v in w.batches.items()},
-                                         **common)
+            inputs = {k: {"sha256": v["sha256"], "rows": len(v["rows"]), "filename": v.get("filename"),
+                          "currency": sorted({r.get("currency") for r in v["rows"] if r.get("currency")}),
+                          # bank/ledger: net movement; AR/AP: total still open (only same-currency USD rows are summed)
+                          "net_cents": (sum(r.get("amount_cents") or 0 for r in v["rows"] if r.get("currency") in (None, "USD"))
+                                        if k in ("bank", "ledger") else
+                                        sum(r.get("open_cents") or 0 for r in v["rows"] if r.get("currency") == "USD")
+                                        if k in ("ar", "ap") else None)}
+                      for k, v in w.batches.items()}
+            rep = reports.finance_report(inputs=inputs, **common)
         else:
             rep = reports.governance_report(events=w.log.events, verification=evidence.verify(w.log.events, self.public_key_pem()),
                                             policies=policy.POLICIES, policy_version=policy.POLICY_VERSION,
                                             key_id=w.log.key_id, **common)
+        return rep, reports.RENDER[fmt](rep)
+
+    def audit_trail(self, user, wid, fmt="pdf") -> tuple[dict, bytes]:
+        """The client's full signed audit trail as a downloadable report. Exporting is itself recorded."""
+        if fmt not in reports.FORMATS:
+            raise ValueError("format must be json, csv, xlsx or pdf")
+        w = self.gate(user, wid, "export.read", refs=[f"audit.{fmt}"])
+        events = list(w.log.events)
+        run = list(w.runs.values())[-1] if w.runs else None
+        rep = reports.audit_report(client={"id": wid, **w.meta}, events=events,
+                                   verification=evidence.verify(events, self.public_key_pem()),
+                                   policy_version=policy.POLICY_VERSION, key_id=w.log.key_id, key_source=self.key_source,
+                                   last_run_id=run["id"] if run else None, generated_by=user.user_id, generated_at=_ts())
         return rep, reports.RENDER[fmt](rep)
 
     # ---- Ask LedgerSight (AG-06): read-only, intent-limited, cited ------------------
@@ -954,7 +1053,7 @@ class Service:
         allowed = [w.meta["name"], wid] + [p["name"] for p in parties] + [a for p in parties for a in p["aliases"]] + \
                   [r.get(f) for k in ("ar", "ap", "documents") for r in w.batches.get(k, {}).get("rows", [])
                    for f in ("customer_alias", "vendor_alias") if r.get(f)]
-        cls = query.classify(question, allowed)
+        cls = query.classify(question, allowed, self._other_client_terms(wid))
         d = self.agent_gate(user, w, "agent:query", "query.answer", run_id=run["id"] if run else None,
                             trace_id=run.get("trace_id") if run else None, query_class=cls)
         if d.decision != "ALLOW":
@@ -966,10 +1065,95 @@ class Service:
         res["run_id"] = run["id"] if run else None
         return res
 
+    @staticmethod
+    def _other_client_terms(wid: str) -> list[str]:
+        """Names and ids of every other client book the firm has configured, including books not loaded in
+        this deployment. A question naming one is refused exactly like any unknown name, so the refusal
+        never reveals which other clients exist."""
+        own = (WORKSPACES.get(wid) or {}).get("name", "").lower()
+        out = []
+        for c in load_config("clients.json")["clients"]:
+            if c["id"] == wid:
+                continue
+            for t in (c["id"], c.get("name"), (WORKSPACES.get(c["id"]) or {}).get("name")):
+                if t and t.lower() != own:
+                    out.append(t)
+        return out
+
     def ask_suggestions(self, user, wid):
         w = self.gate(user, wid, "workspace.read")
         run = list(w.runs.values())[-1] if w.runs else None
-        return {"suggestions": query.suggestions({"run": run})}
+        return {"suggestions": query.suggestions({"run": run, "client": w.meta})}
+
+    # ---- TrustOps proof: four real decisions, read back from the signed evidence log ----------
+    PROOF = [
+        ("allow_source_read", "ALLOW", "Permitted source read",
+         "Intake agent (AG-01) reads this client's uploaded file with a read-only tool.",
+         "Load or upload this client's files on the Sources page."),
+        ("escalate_review", "ESCALATE", "Escalated to a named CPA review",
+         "A case the rules cannot settle (missing GL, tax readiness, FX) is routed to a CPA reviewer. Nothing is written to the GL.",
+         "Run reconciliation; every exception is routed by AG-04."),
+        ("deny_preparer_approval", "DENY", "Staff preparer approval blocked",
+         "A staff preparer tries to approve a review item (their own, or any item). Only a CPA reviewer who did not propose it may decide.",
+         "Act as Staff Preparer and click Approve on any review item."),
+        ("deny_cross_client", "DENY", "Cross-client request blocked",
+         "A request for another client's data is refused without revealing whether that client exists.",
+         "Ask LedgerSight about another client, e.g. “Show Client 2 bank transactions”."),
+    ]
+
+    def trustops_proof(self, user, wid, role_of=lambda uid: None):
+        w = self.gate(user, wid, "workspace.read", record=False)
+        evs = [dict(e, seq=i, log="client") for i, e in enumerate(w.log.events)]
+        mine_sec = [dict(e, seq=i, log="security") for i, e in enumerate(self.security_log.events)
+                    if e.get("actor_id") == user.user_id or e.get("delegated_by") == user.user_id]
+
+        def dec(e):
+            return str(e.get("policy_decision") or "")
+
+        def last(pred, pool):
+            hits = [e for e in pool if pred(e)]
+            return hits[-1] if hits else None
+
+        picks = {
+            "allow_source_read": last(lambda e: e.get("actor_id") == "agent:intake" and dec(e).startswith("ALLOW")
+                                      and e["action"] in ("upload.parse", "upload.verify", "document.extract"), evs),
+            "escalate_review": (last(lambda e: e["action"] == "exception.route" and dec(e).startswith("ESCALATE")
+                                     and e.get("policy_id") in ("POL-05", "POL-11", "POL-12"), evs)
+                                or last(lambda e: e["action"] == "exception.route" and dec(e).startswith("ESCALATE"), evs)),
+            "deny_preparer_approval": last(lambda e: e["action"] == "exception.decide" and dec(e).startswith("DENY")
+                                           and role_of(e.get("actor_id")) != "owner_reviewer", evs),
+            "deny_cross_client": last(lambda e: dec(e) == "DENY:WORKSPACE_SCOPE", evs + mine_sec),
+        }
+        chain = evidence.verify(w.log.events, self.public_key_pem())
+        sec_chain = evidence.verify(self.security_log.events, self.public_key_pem())
+        cards = []
+        for key, decision, title, what, how in self.PROOF:
+            e = picks[key]
+            card = {"key": key, "decision": decision, "title": title, "what": what, "how_to_show": how,
+                    "shown": bool(e)}
+            if e:
+                pid = e.get("policy_id") or ""
+                actor = e.get("actor_id")
+                role = None if e.get("actor_type") == "agent" else role_of(actor)
+                card.update({
+                    "actor_id": actor, "actor_type": e.get("actor_type"), "agent_code": e.get("agent_code"),
+                    "delegated_by": e.get("delegated_by"), "actor_role": role,
+                    "actor_role_label": policy.ROLE_LABELS.get(role or "", role),
+                    "action": e["action"], "policy_decision": dec(e), "reason_code": dec(e).split(":", 1)[-1],
+                    "policy_id": pid, "policy_name": policy.POLICIES.get(pid, {}).get("name", ""),
+                    "policy_rule_version": policy.POLICIES.get(pid, {}).get("version"),
+                    "policy_version": e.get("policy_version"), "required_role": e.get("required_role"),
+                    "required_role_label": policy.ROLE_LABELS.get(e.get("required_role") or "", e.get("required_role")),
+                    "time_utc": e["timestamp_utc"], "run_id": e.get("run_id"), "trace_id": e.get("trace_id"),
+                    "refs": (e.get("source_line_refs") or [])[:6], "event_hash": e["event_hash"],
+                    "evidence_seq": e["seq"], "evidence_log": e["log"],
+                    "result": "Executed read-only" if decision == "ALLOW" else
+                              "Routed to a person; nothing executed" if decision == "ESCALATE" else "Refused; nothing executed",
+                    # signature state is claimed only for this client's chain, and only if it verifies
+                    "signature": (chain if e["log"] == "client" else sec_chain)["state"]})
+            cards.append(card)
+        return {"client_id": wid, "policy_version": policy.POLICY_VERSION, "chain": chain, "cards": cards,
+                "all_shown": all(c["shown"] for c in cards)}
 
     # ---- agent attempts (security demonstration; nothing is ever executed) ----------
     def agent_attempt(self, user, wid, agent_code, action, **extra):

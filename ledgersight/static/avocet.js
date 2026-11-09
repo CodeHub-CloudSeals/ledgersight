@@ -207,6 +207,7 @@ async function renderOverview() {
     tile("Awaiting review", r ? st.open_exceptions : "–", r && st.open_exceptions ? "amb" : r ? "good" : "", r ? `${r.exceptions.length} raised in total` : ""),
     tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
     tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
+  renderCaseCards(r && S.run.id === st.last_run ? r : null);
   if (isActive("home")) { try { await renderEvidence(); } catch (_) { /* counts fall back to last loaded */ } }
   const ev = S.events || [];
   const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
@@ -220,6 +221,28 @@ async function renderOverview() {
       e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
   if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
   await loadAgents();
+}
+// Exceptions grouped by what the client sees. Every case is a link to its detail in the review queue.
+const CASE_ORDER = ["UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
+function renderCaseCards(r) {
+  const box = $("ov-cases");
+  if (!r || !r.exceptions.length) { box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  const groups = {};
+  r.exceptions.forEach((x) => { (groups[x.client_status || "APPROVAL_REQUIRED"] = groups[x.client_status || "APPROVAL_REQUIRED"] || []).push(x); });
+  const keys = CASE_ORDER.filter((k) => groups[k]).concat(Object.keys(groups).filter((k) => !CASE_ORDER.includes(k)));
+  const isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
+  put(box, el("div", { class: "card-title" }, "Cases to review ", el("span", { class: "muted small" }, "click a case to open its detail and source rows"),
+      el("button", { class: "linkbtn", onclick: openReview }, "Review queue →")),
+    el("div", { class: "case-grid" }, keys.map((k) => {
+      const xs = groups[k], open = xs.filter(isOpen).length;
+      return el("div", { class: "case-card" + (open ? " open" : ""), role: "button", tabindex: "0", title: "Open the first case in this group",
+          onclick: (ev) => { if (!ev.target.closest(".case-link")) openCase((xs.find(isOpen) || xs[0]).id); },
+          onkeydown: (ev) => { if (ev.key === "Enter") openCase((xs.find(isOpen) || xs[0]).id); } },
+        el("div", { class: "cc-k" }, CASE_STATUS[k] || nice(k), el("span", { class: "badge " + (open ? "OPEN" : "ACCEPTED") }, open ? `${open} open` : "decided")),
+        el("div", { class: "cc-v" }, usd(xs.reduce((s, x) => s + Math.abs(x.amount_cents), 0))),
+        el("div", { class: "cc-list" }, xs.map((x) => caseLink(x.id, `${x.case_id || x.id} · ${TYPE_LABEL[x.type] || nice(x.type)}`))));
+    })));
 }
 let SOURCE_KINDS = ["bank", "ledger", "ar", "ap", "documents", "parties"];
 function fillProfile(w) {
@@ -425,6 +448,7 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "parties") renderParties();
   if (t.dataset.tab === "reports") renderReports();
   if (t.dataset.tab === "rules") renderRules();
+  if (t.dataset.tab === "controls") renderProof();
   if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
 });
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
@@ -439,7 +463,8 @@ async function renderSources() {
   put("src-status", s.kinds.map((k) => el("div", {}, el("span", {}, k.label, k.required ? null : el("span", { class: "muted small" }, " · optional")),
     el("span", { class: "src-right" }, k.rows ? el("span", { class: "small muted" }, `${k.rows} rows `) : null,
       el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, k.status === "NOT_CONNECTED" ? "Not yet" : nice(k.status)),
-      k.status !== "NOT_CONNECTED" ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null))));
+      k.status !== "NOT_CONNECTED" ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null),
+    k.envelope ? srcEnvelope(k.envelope) : null)));
   put("connectors", el("table", {}, el("tr", {}, ["Connection", "Status", "What the label means"].map((h) => el("th", {}, h))),
     s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, nice(c.status))),
       el("td", { class: "small muted" }, s.status_labels[c.status])))));
@@ -448,6 +473,18 @@ async function renderSources() {
     s.kinds.map((k) => el("option", { value: k.kind }, `${k.label} · ${k.formats.filter((f) => f !== "PDF (text)").join(", ")}`)),
     el("option", { value: "pdf" }, "Invoice / receipt · PDF"));
   sel.value = [...sel.options].some((o) => o.value === cur) ? cur : "auto";
+}
+// Where these rows came from, in this client's context: file, fingerprint, when, currency, period, read-only.
+function srcEnvelope(e) {
+  const fresh = e.freshness_seconds == null ? "" : ago(e.freshness_seconds);
+  return el("div", { class: "src-env", title: `Tenant ${e.tenant_id} · client ${e.client_id} · SHA-256 ${e.source_digest}` },
+    el("span", { class: "mono" }, e.source_file || "—"),
+    el("span", {}, `${e.row_count} rows`), e.currency && e.currency.length ? el("span", {}, e.currency.join(" / ")) : null,
+    e.date_range ? el("span", {}, `${e.date_range[0]} → ${e.date_range[1]}`) : null,
+    e.period ? el("span", {}, `period ${e.period}`) : null,
+    fresh ? el("span", {}, `imported ${fresh}`) : null,
+    el("span", { class: "mono" }, `sha ${String(e.source_digest).slice(0, 10)}…`),
+    el("span", { class: "badge PLANNED" }, e.access === "READ_ONLY" ? "Read-only" : nice(e.access)));
 }
 async function clearSource(k) {
   try { const r = await api(W(`/sources/${k}/clear`), { method: "POST" });
@@ -782,8 +819,25 @@ function renderWorkflow() {
         el("div", { class: "meta" }, `TrustOps ${s.decision} · ${s.policy_id} ${nice(s.policy_name)} · tool ${nice(s.action)} · step ${s.step_id}`)),
       el("div", { class: "nums" }, el("span", { class: "badge " + s.decision }, s.decision), el("div", {}, `${s.rows_in} in → ${s.rows_out} out`), el("div", {}, `${s.duration_ms} ms`))))));
 }
+// The six customer-facing stages of the run, from the server (never drawn from fixed text).
+const STAGE_BADGE = { DONE: "ACCEPTED", BLOCKED: "BLOCKED", NOT_RUN: "IDLE" };
+function renderStages() {
+  const st = S.run && S.run.stages;
+  if (!st || !st.length) return put("stages", el("div", { class: "muted small" }, S.run ? "This run was created before stage tracking; run reconciliation again to see each stage."
+    : "Run a reconciliation to see Intake, Validate, Map, Reconcile, Exception and Complete with their real outputs."));
+  const open = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
+  put("stages", el("ol", { class: "stages" }, st.map((s, i) => el("li", { class: "stage " + s.status },
+      el("div", { class: "sg-head" }, el("span", { class: "sg-n" }, String(i + 1)), el("b", {}, s.stage),
+        el("span", { class: "badge " + (s.stage === "Complete" && open ? "OPEN" : STAGE_BADGE[s.status] || "IDLE") },
+          s.stage === "Complete" && open ? `${open} open` : nice(s.status))),
+      el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
+        ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
+      s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null,
+      el("div", { class: "sg-meta muted" }, `${s.agents.join(" + ")} · ${(s.step_ids || []).join(", ")}`)))),
+    el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
+}
 function renderRun() {
-  renderWorkflow(); renderReadiness();
+  renderWorkflow(); renderReadiness(); renderStages();
   if (!S.run) { put("tiles"); put("matches", empty("No run yet", "Matched bank and ledger lines appear here after a run.")); return; }
   const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN").length;
   put("tiles",
@@ -800,7 +854,16 @@ const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el(
 
 // ---------------- exceptions ----------------
 const TYPE_LABEL = { POSSIBLE_DUPLICATE: "Possible duplicate charge", PARTIAL_RECEIPT: "Partial payment received", MISSING_GL: "Bank debit not in ledger",
-  MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment" };
+  MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment",
+  TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing" };
+// Client-facing case status (an open case is never shown as completed)
+const CASE_STATUS = { DUPLICATE: "Duplicate", PARTIAL: "Partial", UNMATCHED: "Unmatched", TAX_REVIEW: "Tax review", FX_REVIEW: "FX review", APPROVAL_REQUIRED: "Approval required" };
+const caseStatus = (x) => x.status === "ACCEPTED" || x.status === "REJECTED" ? `${nice(x.status)} by ${x.reviewer}` : (CASE_STATUS[x.client_status] || nice(x.client_status || x.type));
+const FACT_LABEL = { invoice: "Invoice", customer: "Customer", ship_from_state: "Ships from", ship_to_state: "Ships to", invoice_date: "Invoice date",
+  invoice_amount: "Invoice amount", currency: "Currency", bill_currency: "Bill currency", bill_amount: "Bill amount", paid_currency: "Paid in",
+  paid_amount: "Amount paid", vendor_country: "Supplier country", vendor: "Supplier" };
+const INPUT_LABEL = { taxability: "Taxability in destination state", nexus_status: "Nexus status in destination state",
+  dest_registration: "Seller registration in destination state", issue_date: "Effective (tax point) date" };
 const DENY_TEXT = {
   MAKER_CHECKER_SELF_APPROVAL: "You proposed this resolution, so you cannot approve it yourself (maker-checker rule).",
   ROLE_NOT_AUTHORISED: "Your role cannot decide review items. A CPA reviewer must decide.",
@@ -850,7 +913,8 @@ function renderExceptions() {
     const refs = x.evidence_refs || [];
     return el("article", { class: "exc " + x.status, "data-exc": x.id },
       el("header", { class: "xh" },
-        el("div", { class: "grow" }, el("div", { class: "xh-id" }, x.id),
+        el("div", { class: "grow" }, el("div", { class: "xh-id" }, x.id, x.case_id && x.case_id !== x.id ? ` · Case ${x.case_id}` : "",
+            x.client_status ? el("span", { class: "case-st" }, caseStatus(x)) : null),
           el("h3", { class: "xh-title" }, TYPE_LABEL[x.type] || nice(x.type)), el("p", { class: "xh-why" }, rich(x.why))),
         el("div", { class: "xh-right" }, el("div", { class: "xh-amt" }, usd(x.amount_cents)),
           el("span", { class: "badge " + x.status }, actionable ? nice(x.status) : x.status))),
@@ -859,6 +923,14 @@ function renderExceptions() {
       refs.length ? el("div", { class: "xrs" + (refs.length === 2 ? " two" : "") },
         refs.flatMap((id, i) => [i ? el("div", { class: "xr-link", "aria-hidden": "true" }, "⇄") : null, rec(id)])) : null,
       x.residual_cents != null ? el("div", { class: "xres" }, el("span", {}, "Still owed on invoice"), el("b", {}, usd(x.residual_cents))) : null,
+      x.facts && Object.keys(x.facts).length ? el("div", { class: "xfacts" },
+        el("div", { class: "xs-k" }, x.type === "TAX_REVIEW" ? "Facts from the source files · CPA determines nexus and taxability" : "Facts from the source files · no rate applied"),
+        el("dl", {}, Object.entries(x.facts).filter(([, v]) => v).flatMap(([k, v]) => [el("dt", {}, FACT_LABEL[k] || nice(k)), el("dd", {}, String(v))])),
+        x.missing_inputs && x.missing_inputs.length ? el("div", { class: "xmiss" }, el("b", {}, "Missing for CPA review: "),
+          x.missing_inputs.map((k) => INPUT_LABEL[k] || nice(k)).join(" · ")) : null,
+        x.reason_code ? el("div", { class: "xmiss" }, el("b", {}, "Reason: "), x.reason_code) : null,
+        el("div", { class: "muted small" }, x.type === "TAX_REVIEW" ? "Review required. No tax liability or amount is asserted; nothing is filed or paid."
+          : "Human review. No exchange rate is invented and the payment is not auto-matched.")) : null,
       x.suggestion ? el("div", { class: "xs" }, el("div", { class: "xs-k" }, "Suggested next step"), el("div", {}, rich(x.suggestion))) : null,
       x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${x.proposed_by}`), el("div", {}, `“${x.proposal_note}”`)) : null,
       x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
@@ -868,7 +940,9 @@ function renderExceptions() {
           el("dt", {}, "Raised by"), el("dd", {}, "Reconciliation Agent (AG-03)"),
           el("dt", {}, "Proposed by"), el("dd", {}, x.proposed_by ? niceActor(x.proposed_by) : "Reconciliation Agent (deterministic rules)"),
           t ? [el("dt", {}, "Policy"), el("dd", {}, `${t.policy_id} ${nice(t.policy_name)} · policy set ${t.policy_version}`)] : null,
-          refs.length ? [el("dt", {}, "Source rows"), el("dd", {}, rich(refs.map((id) => { const l = line(id); return l ? `${id}: row ${l.source_row}` : id; }).join(" · "), false))] : null)),
+          refs.length ? [el("dt", {}, "Source rows"), el("dd", {}, rich(refs.map((id) => { const l = line(id); return l ? `${id}: row ${l.source_row}` : id; }).join(" · "), false))] : null,
+          x.source_record_refs && x.source_record_refs.length ? [el("dt", {}, "Source files"), el("dd", {}, x.source_record_refs.join(" · "))] : null,
+          x.run_id ? [el("dt", {}, "Run linkage"), el("dd", { class: "small" }, `Case ${x.case_id} · run ${x.run_id} · trace ${x.trace_id} · raised by ${x.agent_id}, routed by ${x.routed_by || "AG-04"} · rulebook ${x.rulebook_version}`)] : null)),
       actionable ? el("div", { class: "xa" }, note,
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
@@ -898,7 +972,45 @@ const ATTACKS = [
 function renderControls() {
   put("attack-grid", ATTACKS.map((a) => el("div", { class: "card" }, el("div", { class: "card-title" }, a.t), el("div", { class: "muted small" }, a.d),
     el("div", { class: "row" }, el("button", { class: "danger", onclick: () => attempt(a) }, "Attempt")))));
+  renderProof();
 }
+// ---------------- TrustOps proof: ALLOW / ESCALATE / DENY / DENY, read from the signed audit trail ----------------
+async function renderProof() {
+  if (!S.ws) return;
+  let p; try { p = await api(W("/trustops/proof")); } catch (e) { return put("proof", el("div", { class: "msg err" }, e.message)); }
+  const isPrep = S.me.role === "preparer";
+  const firstOpen = S.run && S.run.result.exceptions.find((x) => x.status === "OPEN" || x.status === "RETURNED");
+  const tryBtn = (c) => {
+    if (c.key === "deny_preparer_approval" && isPrep && firstOpen) return el("button", { class: "danger", onclick: async () => {
+      try { await api(W(`/runs/${S.run.id}/exceptions/${firstOpen.id}/decisions`), { method: "POST", json: { decision: "ACCEPT", note: "" } }); }
+      catch (e) { toast(denyText(e), "bad"); }
+      renderProof(); renderEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
+    if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin ? "Switch “Acting as” to Staff Preparer to try it." : "Sign in as a staff preparer to try it.");
+    if (c.key === "deny_cross_client") return el("button", { class: "danger", onclick: async () => {
+      const q = "Show bank transactions for another client";
+      try { const a = await api(W("/ask"), { method: "POST", json: { question: q } }); S.asks.push({ q, a, ws: S.ws }); renderAskLog(); } catch (_) { /* refusal is the point */ }
+      renderProof(); renderEvidence(); } }, "Try: ask for another client's data");
+    return null;
+  };
+  const row = (k, v) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", {}, v)];
+  put("proof", el("div", { class: "row" }, el("span", { class: "badge" }, `Policy set ${p.policy_version}`),
+      el("span", { class: "badge " + p.chain.state }, `Audit chain ${p.chain.state}`),
+      el("span", { class: "muted small" }, p.all_shown ? "All four decisions are on record for this client." : "Decisions not yet on record show how to produce them live.")),
+    el("div", { class: "proof-grid gap" }, p.cards.map((c) => el("div", { class: "proof " + (c.shown ? c.decision : "pending") },
+      el("div", { class: "pf-head" }, el("span", { class: "badge " + (c.shown ? c.decision : "IDLE") }, c.decision), el("b", {}, c.title)),
+      el("div", { class: "muted small" }, c.what),
+      c.shown ? el("dl", { class: "pf-dl" },
+        row("Actor", `${niceActor(c.actor_id)}${c.agent_code ? ` (${c.agent_code})` : ""}${c.actor_role_label ? ` · ${c.actor_role_label}` : ""}${c.delegated_by ? ` · for ${c.delegated_by}` : ""}`),
+        row("Request", nice(c.action)), row("Reason", nice(c.reason_code)),
+        row("Rule", `${c.policy_id} ${nice(c.policy_name)}${c.policy_rule_version ? ` v${c.policy_rule_version}` : ""}`),
+        row("Policy set", c.policy_version), row("Named authority", c.required_role_label),
+        row("Result", c.result), row("When", new Date(c.time_utc).toLocaleString()),
+        row("Trace", [c.run_id, c.trace_id].filter(Boolean).join(" · ")),
+        row("Evidence", `event #${c.evidence_seq} · ${c.event_hash.slice(0, 12)}… · signature ${c.signature}`))
+        : el("div", { class: "pf-how small" }, el("b", {}, "Not on record yet. "), c.how_to_show),
+      el("div", { class: "row" }, tryBtn(c))))));
+}
+$("proof-refresh").onclick = renderProof;
 const attempts = [];
 async function attempt(a) {
   let r;
@@ -924,7 +1036,8 @@ async function renderEvidence() {
     $(id).classList.toggle("disabled", !S.run); $(id).href = S.run ? W(`/runs/${S.run.id}/${p}`) : "#";
   }
   $("exp-print").classList.toggle("disabled", !S.run);
-  $("exp-print").href = S.run ? `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
+  $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv");
+  $("exp-print").href = S.run ?`/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
   put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first.`),
     el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Policy", "Source refs", "Hash"].map((h) => el("th", {}, h))),
       ev.events.slice().reverse().map((e) => el("tr", {}, el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)),
@@ -1158,6 +1271,25 @@ function openReview() {
     const t = pick.querySelector("textarea"); if (t) t.focus({ preventScroll: true });
   });
 }
+// Open one case in the review queue: from an Overview card, a run stage or an Ask answer. Accepts the
+// exception id (EX-003), the case id (CA-TAX-01) or the bank/ledger line id (HB005).
+function openCase(ref) {
+  if (!S.run) return go("exceptions");
+  const all = S.run.result.exceptions;
+  const x = all.find((e) => e.id === ref) || all.find((e) => e.case_id === ref) || all.find((e) => e.bank_id === ref || e.ledger_id === ref);
+  if (!x) return toast(`${ref} is not a review item in run ${S.run.id}.`);
+  const open = x.status === "OPEN" || x.status === "RETURNED";
+  S.excRun = S.run.id; S.excFilter = open ? "open" : "decided"; S.excSeen = new Set();
+  go("exceptions"); renderExceptions();
+  const n = document.querySelector(`#exc-list [data-exc="${x.id}"]`);
+  if (!n) return;
+  const d = n.querySelector("details.xd"); if (d) d.open = true;
+  requestAnimationFrame(() => {
+    n.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
+    n.classList.remove("flash"); void n.offsetWidth; n.classList.add("flash");
+  });
+}
+const caseLink = (ref, label) => el("button", { class: "linkbtn case-link", title: "Open this case in the review queue", onclick: () => openCase(ref) }, label || ref);
 function empty(title, text) { return el("div", { class: "empty" }, el("b", {}, title), text ? el("span", {}, text) : null); }
 
 // ---------------- reports (finance + governance, same run id) ----------------
@@ -1212,7 +1344,9 @@ function renderAskLog() {
         el("span", { class: "badge " + ({ ANSWERED: "PASS", REFUSED: "DENY" }[a.status] || "UNKNOWN") }, nice(a.status)),
         a.trustops ? el("span", { class: "badge " + a.trustops.decision, title: `${a.trustops.policy_id} ${nice(a.trustops.policy_name)}` }, `TrustOps ${a.trustops.decision} · ${a.trustops.policy_id}`) : null),
       el("div", { class: "a" }, rich(a.answer)),
-      a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c) => el("td", {}, String(c))))))) : null,
+      a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c, i) =>
+        el("td", {}, (a.columns[i] === "Exception" || a.columns[i] === "Case") && c && c !== "—"
+          ? el("button", { class: "linkbtn", title: "Open this case in the review queue", onclick: () => { closeAsk(); openCase(String(c)); } }, String(c)) : String(c))))))) : null,
       a.suggestions ? el("div", { class: "chips" }, a.suggestions.map(chip)) : null,
       a.citations.length ? el("div", { class: "cites" }, "Sources", el("ul", { class: "plain" }, a.citations.map((c) => el("li", {}, el("b", {}, c.ref), ` · ${c.kind} · ${c.source}`,
         c.sha256 ? el("span", { class: "mono" }, ` · sha256 ${c.sha256.slice(0, 12)}…`) : null,
