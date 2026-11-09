@@ -103,7 +103,23 @@ def main():
     m.add_attachment((FX / f"{a}_receipt_OD-7741.pdf").read_bytes(), maintype="application", subtype="pdf",
                      filename=f"{a}_receipt_OD-7741.pdf")
     (FX / f"{a}_email_from_client.eml").write_bytes(bytes(m))
+    upload_pack(a)
     print("fixtures regenerated in", FX)
+
+
+def upload_pack(a: str):
+    """demo_files/0_client1_october: the same Client 1 records, as files a presenter uploads from their
+    own computer (there is no built-in loader in the product). Built from the CSVs above, so it never drifts."""
+    import shutil
+    out = FX.parent.parent / "demo_files" / "0_client1_october"
+    out.mkdir(parents=True, exist_ok=True)
+    for src, dst in ((f"{a}_bank.csv", "01_bank_statement_October.csv"), (f"{a}_ar.csv", "03_open_invoices.csv"),
+                     (f"{a}_ap.csv", "04_vendor_bills.csv"), (f"{a}_documents.csv", "05_supporting_documents.csv"),
+                     (f"{a}_parties.csv", "06_customers_and_vendors.csv"), (f"{a}_receipt_OD-7741.pdf", "07_receipt_OD-7741.pdf")):
+        shutil.copyfile(FX / src, out / dst)
+    xlsx(f"{a}_ledger.csv", "../../demo_files/0_client1_october/02_general_ledger_October.xlsx")
+    (out / "08_staff_rota_should_be_refused.csv").write_text(
+        "employee,role,shift_start,shift_end\nStaff 01,Front desk,09:00,17:00\nStaff 02,Warehouse,08:00,16:00\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@
         "AVOCET_CLIENTS": "client-a",
         "AVOCET_REQUIRE_MFA": "0",
         "AVOCET_NO_LOGIN": "1",
-        "AVOCET_SHOW_SAMPLES": "1",
+        "AVOCET_SHOW_SAMPLES": "0",
         "AVOCET_BOOTSTRAP_USER": "presenter",
         "AVOCET_BOOTSTRAP_NAME": "Administrator",
         "AVOCET_REGION_DECLARED": "this computer (local)",

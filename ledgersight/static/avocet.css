@@ -831,3 +831,4 @@ body.ask-open .ask-fab{opacity:0;pointer-events:none;transform:scale(.8)}
 body:has(#app.hidden) .ask-fab{display:none}
 @media (max-width:640px){.ask-fab{right:16px;bottom:16px;width:50px;height:50px}}
 main{padding-bottom:96px} /* room so the floating Ask button never hides the last row */
+.next-run{justify-content:space-between;align-items:center;flex-wrap:wrap} /* 'Files imported -> Run reconciliation' prompt on Sources */

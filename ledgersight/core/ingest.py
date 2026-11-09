@@ -224,6 +224,45 @@ REQUIRED = {
 }
 
 
+KIND_LABEL = {"bank": "bank statement", "ledger": "general ledger", "ar": "open invoices (AR)",
+              "ap": "vendor bills (AP)", "documents": "supporting documents list", "parties": "customer & vendor list"}
+
+
+def detect_kind(header: list[str], rows: list[list], hint: str | None = None) -> tuple[str, dict]:
+    """Work out what a file is from its CONTENT, not its name.
+
+    A type fits only if every one of its required fields maps to a column AND the rows actually read
+    as that type (a dry run of the real import). Among types that fit, the one that reads the most
+    rows cleanly and maps the most columns wins; the filename hint only breaks an exact tie.
+    Raises IngestError, with the columns found and what was missing, when nothing fits."""
+    fits, near = [], []
+    for kind in CANONICAL:
+        mapping = propose_mapping(kind, header)
+        missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
+        if missing:
+            near.append((len(missing), kind, missing))
+            continue
+        res = import_table(kind, "", b"", mapping, table=(header, rows))
+        if not res.accepted:
+            first = res.rejected[0]["reason"] if res.rejected else "no rows"
+            near.append((0.5, kind, [f"rows could not be read ({first})"]))
+            continue
+        mapped = sum(1 for v in mapping.values() if v)
+        fits.append((len(res.accepted) / max(1, len(rows)), mapped / len(CANONICAL[kind]), kind == hint, kind, mapping))
+    if not fits:
+        near.sort()
+        best = "; ".join(f"as a {KIND_LABEL[k]} it is missing {', '.join(m.replace('_', ' ') for m in miss)}"
+                         for _, k, miss in near[:2])
+        cols = ", ".join(h for h in header if h)[:200] or "(no column names)"
+        raise IngestError(f"Not accepted: this file is not a recognised finance record. Columns found: {cols}. "
+                          f"Closest matches: {best}.")
+    fits.sort(reverse=True)
+    top = fits[0]
+    return top[3], {"method": "detected from the file's columns and rows (file name not used)" if not top[2] or len(fits) == 1
+                    else "detected from the file's columns and rows; file name used only to break a tie",
+                    "candidates": [f[3] for f in fits]}
+
+
 def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str | None],
                  table: tuple[list[str], list[list]] | None = None) -> ImportResult:
     """`table` is an already-extracted (header, rows), e.g. from a PDF statement read in the isolated parser."""

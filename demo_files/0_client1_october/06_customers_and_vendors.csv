@@ -1,0 +1,13 @@
+party_id,name,type,aliases,ref_prefixes
+P-CUST01,Customer 01,customer,CUSTOMER 01;CUST-01,
+P-CUST02,Customer 02,customer,CUSTOMER 02;CUST-02,
+P-CUST03,Customer 03,customer,CUSTOMER 03;CUST-03,
+P-LANDLORD,Landlord,vendor,LANDLORD;VEND-LANDLORD,LEASE-
+P-SOFTWARE,Software Vendor,vendor,SOFTWARE VENDOR,CD-
+P-PRINT,Print Supplier,vendor,PRINT SUPPLIER,GP-
+P-OFFICE,Office Supplies Vendor,vendor,OFFICE SUPPLIES VENDOR,OD-
+P-STOCKMEDIA,Stock Media Vendor,vendor,STOCK MEDIA VENDOR;VEND-STOCKMEDIA,VS-
+P-PAYROLL,Payroll,internal,PAYROLL,PR-
+P-BANK,Operating bank,bank,SERVICE FEE,FEE-
+P-CUST04,Customer 04,customer,CUSTOMER 04;CUST-04,
+P-UKSUPPLIER,UK Supplier,vendor,UK SUPPLIER;VEND-UKSUPPLIER,UKS-

@@ -266,12 +266,16 @@ class Service:
                 "last_activity": w.log.events[-1]["timestamp_utc"] if w.log.events else w.started_at}
 
     # ---- uploads -------------------------------------------------------
-    def upload(self, user, wid, kind, filename, blob, data_class="synthetic", origin="upload"):
-        if kind not in ingest.CANONICAL:
+    def upload(self, user, wid, kind, filename, blob, data_class="synthetic", origin="upload", hint=None):
+        """kind="auto": the file's type is worked out from its content (ingest.detect_kind); a file that is
+        not a recognised finance record is refused with the reason. A PDF that is not a statement table
+        goes to receipt/invoice intake instead (the result then carries routed="document")."""
+        auto = kind == "auto"
+        if not auto and kind not in ingest.CANONICAL:
             raise ValueError("unknown source type")
         w = self.gate(user, wid, "upload.create", data_class=data_class)
         is_pdf = filename.lower().endswith(".pdf")
-        if is_pdf and kind not in self.PDF_TABLE_KINDS:
+        if is_pdf and not auto and kind not in self.PDF_TABLE_KINDS:
             raise ingest.IngestError("PDFs go through document intake: choose 'Invoice / receipt PDF'.")
         if len(blob) > ingest.MAX_BYTES:
             raise ingest.IngestError("file exceeds 10 MB limit")
@@ -281,13 +285,22 @@ class Service:
         if is_pdf:  # a statement printed as PDF: read its table in the isolated parser
             out = self._pdf_worker(blob, "statement")
             if out.get("error"):
+                if auto:  # not a statement table: treat it as a receipt / invoice (that path refuses bad PDFs)
+                    return {"routed": "document", **self.upload_pdf(user, wid, filename, blob, data_class)}
                 raise ingest.IngestError(out["error"])
             header, rows, unsafe = out["header"], out["rows"], out.get("unsafe_content", [])
             if len(rows) > ingest.MAX_ROWS:
                 raise ingest.IngestError(f"more than {ingest.MAX_ROWS} rows")
-            w.tables[f"sha:{sha}"] = (header, rows)
         else:
             header, rows = ingest.read_table(filename, blob)  # quarantine checks happen here
+        detection = None
+        if auto:
+            kind, detection = ingest.detect_kind(header, rows, hint)  # raises IngestError if nothing fits
+            if is_pdf and kind not in self.PDF_TABLE_KINDS:
+                raise ingest.IngestError(f"A PDF table was found but it reads as a {ingest.KIND_LABEL[kind]}; "
+                                         "upload that list as CSV or Excel instead.")
+        if is_pdf:
+            w.tables[f"sha:{sha}"] = (header, rows)
         uid = "UP-" + uuid.uuid4().hex[:8]
         prefix = DATA_DIR / TENANT / wid
         prefix.mkdir(parents=True, exist_ok=True)
@@ -299,7 +312,8 @@ class Service:
                "uploaded_by": user.user_id, "uploaded_at": _ts(),
                "duplicate_of": w.digests.get((kind, sha)), "origin": origin, "unsafe_content": unsafe,
                "mapping_method": ("PDF table read by column position, then " if is_pdf else "") +
-                                 "deterministic header rules (no AI model invoked)"}
+                                 "deterministic header rules (no AI model invoked)",
+               "detected": bool(detection), "detection": detection, "kind_label": ingest.KIND_LABEL[kind]}
         w.uploads[uid] = rec
         w.blobs[uid] = blob
         self._agent_or_stop(user, w, "agent:mapping", "mapping.propose", batch_sha=sha, data_class=data_class, refs=[kind])

@@ -1,0 +1,5 @@
+invoice_id,customer_alias,issue_date,amount,open_balance,currency,ship_from_state,ship_to_state,taxability,nexus_status,dest_registration
+INV-1001,CUST-01,2026-09-15,2450.00,2450.00,USD,,,,,
+INV-1005,CUST-02,2026-09-25,1200.00,1200.00,USD,,,,,
+INV-1008,CUST-03,2026-10-01,2100.00,2100.00,USD,,,,,
+INV-1012,CUST-04,2026-10-12,2500.00,2500.00,USD,FL,CA,,,
