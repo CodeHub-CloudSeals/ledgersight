@@ -78,12 +78,16 @@ const W = (p = "") => `/v1/workspaces/${S.ws}${p}`;
 function showLogin() { $("app").classList.add("hidden"); $("login").classList.remove("hidden"); }
 const authConfig = fetch("/v1/auth-config").then((r) => r.json()).then(async (c) => {
   S.mfa = !!c.mfa; $("lg-code-row").classList.toggle("hidden", !S.mfa);
-  $("lg-hint").textContent = S.mfa ? "Invitation-only. Password plus authenticator code." : "Invitation-only access.";
+  const onlyGoogle = !!(c.google_login && c.google_client_id);
+  $("lg-pwform").classList.toggle("hidden", onlyGoogle);
+  $("lg-divider").classList.toggle("hidden", onlyGoogle);
+  $("lg-hint").textContent = onlyGoogle ? "Sign in with your work Google account." :
+    S.mfa ? "Invitation-only. Password plus authenticator code." : "Invitation-only access.";
   S.noLogin = c.login_required === false; S.demoPeople = c.demo_people || [];
   S.samples = !!c.samples_enabled;
   $("sample-box").classList.toggle("hidden", !S.samples);
   if (c.version) $("app-version").textContent = `LedgerSight v${c.version}`;
-  if (c.google_login && c.google_client_id) await setUpGoogleSignIn(c.google_client_id);
+  if (onlyGoogle) await setUpGoogleSignIn(c.google_client_id);
 }).catch(() => {});
 
 async function onGoogleCredential(resp) {

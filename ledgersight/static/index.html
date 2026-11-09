@@ -15,13 +15,15 @@
     <div class="eyebrow">LedgerSight · TrustOps</div>
     <h1>Sign in</h1>
     <p class="muted" id="lg-hint">Invitation-only access.</p>
-    <label>User ID<input id="lg-user" autocomplete="username"></label>
-    <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
-    <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
-    <button id="lg-btn" class="primary wide">Sign in</button>
+    <div id="lg-pwform">
+      <label>User ID<input id="lg-user" autocomplete="username"></label>
+      <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
+      <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
+      <button id="lg-btn" class="primary wide">Sign in</button>
+    </div>
     <div id="lg-msg" class="msg"></div>
     <div id="lg-google" class="lg-google hidden">
-      <div class="lg-divider"><span>or</span></div>
+      <div id="lg-divider" class="lg-divider"><span>or</span></div>
       <div id="g_id_button"></div>
     </div>
   </div>
