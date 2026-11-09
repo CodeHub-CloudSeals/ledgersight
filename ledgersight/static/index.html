@@ -10,22 +10,46 @@
 <body>
 
 <section id="login" class="login hidden">
-  <div class="login-card">
-    <img src="/static/logo.svg" alt="" class="logo-lg">
-    <div class="eyebrow">LedgerSight · TrustOps</div>
-    <h1>Sign in</h1>
-    <p class="muted" id="lg-hint">Invitation-only access.</p>
-    <div id="lg-pwform">
-      <label>User ID<input id="lg-user" autocomplete="username"></label>
-      <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
-      <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
-      <button id="lg-btn" class="primary wide">Sign in</button>
+  <div class="login-visual" aria-hidden="true">
+    <div class="holo-grid"></div>
+    <div class="holo-blob b1"></div>
+    <div class="holo-blob b2"></div>
+    <div class="holo-blob b3"></div>
+    <div class="holo-icons">
+      <svg class="holo-ico ico-a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+      <svg class="holo-ico ico-b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>
+      <svg class="holo-ico ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
     </div>
-    <div id="lg-msg" class="msg"></div>
-    <div id="lg-google" class="lg-google hidden">
-      <div id="lg-divider" class="lg-divider"><span>or</span></div>
-      <div id="g_id_button"></div>
+    <div class="login-copy">
+      <div class="eyebrow on-dark">LedgerSight · TrustOps</div>
+      <h2>Reconciliation your auditors will believe.</h2>
+      <p>LedgerSight does the matching. TrustOps governs, authorises and evidences every step it takes.</p>
+      <ul class="login-points">
+        <li>Deterministic matching, not a black box</li>
+        <li>Every decision is ALLOW, ESCALATE or DENY, with a reason</li>
+        <li>Signed, tamper-evident evidence for every action</li>
+      </ul>
     </div>
+  </div>
+  <div class="login-formside">
+    <div class="login-card">
+      <img src="/static/logo.svg" alt="" class="logo-lg">
+      <div class="eyebrow">LedgerSight · TrustOps</div>
+      <h1>Sign in</h1>
+      <p class="muted" id="lg-hint">Invitation-only access.</p>
+      <div id="lg-pwform">
+        <label>User ID<input id="lg-user" autocomplete="username"></label>
+        <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
+        <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
+        <button id="lg-btn" class="primary wide">Sign in</button>
+      </div>
+      <div id="lg-msg" class="msg"></div>
+      <div id="lg-google" class="lg-google hidden">
+        <div id="lg-divider" class="lg-divider"><span>or</span></div>
+        <div id="g_id_button"></div>
+      </div>
+    </div>
+    <div class="login-foot">LedgerSight v1.0.0 · Governed by TrustOps · Read-only</div>
   </div>
 </section>
 
