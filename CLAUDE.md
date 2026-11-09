@@ -10,7 +10,7 @@ Synthetic data only. Read-only: never post to a ledger, pay, or email anyone.
 - App: Run and Debug -> "LedgerSight (local demo)" (F5) -> http://127.0.0.1:8090. Launch config sets AVOCET_NO_LOGIN=1 (local demo: no login screen, "Acting as" switch
   between CPA Reviewer / Staff Preparer). Honoured only with MFA off + insecure cookie; hosted keeps login.
   Without it: user `presenter`, password from `.env` (gitignored; template `.env.example`). Upload test pack: `demo_files/` (see its README).
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-09: 185 passed, incl. tests/test_cpa_demo.py, tests/test_upload_detection.py). Keep all existing tests green; add tests for every change.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-09: 186 passed, incl. tests/test_cpa_demo.py, tests/test_upload_detection.py). Keep all existing tests green; add tests for every change.
   Use the .venv: with a user-site (Windows Store) Python, the isolated PDF subprocess (`python -I`) cannot import pdfplumber and 13 PDF tests fail.
 - State persists in AVOCET_DATA_DIR (SQLite ledgersight.db + uploaded files + signing-key.pem). Restart keeps
   everything; delete the folder for a truly empty start. AVOCET_PERSIST=0 = memory only. See PRODUCTION.md.

@@ -181,15 +181,16 @@
         <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div></div>
       <div id="recon-ready"></div>
       <div id="tiles" class="tiles"></div>
-      <div class="card gap" id="stages-card">
-        <div class="card-title">Run stages <span class="muted small">Intake → Validate → Map → Reconcile → Exception → Complete</span></div>
-        <div id="stages"></div>
-      </div>
+      <!-- At-a-glance first (agent workflow), then the detail behind it (run stages) -->
       <div class="card gap pipe" id="rc-pipe">
         <div class="pipe-head"><div class="card-title">Agent workflow</div>
           <div class="pipe-meta"><span class="muted">TrustOps checks every step</span></div></div>
         <div id="rc-pipeline"></div>
         <div id="workflow" class="hidden"></div>
+      </div>
+      <div class="card gap" id="stages-card">
+        <div class="card-title">Run stages <span class="muted small">Intake → Validate → Map → Reconcile → Exception → Complete</span></div>
+        <div id="stages"></div>
       </div>
       <div class="grid two gap">
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>

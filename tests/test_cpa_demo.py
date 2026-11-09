@@ -263,6 +263,12 @@ def test_audit_trail_export_is_client_scoped(staff):
     assert staff.get("/v1/workspaces/client-b/audit-trail.pdf").status_code == 404
 
 
+def test_recon_page_shows_agent_workflow_before_run_stages():
+    html = (appmod.BASE / "static" / "index.html").read_text(encoding="utf-8")
+    recon = html.split('id="p-recon"', 1)[1].split("</section>", 1)[0]
+    assert recon.index('id="rc-pipe"') < recon.index('id="stages-card"')
+
+
 def test_ask_launcher_is_a_floating_button():
     html = (appmod.BASE / "static" / "index.html").read_text(encoding="utf-8")
     assert 'id="ask-open" class="ask-fab"' in html and 'class="askbtn"' not in html
