@@ -44,7 +44,7 @@ def test_rejects_wrong_domain(google_on, monkeypatch):
                          fake_verify(claims(email="person@gmail.com", hd=None)))
     r = TestClient(appmod.app).post("/v1/login/google", json={"credential": "t"})
     assert r.status_code == 403
-    assert "cloudseals.com" in r.json()["detail"]
+    assert "CloudSeals" in r.json()["detail"]
 
 
 def test_rejects_unverified_email(google_on, monkeypatch):
