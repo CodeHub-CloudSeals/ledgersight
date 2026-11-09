@@ -184,7 +184,7 @@ async function progress() {
   });
   put("stepper", kids);
   const nr = $("nav-review"); nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions);
-  $("page-sub").textContent = [w.period, w.industry].filter(Boolean).map(proper).join(" · ");
+  $("page-sub").textContent = proper(w.period || "");  // top bar: client + period only
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = proper(w.name);
   S.status = st;
   renderReadiness();
@@ -470,6 +470,7 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "reports") renderReports();
   if (t.dataset.tab === "rules") renderRules();
   if (t.dataset.tab === "controls") renderProof();
+  if (t.dataset.tab === "recon") progress();  // never judge "ready to run" from stale status
   if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
 });
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
@@ -566,7 +567,7 @@ dzTarget.addEventListener("drop", (e) => {
 });
 $("dz-drive-btn").onclick = () => openGoogleConnectModal();
 function queueFiles(files, from) {
-  S.queue = files; S.autoKind = true; S.queueTotal = files.length;
+  S.queue = files; S.autoKind = true; S.queueTotal = files.length; S.refusals = []; put("up-refused");
   msg("up-msg", `${files.length} file${files.length === 1 ? "" : "s"} from ${from}. Checking each one…`); nextInQueue();
 }
 
@@ -673,18 +674,14 @@ function guessKind(name) {
   if (/document|receipt/.test(n)) return "documents";
   return "bank";
 }
-// Files the importer can read (bank files, ledgers, spreadsheets, text PDFs). Anything else is accepted too:
-// it is stored unopened and held until conversion to JSON is built, and is not used by reconciliation.
+// Formats the importer can read. Anything else (Word, PowerPoint, ZIP, macro workbooks, images...) is refused.
 const IMPORTABLE = /\.(csv|xlsx|tsv|txt|json|ofx|qfx|qbo|pdf)$/i;
-async function holdOne(f) {
-  const fd = new FormData(); fd.append("file", f);
-  msg("up-msg", `Storing ${f.name} for conversion…`);
-  try {
-    const r = await api(W("/held-files"), { method: "POST", form: fd });
-    toast(`${f.name}: held for conversion to JSON${r.duplicate_of ? ` (same file as ${r.duplicate_of})` : ""}. Not opened, and not used in reconciliation.`, "good");
-    msg("up-msg", ""); await refreshWs();
-  } catch (e) { msg("up-msg", `${f.name} could not be stored: ${e.message}`, "err"); }
-  nextInQueue();
+const ACCEPTED_TEXT = "CSV, Excel (.xlsx), TSV, JSON, OFX/QFX/QBO bank downloads, PDF, or a saved email (.eml)";
+// Every refusal is listed in one place, so a batch of files shows exactly what was not accepted and why.
+function refused(f, reason) {
+  S.refusals = (S.refusals || []).concat([{ name: f.name, reason }]);
+  put("up-refused", el("div", { class: "msg err" }, el("b", {}, "Not accepted"),
+    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`)))));
 }
 const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 function renderHeld(held) {
@@ -698,21 +695,23 @@ function renderHeld(held) {
       el("td", { class: "small" }, h.uploaded_by), el("td", { class: "small" }, new Date(h.uploaded_at).toLocaleString()),
       el("td", { class: "mono" }, h.sha256.slice(0, 12) + "…"))))));
 }
+// One file from the device, Google Drive or an email. The SERVER decides what the file is from its content
+// (columns and rows); the name is only sent as a tie-break hint. Wrong files are refused with the reason.
 async function uploadOne(f) {
-  if (!IMPORTABLE.test(f.name)) return holdOne(f);
-  const kind = S.autoKind ? guessKind(f.name) : $("up-kind").value;
-  const left = S.queue.length ? ` (${S.queue.length} more after this)` : "";
-  const fd = new FormData(); fd.append("file", f);
-  if (kind === "pdf") {
-    msg("up-msg", `Reading ${f.name} in an isolated parser…`);
-    try { S.upload = await agentsBusy({ "AG-01": "working" }, `Reading ${f.name}`, api(W("/documents"), { method: "POST", form: fd })); msg("up-msg", `Fields extracted from ${f.name}. Check them, then confirm${left}.`, "good"); renderDocConfirm(); }
-    catch (e) { msg("up-msg", `${f.name} refused: ${e.message}`, "err"); nextInQueue(); }
-    return;
+  if (!IMPORTABLE.test(f.name)) {
+    const ext = (f.name.match(/\.[^.]+$/) || ["(no extension)"])[0].toLowerCase();
+    refused(f, `${ext} files are not supported. Accepted: ${ACCEPTED_TEXT}.`);
+    msg("up-msg", ""); return nextInQueue();
   }
-  fd.append("kind", kind);
-  msg("up-msg", `Checking ${f.name} as ${KIND[kind]}…`);
-  try { S.upload = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, `Checking ${f.name}`, api(W("/uploads"), { method: "POST", form: fd })); msg("up-msg", `${f.name} passed checks as ${KIND[kind]}. Confirm the columns below${left}.`, "good"); renderMapping(); }
-  catch (e) { msg("up-msg", `${f.name} refused: ${e.message}`, "err"); nextInQueue(); }
+  const left = S.queue.length ? ` (${S.queue.length} more after this)` : "";
+  const fd = new FormData(); fd.append("file", f); fd.append("kind", "auto"); fd.append("hint", guessKind(f.name));
+  msg("up-msg", `Reading ${f.name} to work out what it is…`);
+  try {
+    const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, `Checking ${f.name}`, api(W("/uploads"), { method: "POST", form: fd }));
+    S.upload = r;
+    if (r.routed === "document") { msg("up-msg", `${f.name} is a receipt or invoice. Fields extracted; check them, then confirm${left}.`, "good"); return renderDocConfirm(); }
+    msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Confirm the mapping below${left}.`, "good"); renderMapping();
+  } catch (e) { refused(f, e.message); msg("up-msg", ""); nextInQueue(); }
 }
 function renderMapping() {
   const u = S.upload, box = $("mapping");
@@ -721,6 +720,8 @@ function renderMapping() {
   const selects = {};
   put(box,
     el("div", { class: "card-title" }, `Confirm column mapping · ${u.filename} (${u.rows} rows)`),
+    u.detection ? el("div", { class: "row small" }, el("span", { class: "badge PASS" }, `Recognised as ${KIND[u.kind] || u.kind_label}`),
+      el("span", { class: "muted" }, u.detection.method)) : null,
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact file was already imported (${u.duplicate_of}). Confirming will not add rows twice.`) : null,
     el("div", { class: "muted small" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
     el("table", {}, el("tr", {}, el("th", {}, "LedgerSight field"), el("th", {}, "Your column")),
@@ -736,14 +737,18 @@ function renderMapping() {
       catch (e) { msg("up-msg", e.message, "err"); }
     }, "Importing…") }, "Confirm mapping & import")));
 }
+// One click: the built-in synthetic files, imported through the normal upload path (labelled SIMULATED).
+// Shown when AVOCET_SHOW_SAMPLES=1, alongside upload from the device, Google Drive or a saved email.
 $("sample-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
-  msg("up-msg", "");
+  msg("up-msg", ""); put("up-refused");
   try { const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, "Loading all files", api(W("/samples/load"), { method: "POST" }));
     toast(`${r.length} files loaded (bank statement, ledger, invoices, vendor bills, documents and customers & vendors). You can now run reconciliation.`, "good");
-    await refreshWs(); await progress(); }
+    await refreshWs(); }
   catch (e) { msg("up-msg", e.message, "err"); }
 }, "Loading…");
-async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held); }
+// After any upload, confirmation or clear: redraw the Sources page AND refresh the book's status, so the
+// stepper, Overview and the Run button know the bank statement / ledger are now present.
+async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held); await progress(); }
 
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};

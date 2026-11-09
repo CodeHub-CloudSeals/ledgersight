@@ -141,7 +141,7 @@
           <div class="dropzone" id="dz-target">
             <div class="dz-icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>
             <div class="dz-text">Drag files here</div>
-            <div class="small muted">Any document type. Bank files, ledgers and spreadsheets are imported. Other documents are held for conversion to JSON.</div>
+            <div class="small muted">Bank statement, general ledger, open invoices, vendor bills, receipts and contacts. CSV, Excel, TSV, JSON, OFX/QFX/QBO, PDF or a saved email. LedgerSight reads each file to work out what it is, and refuses anything that is not a recognised finance record.</div>
             <button id="choose-btn" class="primary gap">Choose files…</button>
             <input id="up-file" type="file" multiple class="hidden">
           </div>
@@ -157,12 +157,13 @@
           </div>
           <div id="em-view"></div>
           <div id="drive-view"></div>
-          <div id="up-msg" class="msg"></div>
           <div id="sample-box" class="dz-connect row hidden">
             <span class="dz-load-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg></span>
             <span class="small muted grow">Bank statement, ledger, invoices, bills, documents and contacts in one click</span>
             <button id="sample-btn" class="primary">Load All Files</button>
           </div>
+          <div id="up-msg" class="msg"></div>
+          <div id="up-refused"></div>
         </div>
         <div class="card">
           <div class="card-title">Source status</div>

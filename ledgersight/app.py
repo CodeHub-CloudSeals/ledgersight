@@ -314,10 +314,12 @@ def workspace(wid: str, u=Depends(current_user)):
 
 
 @app.post("/v1/workspaces/{wid}/uploads")
-async def upload(wid: str, kind: str = Form(...), data_class: str = Form("synthetic"),
+async def upload(wid: str, kind: str = Form("auto"), data_class: str = Form("synthetic"), hint: str | None = Form(None),
                  file: UploadFile = File(...), u=Depends(current_user)):
+    """kind="auto" (default): the server works out what the file is from its content and refuses
+    anything that is not a recognised finance record. `hint` (from the file name) only breaks ties."""
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.upload, u, wid, kind, file.filename or "upload", blob, data_class)
+    return handle(svc.upload, u, wid, kind, file.filename or "upload", blob, data_class, hint=hint)
 
 
 @app.post("/v1/workspaces/{wid}/held-files")
@@ -357,13 +359,22 @@ def commit_mapping(wid: str, upload_id: str, body: dict = Body(...), u=Depends(c
     return handle(svc.commit_mapping, u, wid, upload_id, body.get("mapping") or {})
 
 
+def _samples_on():
+    """Built-in fixture files are for automated tests and developers only (AVOCET_SHOW_SAMPLES=1).
+    Real use, and the demo, imports files the user uploads from their device or a connector."""
+    if os.environ.get("AVOCET_SHOW_SAMPLES", "0") != "1":
+        raise HTTPException(404, "not found")
+
+
 @app.post("/v1/workspaces/{wid}/samples/load")
 def load_sample(wid: str, u=Depends(current_user)):
+    _samples_on()
     return handle(svc.load_sample, u, wid)
 
 
 @app.get("/v1/workspaces/{wid}/samples/{name}")
 def sample_file(wid: str, name: str, u=Depends(current_user)):
+    _samples_on()
     handle(svc.gate, u, wid, "workspace.read")
     if not name.startswith(wid + "_") or "/" in name or name.endswith(".json") or not (FIXTURES / name).is_file():
         raise HTTPException(404, "not found")
@@ -436,6 +447,7 @@ def sources(wid: str, u=Depends(current_user)):
 
 @app.get("/v1/workspaces/{wid}/samples")
 def sample_list(wid: str, u=Depends(current_user)):
+    _samples_on()
     return handle(svc.sample_files, u, wid)
 
 
