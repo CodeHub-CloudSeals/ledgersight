@@ -84,8 +84,6 @@ const authConfig = fetch("/v1/auth-config").then((r) => r.json()).then(async (c)
   $("lg-hint").textContent = onlyGoogle ? "Sign in with your work Google account." :
     S.mfa ? "Invitation-only. Password plus authenticator code." : "Invitation-only access.";
   S.noLogin = c.login_required === false; S.demoPeople = c.demo_people || [];
-  S.samples = !!c.samples_enabled;
-  $("sample-box").classList.toggle("hidden", !S.samples);
   if (c.version) $("app-version").textContent = `LedgerSight v${c.version}`;
   if (onlyGoogle) await setUpGoogleSignIn(c.google_client_id);
 }).catch(() => {});
@@ -148,11 +146,10 @@ const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", 
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
-  S.run = null; S.upload = null; S.agents = null; S.anim = null; renderPipelines();
+  S.run = null; S.agents = null; S.anim = null; renderPipelines(); resetIntakeUi();
   const w = await api(W());
   S.wsMeta = w;
   renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
-  $("mapping").classList.add("hidden");
   if (w.runs.length) S.run = await api(W(`/runs/${w.runs[w.runs.length - 1].id}`));
   renderRun(); renderExceptions(); renderControls(); await renderEvidence(); await renderTrust();
   S.asks = S.asks.filter((x) => x.ws === S.ws); renderAskLog(); if (S.askOpen) renderAsk(); if (isActive("reports")) renderReports();
@@ -184,6 +181,10 @@ async function progress() {
   });
   put("stepper", kids);
   const nr = $("nav-review"); nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions);
+  // Nothing to clear -> the clear buttons are off (they come back as soon as a file is imported or a run exists).
+  const hasData = st.uploads > 0 || st.runs > 0;
+  $("clear-all").disabled = !hasData; $("clear-all").title = hasData ? "" : "Nothing imported yet";
+  $("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData; $("reset-btn").title = hasData ? "" : "Nothing to clear yet";
   $("page-sub").textContent = proper(w.period || "");  // top bar: client + period only
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = proper(w.name);
   S.status = st;
@@ -511,7 +512,8 @@ function srcEnvelope(e) {
 async function clearSource(k) {
   try { const r = await api(W(`/sources/${k}/clear`), { method: "POST" });
     msg("clear-msg", `${KIND[k]} cleared` + (r.runs_withdrawn ? "; previous match results withdrawn, run Match again." : "."), "good");
-    S.run = null; await refreshWs(); renderRun(); renderExceptions(); renderResults(); }
+    if (S.upload && (S.upload.kind === k || (k === "documents" && S.upload.kind === "pdf"))) resetIntakeUi();
+    put("up-next"); S.run = null; await refreshWs(); renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("clear-msg", e.message, "err"); }
 }
 async function clearClient(btn, nextPeriod = false) {
@@ -522,9 +524,10 @@ async function clearClient(btn, nextPeriod = false) {
   if (!(await confirmDialog(...ask))) return;
   await withBusy(btn, async () => {
     try { await api(W("/reset"), { method: "POST" }); toast(nextPeriod ? `${name}: new period started. Upload this period's files.` : `${name}: data cleared. Upload new files to start again.`, "good");
-      $("mapping").classList.add("hidden"); await switchWs(); }
+      resetIntakeUi(); await switchWs(); }
     catch (e) { toast(e.message, "err"); }
   }, "Clearing…");
+  await progress();  // withBusy re-enables the button when it finishes; re-apply "nothing to clear"
 }
 $("clear-all").onclick = (e) => clearClient(e.currentTarget);
 function renderHealth(uploads) {
@@ -567,7 +570,7 @@ dzTarget.addEventListener("drop", (e) => {
 });
 $("dz-drive-btn").onclick = () => openGoogleConnectModal();
 function queueFiles(files, from) {
-  S.queue = files; S.autoKind = true; S.queueTotal = files.length; S.refusals = []; put("up-refused");
+  S.queue = files; S.autoKind = true; S.queueTotal = files.length; S.refusals = []; put("up-refused"); put("up-next");
   msg("up-msg", `${files.length} file${files.length === 1 ? "" : "s"} from ${from}. Checking each one…`); nextInQueue();
 }
 
@@ -659,8 +662,29 @@ async function openGoogleConnectModal() {
 }
 function nextInQueue() {
   const f = S.queue.shift();
-  if (!f) { if (S.queueTotal > 1) msg("up-msg", `All ${S.queueTotal} files done.`, "good"); S.queueTotal = 0; $("up-file").value = ""; return; }
+  if (!f) { if (S.queueTotal > 1) msg("up-msg", `All ${S.queueTotal} files done.`, "good"); S.queueTotal = 0; $("up-file").value = ""; offerRun(); return; }
   uploadOne(f);
+}
+// Forget every half-finished upload on this page: pending mapping, messages, refusals, queue. Used when the
+// client's data is cleared (here or by a colleague) or another client is opened, so nothing stale remains.
+function resetIntakeUi() {
+  S.queue = []; S.queueTotal = 0; S.upload = null; S.refusals = [];
+  $("mapping").classList.add("hidden"); put("mapping");
+  msg("up-msg", ""); put("up-refused"); put("up-next"); put("em-view"); put("drive-view"); $("up-file").value = "";
+}
+// Once the bank statement and general ledger are both in, take the user straight to the next step.
+async function offerRun() {
+  await progress();
+  const st = S.status || {};
+  if (!(st.bank && st.ledger)) {
+    const need = [!st.bank && "a bank statement", !st.ledger && "a general ledger"].filter(Boolean).join(" and ");
+    return put("up-next", st.uploads ? el("div", { class: "callout gap" }, el("b", {}, `Add ${need} to run reconciliation.`),
+      el("div", { class: "small" }, "Reconciliation compares the bank statement with the general ledger, so both are needed.")) : null);
+  }
+  put("up-next", el("div", { class: "callout gap next-run" },
+    el("div", {}, el("b", {}, "Files imported. Bank statement and general ledger are ready."),
+      el("div", { class: "small" }, S.status.runs ? "Run again to include the files you just added." : "Next: match the bank statement to the ledger.")),
+    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); setTimeout(() => $("run-btn").click(), 250); } }, "Run reconciliation →")));
 }
 function guessKind(name) {
   const n = name.toLowerCase();
@@ -734,21 +758,32 @@ function renderMapping() {
       try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
         toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
         await refreshWs(); nextInQueue(); }
-      catch (e) { msg("up-msg", e.message, "err"); }
+      catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
     }, "Importing…") }, "Confirm mapping & import")));
 }
-// One click: the built-in synthetic files, imported through the normal upload path (labelled SIMULATED).
-// Shown when AVOCET_SHOW_SAMPLES=1, alongside upload from the device, Google Drive or a saved email.
-$("sample-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
-  msg("up-msg", ""); put("up-refused");
-  try { const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, "Loading all files", api(W("/samples/load"), { method: "POST" }));
-    toast(`${r.length} files loaded (bank statement, ledger, invoices, vendor bills, documents and customers & vendors). You can now run reconciliation.`, "good");
-    await refreshWs(); }
-  catch (e) { msg("up-msg", e.message, "err"); }
-}, "Loading…");
 // After any upload, confirmation or clear: redraw the Sources page AND refresh the book's status, so the
 // stepper, Overview and the Run button know the bank statement / ledger are now present.
-async function refreshWs() { const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held); await progress(); }
+async function refreshWs() {
+  const w = await api(W()); renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
+  // A file waiting for confirmation that is no longer on the client (its data was cleared, perhaps by a
+  // colleague) must not stay on screen: it can no longer be imported.
+  if (S.upload && !$("mapping").classList.contains("hidden") && !w.uploads.some((u) => u.id === S.upload.id)) staleUpload();
+  await progress();
+}
+function staleUpload() {
+  const name = S.upload ? S.upload.filename : "The file";
+  resetIntakeUi();
+  msg("up-msg", `${name} is no longer on this client: its data was cleared. Upload it again if you still need it.`, "err");
+}
+// Several people can work on the same client. When this tab comes back into view, re-read the client so a
+// clear, upload or run done elsewhere is reflected (at most every 3 seconds).
+let lastSync = 0;
+function syncIfStale() {
+  if (!S.ws || !S.me || document.visibilityState === "hidden" || Date.now() - lastSync < 3000) return;
+  lastSync = Date.now(); refreshWs().catch(() => {});
+}
+window.addEventListener("focus", syncIfStale);
+document.addEventListener("visibilitychange", syncIfStale);
 
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};
@@ -768,8 +803,8 @@ function renderDocConfirm() {
       el("button", { class: "primary", onclick: async () => {
         const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
         try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } }); box.classList.add("hidden");
-          msg("up-msg", `Document linked to reference ${fields.reference}. Re-run Match to use it.`, "good"); await refreshWs(); nextInQueue(); }
-        catch (e) { msg("up-msg", e.message, "err"); } } }, "Confirm & link document")));
+          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await refreshWs(); nextInQueue(); }
+        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } } }, "Confirm & link document")));
 }
 function renderDocs(docs) {
   if (!docs || !docs.length) return put("docs", el("div", { class: "muted" }, "No supporting documents yet."));
@@ -815,12 +850,14 @@ async function withBusy(btn, fn, label) {
 }
 
 // ---------------- reconcile ----------------
-$("run-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
+$("run-btn").onclick = async (ev) => { await withBusy(ev.currentTarget, async () => {
   msg("run-msg", "");
+  await progress();  // re-read the client first: a colleague may have cleared it since this page loaded
+  if (readiness()) { renderReadiness(); return msg("run-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
   try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
     renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
-}, "Running…");
+}, "Running…"); renderReadiness(); };  // withBusy re-enables the button; keep it off if files are missing
 function line(id) { return S.run && S.run.lines[id]; }
 const KIND_SHORT = { bank: "Bank", ledger: "Ledger", ar: "Invoice", ap: "Vendor bill" };
 function labelFor(id) { const l = line(id); return l && KIND_SHORT[l.kind] ? KIND_SHORT[l.kind] : id.startsWith("GL") ? "Ledger" : id.includes("INV") ? "Invoice" : "Bank"; }
@@ -1142,12 +1179,14 @@ async function renderAgents() {
       el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
     : empty("No agent activity yet", "Import files or press “Run reconciliation now”."));
 }
-$("ag-run").onclick = (ev) => withBusy(ev.currentTarget, async () => {
+$("ag-run").onclick = async (ev) => { await withBusy(ev.currentTarget, async () => {
   msg("ag-msg", "");
+  await progress();
+  if (readiness()) { renderReadiness(); return msg("ag-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
   try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
     renderRun(); renderExceptions(); renderResults(); renderAgents(); }
   catch (e) { msg("ag-msg", e.message, "err"); }
-}, "Running…");
+}, "Running…"); renderReadiness(); };
 
 // ---------------- agent pipeline ----------------
 // Drawn only from GET /agents and the run's own `workflow` steps. Nothing here is invented:

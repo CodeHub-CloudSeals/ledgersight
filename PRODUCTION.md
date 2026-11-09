@@ -18,10 +18,10 @@ Status as of 2026-11-04 (v1.0.0). "Done" means covered by an automated test (`py
 ## Local-only settings (never on a shared server)
 
 `AVOCET_NO_LOGIN=1` removes the sign-in screen on a laptop. It is ignored unless MFA is off and secure cookies are off.
-`AVOCET_SHOW_SAMPLES=1` shows **Load All Files** (the built-in synthetic set, labelled SIMULATED). Files can also be
-uploaded from the device, a saved email, or Google Drive / Sheets / Docs / Slides (set `GOOGLE_CLIENT_ID` and
-`GOOGLE_API_KEY`). Every uploaded file's type is worked out from its content; anything that is not a recognised
-finance record is refused with the reason.
+Files are uploaded from the device, a saved email, or Google Drive / Sheets / Docs / Slides (set `GOOGLE_CLIENT_ID`
+and `GOOGLE_API_KEY`). There is no built-in loader in the app. Every uploaded file's type is worked out from its
+content; anything that is not a recognised finance record is refused with the reason. Demo files to upload:
+`demo_files/0_client1_october`. `AVOCET_SHOW_SAMPLES=1` only enables the fixture API used by automated tests.
 
 ## Not production-ready yet (in development)
 

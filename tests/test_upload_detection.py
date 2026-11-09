@@ -102,25 +102,42 @@ def test_ui_refreshes_status_after_uploads():
     """Regression: after uploading from the device, the Run button stayed disabled ("upload bank statement and
     ledger first") because only the removed built-in loader refreshed the book's status."""
     js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
-    line = next(l for l in js.splitlines() if l.startswith("async function refreshWs()"))
-    assert "await progress()" in line
+    body = js.split("async function refreshWs()", 1)[1].split("\n}\n", 1)[0]
+    assert "await progress()" in body
     assert 'if (t.dataset.tab === "recon") progress();' in js
 
 
-def test_all_three_intake_routes_are_offered():
-    """Load All Files (built-in synthetic set), upload from this device, and Google Drive/Sheets/Docs/Slides."""
+def test_ui_handles_cleared_data_and_offers_the_run():
+    """After a clear (here or by a colleague) no stale pending upload stays on screen; clear buttons are off when
+    there is nothing to clear; Run re-checks the client; after importing, the user is taken to Run reconciliation."""
+    js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    body = js.split("async function refreshWs()", 1)[1].split("\n}\n", 1)[0]
+    assert "staleUpload()" in body and "w.uploads.some((u) => u.id === S.upload.id)" in body
+    assert "resetIntakeUi(); await switchWs();" in js  # clear all
+    assert '$("clear-all").disabled = !hasData' in js and '$("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData' in js
+    for btn in ('$("run-btn").onclick', '$("ag-run").onclick'):
+        handler = js.split(btn, 1)[1][:400]
+        assert "await progress();" in handler and "if (readiness())" in handler
+    assert 'id="up-next"' in html and "Run reconciliation →" in js and "offerRun();" in js
+    assert 'window.addEventListener("focus", syncIfStale)' in js
+
+
+def test_intake_is_upload_only_device_or_google():
+    """Files come from this device (or a saved email) or Google Drive/Sheets/Docs/Slides. No built-in loader."""
     html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
     js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
-    assert 'id="sample-btn"' in html and "Load All Files" in html and "/samples/load" in js
+    assert "sample-btn" not in html and "Load All Files" not in html and "/samples/load" not in js
     assert 'id="choose-btn"' in html and 'id="dz-drive-btn"' in html
     for kind in ("spreadsheet", "document", "presentation"):  # Sheets -> xlsx, Docs/Slides -> PDF, then content detection
         assert f"application/vnd.google-apps.{kind}" in js
-    assert '"AVOCET_SHOW_SAMPLES": "1"' in (ROOT / ".vscode" / "launch.json").read_text(encoding="utf-8")
-    assert "AVOCET_SHOW_SAMPLES=1" in (ROOT / "deploy" / "cloudrun.sh").read_text(encoding="utf-8")
+    assert '"AVOCET_SHOW_SAMPLES": "0"' in (ROOT / ".vscode" / "launch.json").read_text(encoding="utf-8")
+    assert "AVOCET_SHOW_SAMPLES=0" in (ROOT / "deploy" / "cloudrun.sh").read_text(encoding="utf-8")
     assert json.loads((ROOT / ".vscode" / "launch.json").read_text(encoding="utf-8"))  # still valid JSON
 
 
-def test_load_all_files_gives_the_same_result_as_uploading_the_pack(cpa):
+def test_test_fixture_api_matches_uploading_the_pack(cpa):
+    """The /samples API (tests only) and a real upload of demo_files/0_client1_october give the same result."""
     cpa.post(WS + "/reset", headers=H)
     assert cpa.post(WS + "/samples/load", headers=H).status_code == 200
     a = cpa.post(WS + "/reconciliation-runs", headers=H).json()["result"]
