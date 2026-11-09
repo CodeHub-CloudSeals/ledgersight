@@ -20,6 +20,10 @@
     <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
     <button id="lg-btn" class="primary wide">Sign in</button>
     <div id="lg-msg" class="msg"></div>
+    <div id="lg-google" class="lg-google hidden">
+      <div class="lg-divider"><span>or</span></div>
+      <div id="g_id_button"></div>
+    </div>
   </div>
 </section>
 
@@ -52,7 +56,7 @@
   <header class="topbar">
     <div class="tb-left">
       <div class="small muted">Client</div>
-      <div class="ws-line"><select id="ws-select" class="ws-title" aria-label="Client"></select><span class="page-sub" id="page-sub">–</span><span class="badge SIMULATED demo-tag" title="Only synthetic demo records are accepted (TrustOps POL-07). Read-only: nothing is posted, paid, filed or emailed.">Demo · synthetic data · read-only</span></div>
+      <div class="ws-line"><select id="ws-select" class="ws-title" aria-label="Client"></select><span class="page-sub" id="page-sub">–</span></div>
     </div>
     <div class="tb-right">
       <label id="act-as-wrap" class="tbl hidden"><span class="lbl">Acting as</span><select id="act-as" aria-label="Acting as"></select></label>

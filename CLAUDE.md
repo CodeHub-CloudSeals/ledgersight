@@ -69,6 +69,14 @@ URLs, sandbox pipeline, production URL, email access.
 6. Admin Rulebooks (read-only policy list) + source status labels
    (VERIFIED_UPLOAD / LIVE_CONNECTOR / SIMULATED / PLANNED; QuickBooks/Xero = PLANNED).
 
+## Built 2026-11-09: Google sign-in (tests in tests/test_google_login.py)
+`POST /v1/login/google` verifies a Google ID token (google-auth, same pattern as cloudseals-trustops-core's
+`security.py`) and replaces the password + authenticator-code step only - an administrator still invites the
+person first (`/v1/invites`, same roles/workspaces as today); unverified or wrong-domain emails are rejected
+(`AVOCET_GOOGLE_LOGIN_DOMAIN`, reuses the existing `GOOGLE_CLIENT_ID`). No invite on file, no sign-in; nothing
+is auto-provisioned. `/v1/auth-config` exposes `google_login`/`google_client_id`; the login screen shows a
+"Sign in with Google" button only when both are configured.
+
 ## Known setup issues
 - `run.sh` is Linux-only; use the VS Code launch config on Windows.
 - `pdf_worker.py` resource limits are skipped on Windows; PDF subprocess gets a minimal env — test PDF upload on Windows.

@@ -149,6 +149,25 @@ class AuthStore:
         self.sessions[tok] = (user_id, now() + SESSION_TTL)
         return tok
 
+    # Google sign-in: an administrator still invites the person first (same /v1/invites flow,
+    # same roles and workspace scoping as password accounts) - Google only replaces the password +
+    # authenticator-code step for that already-registered email. No invite on file, no sign-in.
+    def google_login(self, email: str, display_name: str) -> str:
+        uid = email.lower()
+        u = self.users.get(uid)
+        if not u:
+            raise PermissionError("no invitation on file for this email; ask your administrator")
+        if u.revoked:
+            raise PermissionError("account revoked; contact your administrator")
+        if u.expires_at < now():
+            raise PermissionError("account expired")
+        if not u.active:
+            u.active, u.terms_accepted_at = True, now()
+        u.display_name = display_name or u.display_name
+        tok = secrets.token_urlsafe(32)
+        self.sessions[tok] = (uid, now() + SESSION_TTL)
+        return tok
+
     def resolve(self, token: str | None) -> User | None:
         if not token or token not in self.sessions:
             return None

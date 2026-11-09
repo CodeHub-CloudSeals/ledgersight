@@ -14,6 +14,8 @@ from pathlib import Path
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
 from datetime import timedelta
 
@@ -72,11 +74,15 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
 
 _G = bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_API_KEY"))
-CSP = ("default-src 'self'; img-src 'self' data:" + (" https://*.googleusercontent.com https://ssl.gstatic.com" if _G else "") +
-       "; style-src 'self'" + (" 'unsafe-inline' https://fonts.googleapis.com" if _G else "") +
-       "; script-src 'self'" + (" https://apis.google.com https://accounts.google.com" if _G else "") +
-       ("; frame-src https://docs.google.com https://accounts.google.com https://content.googleapis.com" if _G else "") +
-       ("; connect-src 'self' https://www.googleapis.com https://content.googleapis.com" if _G else "") +
+GOOGLE_LOGIN_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_LOGIN_DOMAIN = os.environ.get("AVOCET_GOOGLE_LOGIN_DOMAIN")
+_GL = bool(GOOGLE_LOGIN_CLIENT_ID and GOOGLE_LOGIN_DOMAIN)
+_GOOGLE_WEB = _G or _GL
+CSP = ("default-src 'self'; img-src 'self' data:" + (" https://*.googleusercontent.com https://ssl.gstatic.com" if _GOOGLE_WEB else "") +
+       "; style-src 'self'" + (" 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com" if _GOOGLE_WEB else "") +
+       "; script-src 'self'" + (" https://apis.google.com https://accounts.google.com" if _GOOGLE_WEB else "") +
+       ("; frame-src https://docs.google.com https://accounts.google.com https://content.googleapis.com" if _GOOGLE_WEB else "") +
+       ("; connect-src 'self' https://www.googleapis.com https://content.googleapis.com" if _GOOGLE_WEB else "") +
        "; frame-ancestors 'none'")
 
 
@@ -165,7 +171,8 @@ def invite_page():
 def auth_config():
     return {"mfa": REQUIRE_MFA, "login_required": not NO_LOGIN, "version": APP_VERSION,
             "samples_enabled": os.environ.get("AVOCET_SHOW_SAMPLES", "0") == "1",
-            "demo_people": [{"key": k, "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else []}
+            "demo_people": [{"key": k, "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else [],
+            "google_login": _GL, "google_client_id": GOOGLE_LOGIN_CLIENT_ID if _GL else None}
 
 
 @app.post("/v1/demo/act-as")
@@ -222,6 +229,28 @@ def login(body: dict = Body(...)):
         tok = auth.login(body.get("user_id", ""), body.get("password", ""), body.get("code", ""))
     except PermissionError as e:
         raise HTTPException(401, str(e))
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
+    return resp
+
+
+@app.post("/v1/login/google")
+def login_google(body: dict = Body(...)):
+    if not _GL:
+        raise HTTPException(404, "not found")
+    try:
+        claims = google_id_token.verify_oauth2_token(body.get("credential", ""), google_requests.Request(), GOOGLE_LOGIN_CLIENT_ID)
+    except Exception:
+        raise HTTPException(401, "Google sign-in could not be verified")
+    email = (claims.get("email") or "").lower()
+    domain = claims.get("hd") or email.rsplit("@", 1)[-1]
+    if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
+        raise HTTPException(403, f"only @{GOOGLE_LOGIN_DOMAIN} accounts can sign in this way")
+    try:
+        tok = auth.google_login(email, claims.get("name") or email)
+    except PermissionError as e:
+        raise HTTPException(401, str(e))
+    save_users()
     resp = JSONResponse({"ok": True})
     resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
     return resp

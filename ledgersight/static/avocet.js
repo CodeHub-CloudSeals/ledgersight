@@ -76,14 +76,31 @@ const W = (p = "") => `/v1/workspaces/${S.ws}${p}`;
 
 // ---------------- auth ----------------
 function showLogin() { $("app").classList.add("hidden"); $("login").classList.remove("hidden"); }
-const authConfig = fetch("/v1/auth-config").then((r) => r.json()).then((c) => {
+const authConfig = fetch("/v1/auth-config").then((r) => r.json()).then(async (c) => {
   S.mfa = !!c.mfa; $("lg-code-row").classList.toggle("hidden", !S.mfa);
   $("lg-hint").textContent = S.mfa ? "Invitation-only. Password plus authenticator code." : "Invitation-only access.";
   S.noLogin = c.login_required === false; S.demoPeople = c.demo_people || [];
   S.samples = !!c.samples_enabled;
   $("sample-box").classList.toggle("hidden", !S.samples);
   if (c.version) $("app-version").textContent = `LedgerSight v${c.version}`;
+  if (c.google_login && c.google_client_id) await setUpGoogleSignIn(c.google_client_id);
 }).catch(() => {});
+
+async function onGoogleCredential(resp) {
+  msg("lg-msg", "Signing in…");
+  try {
+    await api("/v1/login/google", { method: "POST", json: { credential: resp.credential } });
+    await boot();
+  } catch (e) { msg("lg-msg", e.message, "err"); }
+}
+async function setUpGoogleSignIn(clientId) {
+  try {
+    await loadScript("https://accounts.google.com/gsi/client");
+    google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential });
+    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", width: 280 });
+    $("lg-google").classList.remove("hidden");
+  } catch (_) { /* password sign-in still works without this */ }
+}
 $("act-as").onchange = async (e) => {
   await api("/v1/demo/act-as", { method: "POST", json: { as: e.target.value } });
   await boot();
