@@ -150,15 +150,21 @@ class AuthStore:
         return tok
 
     # Google sign-in: any verified account on the allowed domain (checked by the caller) is let in.
-    # A never-seen email is auto-provisioned least-privileged (preparer); an email already on file
-    # (bootstrap owner or a password-account invite) keeps whatever role it was given there.
+    # A never-seen email is auto-provisioned with AVOCET_GOOGLE_DEFAULT_ROLE (default: preparer, least
+    # privilege; set it to owner_reviewer to make every Google user a CPA reviewer). An unknown value
+    # falls back to preparer. An email already on file (bootstrap owner or a password-account invite)
+    # keeps whatever role it was given there.
+    GOOGLE_ROLES = ("preparer", "owner_reviewer")
+
     def google_login(self, email: str, display_name: str, workspaces: set[str]) -> str:
         uid = email.lower()
         u = self.users.get(uid)
         if u and u.revoked:
             raise PermissionError("account revoked; contact your administrator")
         if not u:
-            u = User(uid, display_name, "preparer", set(workspaces), active=True,
+            role = os.environ.get("AVOCET_GOOGLE_DEFAULT_ROLE", "preparer")
+            role = role if role in self.GOOGLE_ROLES else "preparer"
+            u = User(uid, display_name, role, set(workspaces), active=True,
                      expires_at=now() + timedelta(days=365), terms_accepted_at=now())
             self.users[uid] = u
         elif u.expires_at < now():

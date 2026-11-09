@@ -66,6 +66,26 @@ def test_never_seen_email_is_auto_provisioned_as_preparer(google_on, monkeypatch
     assert me["active"] is True
 
 
+def test_default_role_can_be_cpa_reviewer_for_every_google_user(google_on, monkeypatch):
+    """AVOCET_GOOGLE_DEFAULT_ROLE=owner_reviewer: everyone who signs in with Google can approve."""
+    monkeypatch.setenv("AVOCET_GOOGLE_DEFAULT_ROLE", "owner_reviewer")
+    monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
+                         fake_verify(claims(email="reviewer-by-default@cloudseals.com", name="R")))
+    c = TestClient(appmod.app)
+    assert c.post("/v1/login/google", json={"credential": "t"}).status_code == 200
+    assert c.get("/v1/me").json()["role"] == "owner_reviewer"
+
+
+@pytest.mark.parametrize("value", ["support", "admin", "", "OWNER_REVIEWER"])
+def test_unknown_default_role_falls_back_to_preparer(google_on, monkeypatch, value):
+    monkeypatch.setenv("AVOCET_GOOGLE_DEFAULT_ROLE", value)
+    monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
+                         fake_verify(claims(email=f"fallback-{value or 'empty'}@cloudseals.com".lower(), name="F")))
+    c = TestClient(appmod.app)
+    assert c.post("/v1/login/google", json={"credential": "t"}).status_code == 200
+    assert c.get("/v1/me").json()["role"] == "preparer"
+
+
 def test_pre_registered_email_keeps_its_existing_role(google_on, monkeypatch):
     appmod.auth.invite("rajani@cloudseals.com", "Rajani", "owner_reviewer", {"client-a"})
     monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
