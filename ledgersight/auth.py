@@ -149,19 +149,21 @@ class AuthStore:
         self.sessions[tok] = (user_id, now() + SESSION_TTL)
         return tok
 
-    # Google sign-in: an administrator still invites the person first (same /v1/invites flow,
-    # same roles and workspace scoping as password accounts) - Google only replaces the password +
-    # authenticator-code step for that already-registered email. No invite on file, no sign-in.
-    def google_login(self, email: str, display_name: str) -> str:
+    # Google sign-in: any verified account on the allowed domain (checked by the caller) is let in.
+    # A never-seen email is auto-provisioned least-privileged (preparer); an email already on file
+    # (bootstrap owner or a password-account invite) keeps whatever role it was given there.
+    def google_login(self, email: str, display_name: str, workspaces: set[str]) -> str:
         uid = email.lower()
         u = self.users.get(uid)
-        if not u:
-            raise PermissionError("no invitation on file for this email; ask your administrator")
-        if u.revoked:
+        if u and u.revoked:
             raise PermissionError("account revoked; contact your administrator")
-        if u.expires_at < now():
+        if not u:
+            u = User(uid, display_name, "preparer", set(workspaces), active=True,
+                     expires_at=now() + timedelta(days=365), terms_accepted_at=now())
+            self.users[uid] = u
+        elif u.expires_at < now():
             raise PermissionError("account expired")
-        if not u.active:
+        elif not u.active:
             u.active, u.terms_accepted_at = True, now()
         u.display_name = display_name or u.display_name
         tok = secrets.token_urlsafe(32)

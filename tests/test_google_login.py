@@ -1,4 +1,5 @@
-"""Google sign-in: invite-only, domain-restricted, replaces password + authenticator code."""
+"""Google sign-in: domain-restricted, auto-provisions least-privileged accounts, replaces
+password + authenticator code for anyone already on file with a different role."""
 import pytest
 from fastapi.testclient import TestClient
 
@@ -52,26 +53,31 @@ def test_rejects_unverified_email(google_on, monkeypatch):
     assert r.status_code == 403
 
 
-def test_no_invite_on_file_is_rejected(google_on, monkeypatch):
+def test_never_seen_email_is_auto_provisioned_as_preparer(google_on, monkeypatch):
     monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
-                         fake_verify(claims(email="nobody-invited@cloudseals.com")))
-    r = TestClient(appmod.app).post("/v1/login/google", json={"credential": "t"})
-    assert r.status_code == 401
-    assert "invitation" in r.json()["detail"]
+                         fake_verify(claims(email="new-person@cloudseals.com", name="New Person")))
+    c = TestClient(appmod.app)
+    r = c.post("/v1/login/google", json={"credential": "t"})
+    assert r.status_code == 200, r.text
+    me = c.get("/v1/me").json()
+    assert me["user_id"] == "new-person@cloudseals.com"
+    assert me["display_name"] == "New Person"
+    assert me["role"] == "preparer"
+    assert me["active"] is True
 
 
-def test_invited_email_signs_in_without_password_or_mfa(google_on, monkeypatch):
-    appmod.auth.invite("rajani@cloudseals.com", "Rajani", "preparer", {"client-a"})
+def test_pre_registered_email_keeps_its_existing_role(google_on, monkeypatch):
+    appmod.auth.invite("rajani@cloudseals.com", "Rajani", "owner_reviewer", {"client-a"})
     monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
                          fake_verify(claims(email="rajani@cloudseals.com", name="Rajani G")))
     c = TestClient(appmod.app)
     r = c.post("/v1/login/google", json={"credential": "t"})
     assert r.status_code == 200, r.text
-    me = c.get("/v1/me")
-    assert me.status_code == 200
-    assert me.json()["user_id"] == "rajani@cloudseals.com"
-    assert me.json()["display_name"] == "Rajani G"
-    assert me.json()["active"] is True
+    me = c.get("/v1/me").json()
+    assert me["user_id"] == "rajani@cloudseals.com"
+    assert me["display_name"] == "Rajani G"
+    assert me["role"] == "owner_reviewer"
+    assert me["active"] is True
 
 
 def test_revoked_user_cannot_sign_in_with_google(google_on, monkeypatch):

@@ -247,7 +247,7 @@ def login_google(body: dict = Body(...)):
     if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
         raise HTTPException(403, f"only @{GOOGLE_LOGIN_DOMAIN} accounts can sign in this way")
     try:
-        tok = auth.google_login(email, claims.get("name") or email)
+        tok = auth.google_login(email, claims.get("name") or email, set(WORKSPACES))
     except PermissionError as e:
         raise HTTPException(401, str(e))
     save_users()
