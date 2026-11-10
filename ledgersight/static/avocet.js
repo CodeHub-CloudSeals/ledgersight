@@ -705,7 +705,15 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
   const apply = () => { document.body.classList.toggle("side-mini", on); const b = $("side-toggle");
     b.title = b.ariaLabel = on ? "Expand menu" : "Collapse menu"; b.setAttribute("aria-expanded", String(!on)); };
   apply();
-  $("side-toggle").onclick = () => { on = !on; apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
+  const side = document.querySelector(".sidebar"), wide = matchMedia("(min-width:821px)");
+  let t = 0;
+  const peek = (v, ms) => { clearTimeout(t); t = setTimeout(() => side.classList.toggle("peek", v && on && wide.matches), ms); };
+  side.addEventListener("mouseenter", () => peek(true, 160));
+  side.addEventListener("mouseleave", () => peek(false, 120));
+  side.addEventListener("focusin", () => peek(true, 0));
+  side.addEventListener("focusout", (e) => { if (!side.contains(e.relatedTarget) && !side.matches(":hover")) peek(false, 0); });
+  side.addEventListener("click", (e) => { if (e.target.closest(".tab")) peek(false, 0); });
+  $("side-toggle").onclick = () => { on = !on; peek(false, 0); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
 $("period-chip").onclick = () => {
   go("home"); const d = $("ov-profile"); d.open = true;

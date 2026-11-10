@@ -1388,14 +1388,14 @@ h1,h2,h3,.page-head h2,.card-title{color:var(--navy, var(--text))}
 .sidefoot{border-top:1px solid var(--line);color:var(--faint)}
 /* collapsed (icons only) */
 body.side-mini .shell{grid-template-columns:76px minmax(0,1fr)}
-body.side-mini .sidebar{padding:18px 10px 14px}
-body.side-mini .brandcard{flex-direction:column;gap:12px;padding-bottom:12px}
-body.side-mini .brandcard .bt,body.side-mini .tab .lbl-t,body.side-mini .tab .tag,body.side-mini .sidefoot{display:none}
+body.side-mini .sidebar:not(.peek){padding:18px 10px 14px}
+body.side-mini .sidebar:not(.peek) .brandcard{flex-direction:column;gap:12px;padding-bottom:12px}
+body.side-mini .sidebar:not(.peek) .brandcard .bt,body.side-mini .sidebar:not(.peek) .tab .lbl-t,body.side-mini .sidebar:not(.peek) .tab .tag,body.side-mini .sidebar:not(.peek) .sidefoot{display:none}
 body.side-mini .side-toggle{margin:0;transform:rotate(180deg)}
-body.side-mini .navlabel{font-size:0;height:1px;background:var(--line);margin:12px 10px}
-body.side-mini .tab{justify-content:center;padding:10px 0}
-body.side-mini .tab .count{position:absolute;top:2px;right:4px;margin:0;line-height:15px;padding:0 5px;font-size:9.5px}
-body.side-mini .tab.active::before{left:-10px}
+body.side-mini .sidebar:not(.peek) .navlabel{font-size:0;height:1px;background:var(--line);margin:12px 10px}
+body.side-mini .sidebar:not(.peek) .tab{justify-content:center;padding:10px 0}
+body.side-mini .sidebar:not(.peek) .tab .count{position:absolute;top:2px;right:4px;margin:0;line-height:15px;padding:0 5px;font-size:9.5px}
+body.side-mini .sidebar:not(.peek) .tab.active::before{left:-10px}
 @media (max-width:820px){.side-toggle{display:none}body.side-mini .shell{grid-template-columns:1fr}}
 
 /* ---------- top bar ---------- */
@@ -1538,3 +1538,25 @@ table tr:hover td{background:var(--accent-soft)}
 .hero>*,.hero-l{min-width:0}
 @media (max-width:820px){.shell,body.side-mini .shell{grid-template-columns:1fr}.sidebar{padding:8px 12px}.brandcard{padding:0}.tb-right .who{display:none}.tbl .lbl{display:none}}
 .kw .spark.spark-lg{width:100%;height:58px}
+
+/* ---------- sidebar v5: fits on screen, no visible scrollbar, peek when collapsed ---------- */
+@media (min-width:821px){
+  .sidebar{overflow:hidden;padding:16px 12px 12px}
+  .sidebar nav{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-width:none;margin:0 -12px;padding:0 12px}
+  .sidebar nav::-webkit-scrollbar{display:none}
+  .brandcard{padding:2px 4px 12px}
+  .navlabel{margin:14px 12px 4px}
+  .navlabel:first-child{margin-top:2px}
+  .tab{padding:7px 12px;margin:1px 0}
+  .tab.active::before{left:-12px}
+  .sidefoot{flex:none;margin-top:8px;padding:10px 10px 0}
+  body.side-mini .sidebar{width:76px;z-index:40;transition:width .22s cubic-bezier(.2,.8,.2,1),box-shadow .22s}
+  body.side-mini .sidebar.peek{width:256px;box-shadow:16px 0 40px -18px rgba(23,43,77,.35)}
+}
+@media (min-width:821px) and (max-height:780px){
+  .brandcard{padding-bottom:6px}.brandcard .bsub{display:none}
+  .navlabel{margin:9px 12px 2px}
+  .tab{padding:5px 12px}
+  .sidefoot{display:none}
+}
+@media (min-width:821px) and (prefers-reduced-motion:reduce){body.side-mini .sidebar{transition:none}}
