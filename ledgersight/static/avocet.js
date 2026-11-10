@@ -318,13 +318,14 @@ function cashFlowChart(run) {
     g.querySelectorAll(".cf-hit.on").forEach((x) => x.classList.remove("on")); h.classList.add("on");
   });
   svg.addEventListener("pointerleave", () => { tip.classList.remove("on"); g.querySelectorAll(".cf-hit.on").forEach((x) => x.classList.remove("on")); });
+  const viz = window.LSCharts ? LSCharts.flow({ keys, days, cum, label: svg.getAttribute("aria-label"), fmtAxis: compactUsd, fmtDate: shortDate, usd }) : wrap;
   return el("div", {},
     el("div", { class: "cf-stats" },
       el("div", {}, el("span", { class: "lg in" }), el("span", { class: "k" }, "Money in"), el("b", {}, usd(totIn))),
       el("div", {}, el("span", { class: "lg out" }), el("span", { class: "k" }, "Money out"), el("b", {}, usd(totOut))),
       el("div", {}, el("span", { class: "lg net" }), el("span", { class: "k" }, "Running net"), el("b", {}, usd(run.result.bank_net_cents))),
       el("div", {}, el("span", { class: "k" }, "Days with activity"), el("b", {}, String(keys.length)))),
-    wrap);
+    viz);
 }
 
 // Match coverage: bank transactions matched, raised for review, or neither; plus bank vs ledger totals.
@@ -345,6 +346,7 @@ function coverageChart(run) {
   });
   const pct = Math.round(matched / total * 100);
   const donut = el("div", { class: "dn-wrap" },
+    window.LSCharts ? LSCharts.donut({ segs, total, label: `${matched} of ${total} bank transactions matched` }) :
     sv("svg", { viewBox: "0 0 128 128", class: "dn-svg", role: "img", "aria-label": `${matched} of ${total} bank transactions matched` },
       sv("circle", { cx: 64, cy: 64, r: R, class: "dn-track" }), arcs),
     el("div", { class: "dn-mid" }, el("b", {}, counter("cov-pct", pct, (n) => `${n}%`)), el("span", {}, "matched")));

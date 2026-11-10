@@ -1560,3 +1560,22 @@ table tr:hover td{background:var(--accent-soft)}
   .sidefoot{display:none}
 }
 @media (min-width:821px) and (prefers-reduced-motion:reduce){body.side-mini .sidebar{transition:none}}
+
+/* ---------- UI layer: Motion + Chart.js (see ui-plus.js) ---------- */
+.sidebar nav.has-pill{position:relative}
+.nav-pill{position:absolute;left:0;top:0;width:0;height:0;border-radius:10px;background:var(--accent-soft);pointer-events:none;z-index:0;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 14%,transparent)}
+.nav-pill::before{content:"";position:absolute;left:calc(-1 * var(--pl,12px));top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.has-pill .tab{z-index:1;background:transparent}
+.has-pill .tab.active,.has-pill .tab.active:hover{background:transparent}
+.has-pill .tab.active::before{display:none}
+.has-motion .panel.active>*{animation:none}
+.cj-wrap{position:relative;width:100%}
+.cj-flow{height:250px;margin-top:6px}
+.dn-wrap .cj-donut{display:block;width:100%!important;height:100%!important}
+.dn-wrap .dn-mid{pointer-events:none}
+.kw,.cc,.ch-card{transition:box-shadow .25s,border-color .25s,transform .35s cubic-bezier(.2,.8,.2,1)}
+.has-motion .kw:hover,.has-motion .ch-card:hover{transform:translateY(-3px);box-shadow:0 14px 34px -16px rgba(23,43,77,.28)}
+@media (max-width:820px){.nav-pill{display:none}.has-pill .tab.active{background:var(--accent-soft)}.cj-flow{height:210px}}
+@media (min-width:821px){body.side-mini .sidebar:not(.peek) nav{margin:0 -10px;padding:0 10px}}
+.dn-mid b span{font-size:inherit;color:inherit;font-weight:inherit}
