@@ -90,7 +90,13 @@
     <!-- ================= Overview ================= -->
     <section class="panel active" id="p-home">
       <div id="ov-hero" class="hero"></div>
-      <div id="ov-kpis" class="tiles"></div>
+      <div id="ov-kpis" class="kw-row"></div>
+      <div id="ov-charts" class="ov-charts hidden">
+        <div class="card ch-card"><div class="ch-head"><div><div class="card-title">Cash movement</div><div class="ch-sub">Money in and out on the bank statement, by day</div></div>
+          <a class="linkbtn" href="#trace" data-go="trace">Trace a transaction →</a></div><div id="ov-flow"></div></div>
+        <div class="card ch-card"><div class="ch-head"><div><div class="card-title">Match coverage</div><div class="ch-sub">Bank transactions in this run</div></div>
+          <a class="linkbtn" href="#recon" data-go="recon">Details →</a></div><div id="ov-cover"></div></div>
+      </div>
       <div class="card gap hidden" id="ov-cases"></div>
       <div class="card gap pipe" id="ov-pipe">
         <div class="pipe-head"><div class="card-title">Agent workflow</div>
@@ -99,7 +105,7 @@
       </div>
       <div class="grid ov gap">
         <div class="card"><div class="card-title">TrustOps decisions <a class="linkbtn" href="#evidence" data-go="evidence">Audit trail →</a></div><div id="ov-gov"></div></div>
-        <div class="card"><div class="card-title">Recent activity</div><ul id="ov-activity" class="feed"></ul></div>
+        <div class="card"><div class="card-title">Recent activity <a class="linkbtn" href="#evidence" data-go="evidence">View all →</a></div><ul id="ov-activity" class="feed tl-feed"></ul></div>
       </div>
       <div class="card gap" aria-label="How it works">
         <div class="card-title">How it works <span class="muted">who does each step</span></div>

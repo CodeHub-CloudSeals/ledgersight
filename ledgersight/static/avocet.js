@@ -193,6 +193,167 @@ async function progress() {
 }
 ["exp-csv", "exp-pack", "exp-print"].forEach((id) => $(id).addEventListener("click", markExported));
 
+// ---------------- dashboard visuals ----------------
+// Presentation only. Every figure is read from the run and status already loaded (S.run, S.wsList, S.events);
+// nothing here calculates money differently or invents data. Charts are plain SVG (no external libraries: CSP).
+const REDUCE = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+const SVG_NS = "http://www.w3.org/2000/svg";
+function sv(tag, attrs, ...kids) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null) e.setAttribute(k, v);
+  for (const c of kids.flat()) if (c != null) e.append(c);
+  return e;
+}
+// Numbers count up from their previous value (only when they change), ending on the exact formatted value.
+S.kv = S.kv || {};
+function counter(key, value, fmt) {
+  const span = el("span", { class: "num" }, fmt(value));
+  const from = S.kv[key]; S.kv[key] = value;
+  if (REDUCE || from === value || typeof value !== "number") return span;
+  const start = typeof from === "number" ? from : 0, t0 = performance.now(), dur = 750;
+  span.textContent = fmt(start);
+  (function step(t) {
+    if (!span.isConnected && t - t0 > 50) { span.textContent = fmt(value); return; }
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    span.textContent = k < 1 ? fmt(Math.round(start + (value - start) * e)) : fmt(value);
+    if (k < 1) requestAnimationFrame(step);
+  })(t0);
+  return span;
+}
+const compactUsd = (c) => {
+  const v = Math.abs(c) / 100, s = c < 0 ? "-" : "";
+  return v >= 1e6 ? `${s}$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${s}$${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k` : `${s}$${Math.round(v)}`;
+};
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const shortDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? `${MON[+m[2] - 1]} ${+m[3]}` : d; };
+const KPI_ICON = {
+  sources: "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v5c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12v5c0 1.7 3.6 3 8 3s8-1.3 8-3v-5",
+  matched: "M9 12.5l2 2 4-4.5M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
+  review: "M3 13h5l2 3h4l2-3h5M5.5 5h13l2.5 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z",
+  variance: "M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8h14M8 21h8",
+  unexplained: "M12 3l9 16H3zM12 10v4M12 17h.01",
+};
+function kpiIcon(name) {
+  return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" },
+    sv("path", { d: KPI_ICON[name] }));
+}
+function kpiCard({ icon, label, value, tone, sub, viz }) {
+  return el("div", { class: "kw" + (tone ? " " + tone : "") },
+    el("div", { class: "kw-top" }, el("span", { class: "kw-k" }, label), el("span", { class: "kw-ico" }, kpiIcon(icon))),
+    el("div", { class: "kw-mid" }, el("div", { class: "kw-v" }, value), viz ? el("div", { class: "kw-viz" }, viz) : null),
+    sub ? el("div", { class: "kw-s" }, sub) : null);
+}
+// small radial progress (0..1)
+function ring(frac, cls) {
+  const r = 15, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac || 0));
+  const arc = sv("circle", { cx: 18, cy: 18, r, class: "rg-v " + (cls || ""), "stroke-dasharray": `${c * f} ${c}`, transform: "rotate(-90 18 18)" });
+  if (!REDUCE) arc.style.setProperty("--len", String(c));
+  return sv("svg", { class: "ring", viewBox: "0 0 36 36", "aria-hidden": "true" }, sv("circle", { cx: 18, cy: 18, r, class: "rg-t" }), arc);
+}
+function sparkline(values, cls) {
+  if (!values || values.length < 2) return null;
+  const W = 120, H = 34, min = Math.min(...values, 0), max = Math.max(...values, 0), span = max - min || 1;
+  const pts = values.map((v, i) => [i / (values.length - 1) * W, H - 3 - (v - min) / span * (H - 6)]);
+  const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const zero = H - 3 - (0 - min) / span * (H - 6);
+  return sv("svg", { class: "spark " + (cls || ""), viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" },
+    sv("line", { x1: 0, x2: W, y1: zero, y2: zero, class: "sp-zero" }),
+    sv("path", { d: d + ` L${W} ${zero} L0 ${zero} Z`, class: "sp-area" }),
+    sv("path", { d, class: "sp-line", pathLength: "1" }),
+    sv("circle", { cx: pts[pts.length - 1][0], cy: pts[pts.length - 1][1], r: 2.6, class: "sp-dot" }));
+}
+// Running (bank minus ledger) by date, but only if it adds up to the run's own variance; otherwise no sparkline.
+function varianceSeries(run) {
+  const r = run.result, lines = Object.values(run.lines);
+  const sum = (k) => lines.filter((l) => l.kind === k).reduce((s, l) => s + l.amount_cents, 0);
+  if (sum("bank") !== r.bank_net_cents || sum("ledger") !== r.ledger_net_cents) return null;
+  const byDate = {};
+  lines.forEach((l) => { if (l.kind === "bank" || l.kind === "ledger") byDate[l.date] = (byDate[l.date] || 0) + (l.kind === "bank" ? l.amount_cents : -l.amount_cents); });
+  let cum = 0; const out = Object.keys(byDate).sort().map((d) => (cum += byDate[d]));
+  return out.length && out[out.length - 1] === r.variance_cents ? out : null;
+}
+
+// Cash movement: money in and money out on the bank statement, per day (from the imported bank lines).
+function cashFlowChart(run) {
+  const bank = Object.values(run.lines).filter((l) => l.kind === "bank");
+  if (!bank.length) return empty("No bank transactions in this run", "");
+  const days = {};
+  bank.forEach((l) => { const d = days[l.date] = days[l.date] || { in: 0, out: 0, n: 0 }; if (l.amount_cents >= 0) d.in += l.amount_cents; else d.out += -l.amount_cents; d.n++; });
+  const keys = Object.keys(days).sort();
+  const totIn = keys.reduce((s, k) => s + days[k].in, 0), totOut = keys.reduce((s, k) => s + days[k].out, 0);
+  const W = 720, H = 230, L = 54, R = 12, T = 14, B = 30, pw = W - L - R, ph = H - T - B;
+  const maxIn = Math.max(...keys.map((k) => days[k].in), 0), maxOut = Math.max(...keys.map((k) => days[k].out), 0);
+  const tot = (maxIn + maxOut) || 1, y0 = T + ph * (maxIn / tot), sc = ph / tot;
+  const slot = pw / keys.length, bw = Math.max(4, Math.min(16, slot * 0.32));
+  const g = sv("g", {});
+  [maxIn, -maxOut].forEach((v) => { if (!v) return; const y = y0 - v * sc;
+    g.append(sv("line", { x1: L, x2: W - R, y1: y, y2: y, class: "cf-grid" }), sv("text", { x: L - 8, y: y + 4, class: "cf-ax", "text-anchor": "end" }, compactUsd(v))); });
+  g.append(sv("line", { x1: L, x2: W - R, y1: y0, y2: y0, class: "cf-zero" }), sv("text", { x: L - 8, y: y0 + 4, class: "cf-ax", "text-anchor": "end" }, "$0"));
+  const ticks = new Set([0, keys.length - 1, Math.round((keys.length - 1) / 2)]);
+  keys.forEach((k, i) => {
+    const cx = L + slot * i + slot / 2, d = days[k];
+    if (d.in) { const b = sv("rect", { x: cx - bw - 1, y: y0 - d.in * sc, width: bw, height: Math.max(1, d.in * sc), rx: 3, class: "cf-in" }); b.style.animationDelay = `${i * 35}ms`; g.append(b); }
+    if (d.out) { const b = sv("rect", { x: cx + 1, y: y0, width: bw, height: Math.max(1, d.out * sc), rx: 3, class: "cf-out" }); b.style.animationDelay = `${i * 35 + 60}ms`; g.append(b); }
+    if (ticks.has(i)) g.append(sv("text", { x: cx, y: H - 8, class: "cf-ax", "text-anchor": "middle" }, shortDate(k)));
+    const hit = sv("rect", { x: L + slot * i, y: T, width: slot, height: ph, class: "cf-hit" });
+    hit.dataset.i = i; g.append(hit);
+  });
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "cf-svg", role: "img", "aria-label": `Bank money in ${usd(totIn)} and money out ${usd(totOut)} by day` }, g);
+  const tip = el("div", { class: "cf-tip", "aria-hidden": "true" });
+  const wrap = el("div", { class: "cf-wrap" }, svg, tip);
+  svg.addEventListener("pointermove", (ev) => {
+    const h = ev.target.closest && ev.target.closest(".cf-hit"); if (!h) { tip.classList.remove("on"); return; }
+    const k = keys[+h.dataset.i], d = days[k];
+    put(tip, el("b", {}, shortDate(k)), el("span", { class: "in" }, `In ${usd(d.in)}`), el("span", { class: "out" }, `Out ${usd(d.out)}`), el("span", {}, `${d.n} transaction${d.n === 1 ? "" : "s"}`));
+    const box = wrap.getBoundingClientRect(), hb = h.getBoundingClientRect();
+    tip.style.left = `${Math.min(box.width - 150, Math.max(0, hb.left - box.left + hb.width / 2 - 70))}px`;
+    tip.classList.add("on");
+    g.querySelectorAll(".cf-hit.on").forEach((x) => x.classList.remove("on")); h.classList.add("on");
+  });
+  svg.addEventListener("pointerleave", () => { tip.classList.remove("on"); g.querySelectorAll(".cf-hit.on").forEach((x) => x.classList.remove("on")); });
+  return el("div", {},
+    el("div", { class: "cf-stats" },
+      el("div", {}, el("span", { class: "lg in" }), el("span", { class: "k" }, "Money in"), el("b", {}, usd(totIn))),
+      el("div", {}, el("span", { class: "lg out" }), el("span", { class: "k" }, "Money out"), el("b", {}, usd(totOut))),
+      el("div", {}, el("span", { class: "k" }, "Bank net"), el("b", {}, usd(run.result.bank_net_cents))),
+      el("div", {}, el("span", { class: "k" }, "Days with activity"), el("b", {}, String(keys.length)))),
+    wrap);
+}
+
+// Match coverage: bank transactions matched, raised for review, or neither; plus bank vs ledger totals.
+function coverageChart(run) {
+  const r = run.result;
+  const bankIds = Object.values(run.lines).filter((l) => l.kind === "bank").map((l) => l.id);
+  if (!bankIds.length) return empty("No bank transactions in this run", "");
+  const matchedIds = new Set(r.matches.map((m) => m.bank_id));
+  const matched = r.matches.length;
+  const review = Math.min(Math.max(0, bankIds.length - matched), new Set(r.exceptions.map((x) => x.bank_id).filter((id) => id && !matchedIds.has(id))).size);
+  const other = Math.max(0, bankIds.length - matched - review);
+  const segs = [["Matched", matched, "seg-m"], ["Raised for review", review, "seg-r"], ["Not matched", other, "seg-o"]].filter((s) => s[1] > 0);
+  const total = bankIds.length, R = 52, C = 2 * Math.PI * R;
+  let acc = 0;
+  const arcs = segs.map(([, n, cls], i) => {
+    const len = n / total * C, a = sv("circle", { cx: 64, cy: 64, r: R, class: "dn " + cls, "stroke-dasharray": `${Math.max(0, len - 2)} ${C}`, "stroke-dashoffset": String(-acc), transform: "rotate(-90 64 64)" });
+    a.style.animationDelay = `${i * 120}ms`; acc += len; return a;
+  });
+  const pct = Math.round(matched / total * 100);
+  const donut = el("div", { class: "dn-wrap" },
+    sv("svg", { viewBox: "0 0 128 128", class: "dn-svg", role: "img", "aria-label": `${matched} of ${total} bank transactions matched` },
+      sv("circle", { cx: 64, cy: 64, r: R, class: "dn-track" }), arcs),
+    el("div", { class: "dn-mid" }, el("b", {}, counter("cov-pct", pct, (n) => `${n}%`)), el("span", {}, "matched")));
+  const legend = el("ul", { class: "dn-legend" }, segs.map(([k, n, cls]) =>
+    el("li", {}, el("span", { class: "lg " + cls }), el("span", { class: "k" }, k), el("b", {}, String(n)))),
+    el("li", { class: "tot" }, el("span", { class: "k" }, "Bank transactions"), el("b", {}, String(total))));
+  const mx = Math.max(Math.abs(r.bank_net_cents), Math.abs(r.ledger_net_cents), 1);
+  const bar = (k, v, cls) => el("div", { class: "nb" }, el("div", { class: "nb-k" }, el("span", {}, k), el("b", {}, usd(v))),
+    el("div", { class: "nb-t" }, (() => { const f = el("i", { class: cls }); f.style.width = `${Math.abs(v) / mx * 100}%`; return f; })()));
+  return el("div", {},
+    el("div", { class: "dn-row" }, donut, legend),
+    el("div", { class: "nb-box" }, bar("Bank net", r.bank_net_cents, "b"), bar("Ledger net", r.ledger_net_cents, "l"),
+      el("div", { class: "nb-sum" }, el("span", {}, "Variance ", el("b", {}, usd(r.variance_cents))),
+        el("span", {}, "Unexplained ", el("b", { class: r.unexplained_variance_cents ? "bad" : "good" }, usd(r.unexplained_variance_cents))))));
+}
+
 // ---------------- overview dashboard ----------------
 function greeting() { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; }
 async function renderOverview() {
@@ -214,33 +375,63 @@ async function renderOverview() {
   const next = !st.uploads ? ["Upload this period's files", "import"] : !(st.bank && st.ledger) ? ["Add the bank statement and ledger", "import"]
     : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
   const done = st.runs && !st.open_exceptions;
-  put("ov-hero", el("div", {}, el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
+  put("ov-hero",
+    el("div", { class: "hero-l" },
+      el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
       el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "muted small" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
-    el("div", { class: "next" }, el("span", { class: "muted small" }, "Next step"),
-      done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
-      el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →")));
+      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
+    el("div", { class: "next" }, el("span", { class: "next-k" }, "Next step"),
+      el("div", { class: "next-btns" },
+        done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
+        el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →"))));
   const r = S.run && S.run.result;
   const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
   const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
+  const nSrc = SOURCE_KINDS.filter((k) => st[k]).length;
+  const decided = r ? r.exceptions.length - st.open_exceptions : 0;
+  const vSeries = r && S.run.id === st.last_run ? varianceSeries(S.run) : null;
   put("ov-kpis",
-    tile("Sources imported", `${SOURCE_KINDS.filter((k) => st[k]).length} / ${SOURCE_KINDS.length}`, "", st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed"),
-    tile("Matched automatically", r ? `${r.matches.length}` : "–", r ? "good" : "", r ? `${pct}% of ${bankLines} bank transactions` : "no run yet"),
-    tile("Awaiting review", r ? st.open_exceptions : "–", r && st.open_exceptions ? "amb" : r ? "good" : "", r ? `${r.exceptions.length} raised in total` : ""),
-    tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
-    tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
+    kpiCard({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "",
+      value: el("span", {}, counter("k-src", nSrc, String), ` / ${SOURCE_KINDS.length}`),
+      sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
+      viz: el("div", { class: "segs", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }),
+    kpiCard({ icon: "matched", label: "Matched automatically", tone: r ? "good" : "",
+      value: r ? counter("k-m", r.matches.length, String) : "–",
+      sub: r ? `${pct}% of ${bankLines} bank transactions` : "no run yet", viz: r ? ring(pct / 100, "ok") : null }),
+    kpiCard({ icon: "review", label: "Awaiting review", tone: r && st.open_exceptions ? "amb" : r ? "good" : "",
+      value: r ? counter("k-o", st.open_exceptions, String) : "–",
+      sub: r ? `${r.exceptions.length} raised in total` : "",
+      viz: r && r.exceptions.length ? (() => { const b = el("div", { class: "split", title: `${decided} decided · ${st.open_exceptions} open` });
+        const d = el("i", { class: "d" }); d.style.width = `${decided / r.exceptions.length * 100}%`; b.append(d); return b; })() : null }),
+    kpiCard({ icon: "variance", label: "Variance", value: r ? counter("k-v", r.variance_cents, usd) : "–",
+      sub: r ? "bank net minus ledger net" : "", viz: vSeries ? sparkline(vSeries, r.variance_cents < 0 ? "neg" : "") : null }),
+    kpiCard({ icon: "unexplained", label: "Unexplained", tone: r ? (r.unexplained_variance_cents ? "bad" : "good") : "",
+      value: r ? counter("k-u", r.unexplained_variance_cents, usd) : "–", sub: r ? "after review items" : "",
+      viz: r ? el("span", { class: "chip " + (r.unexplained_variance_cents ? "bad" : "good") }, r.unexplained_variance_cents ? "Needs attention" : "Fully explained") : null }));
+  const cur = r && S.run.id === st.last_run;
+  $("ov-charts").classList.toggle("hidden", !cur);
+  if (cur) { put("ov-flow", cashFlowChart(S.run)); put("ov-cover", coverageChart(S.run)); }
   renderCaseCards(r && S.run.id === st.last_run ? r : null);
   if (isActive("home")) { try { await renderEvidence(); } catch (_) { /* counts fall back to last loaded */ } }
   const ev = S.events || [];
   const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
-  put("ov-gov", el("div", { class: "kpis" }, [["ALLOW", cnt("ALLOW")], ["ESCALATE", cnt("ESCALATE")], ["DENY", cnt("DENY")], ["Evidence", S.verify || "–"]]
-      .map(([k, v]) => el("div", { class: "kpi" }, el("div", { class: "k" }, k), el("div", { class: "v" }, el("span", { class: "badge " + (k === "Evidence" ? v : k) }, String(v)))))),
-    el("div", { class: "muted small" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
+  const govN = [["ALLOW", cnt("ALLOW"), "Allowed"], ["ESCALATE", cnt("ESCALATE"), "Sent to a person"], ["DENY", cnt("DENY"), "Blocked"]];
+  const govT = govN.reduce((a, x) => a + x[1], 0);
+  put("ov-gov",
+    el("div", { class: "gv-bar", "aria-hidden": "true" }, govN.map(([k, n]) => { const i = el("i", { class: k }); i.style.flexGrow = String(n); return n ? i : null; })),
+    el("ul", { class: "gv-list" }, govN.map(([k, n, label]) =>
+      el("li", {}, el("span", { class: "badge " + k }, k), " ", el("b", { class: "gv-n" }, String(n)), el("span", { class: "gv-l" }, label),
+        el("span", { class: "gv-p" }, govT ? `${Math.round(n / govT * 100)}%` : "–")))),
+    el("div", { class: "gv-ev" }, el("span", {}, "Evidence chain"), el("span", { class: "badge " + (S.verify || "") }, S.verify || "–"),
+      el("span", { class: "muted small" }, `${ev.length} signed event${ev.length === 1 ? "" : "s"}`)),
+    el("div", { class: "muted small gv-note" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
   const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
-  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => el("li", {}, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)),
-    el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)} `,
-      el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0]),
-      e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
+  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => { const dec = String(e.policy_decision).split(":")[0];
+    return el("li", { class: "tl " + dec }, el("span", { class: "tl-dot" }),
+      el("div", { class: "tl-b" },
+        el("div", { class: "tl-h" }, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)}`),
+        el("div", { class: "tl-m" }, el("span", { class: "badge " + dec }, dec), e.policy_id ? el("span", { class: "rid" }, e.policy_id) : null, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)))));
+  }));
   if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
   await loadAgents();
 }
@@ -263,6 +454,8 @@ function renderCaseCards(r) {
           onkeydown: (ev) => { if (ev.key === "Enter") openCase((xs.find(isOpen) || xs[0]).id); } },
         el("div", { class: "cc-k" }, CASE_STATUS[k] || nice(k), el("span", { class: "badge " + (open ? "OPEN" : "ACCEPTED") }, open ? `${open} open` : "decided")),
         el("div", { class: "cc-v" }, usd(xs.reduce((s, x) => s + Math.abs(x.amount_cents), 0))),
+        (() => { const all = r.exceptions.reduce((s, x) => s + Math.abs(x.amount_cents), 0) || 1, b = el("div", { class: "cc-bar" }), f = el("i", {});
+          f.style.width = `${xs.reduce((s, x) => s + Math.abs(x.amount_cents), 0) / all * 100}%`; b.append(f); return b; })(),
         el("div", { class: "cc-list" }, xs.map((x) => caseLink(x.id, `${x.case_id || x.id} · ${TYPE_LABEL[x.type] || nice(x.type)}`))));
     })));
 }
@@ -411,7 +604,7 @@ async function openTrace(id) {
     t.related.length ? [el("div", { class: "th-sec" }, "Linked records", el("span", { class: "pl-n" }, t.related.length)),
       el("div", { class: "xrs" + (t.related.length > 1 ? " grid2" : "") }, t.related.map((r) => recCard(r.id, KIND_SHORT[r.kind] || labelFor(r.id))))] : null,
     el("details", { class: "xd th-ev" }, el("summary", {}, `Signed audit records (${t.events.length})`),
-      el("div", { class: "muted small", style: "margin:8px 0" }, `Each record is chained to the one before and signed. Whole chain: ${t.chain.reason}.`),
+      el("div", { class: "muted small my8" }, `Each record is chained to the one before and signed. Whole chain: ${t.chain.reason}.`),
       el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, ["#", "Time (UTC)", "Who", "Action", "Decision", "Record hash"].map((h) => el("th", {}, h))),
         t.events.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)), el("td", {}, niceActor(e.actor_id)), el("td", {}, nice(e.action)),
           el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0])), el("td", { class: "mono" }, e.event_hash.slice(0, 16) + "…")))))));
@@ -995,7 +1188,7 @@ function renderExceptions() {
   const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length));
   if (!shown.length) return put("exc-list", bar, S.excFilter === "open"
     ? el("div", { class: "empty" }, el("b", {}, "Every item has a decision"), el("span", {}, "This period is ready to report."),
-        el("button", { class: "primary", style: "margin-top:10px", onclick: () => go("reports") }, "Download the reports →"))
+        el("button", { class: "primary mt10", onclick: () => go("reports") }, "Download the reports →"))
     : empty("No decided items yet", "Decisions appear here once a reviewer approves, rejects or returns an item."));
   put("exc-list", bar, shown.map((x) => {
     const note = el("textarea", { rows: 2, placeholder: "Add a note (saved with your name in the audit trail)", "aria-label": "Review note" });
@@ -1323,7 +1516,7 @@ function nodeFor(a, i) {
 }
 function renderPipelines() {
   const d = S.agents, an = S.anim;
-  const skeleton = () => el("div", {}, el("span", { class: "skel", style: "width:60%" }), el("span", { class: "skel", style: "width:90%" }), el("span", { class: "skel", style: "width:40%" }));
+  const skeleton = () => el("div", {}, el("span", { class: "skel w60" }), el("span", { class: "skel w90" }), el("span", { class: "skel w40" }));
   let active = 0, total = d ? d.agents.length : 6, track = null;
   if (d) {
     const nodes = d.agents.map(nodeFor);
