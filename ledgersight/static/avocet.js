@@ -1152,18 +1152,27 @@ function renderWorkflow() {
 const STAGE_BADGE = { DONE: "ACCEPTED", BLOCKED: "BLOCKED", NOT_RUN: "IDLE" };
 function renderStages() {
   const st = S.run && S.run.stages;
-  if (!st || !st.length) return put("stages", el("div", { class: "muted small" }, S.run ? "This run was created before stage tracking; run reconciliation again to see each stage."
-    : "Run a reconciliation to see Intake, Validate, Map, Reconcile, Exception and Complete with their real outputs."));
+  if (!st || !st.length) {
+    put("stages-sum", el("span", { class: "muted" }, S.run ? "not tracked for this run" : "no run yet"));
+    return put("stages", el("div", { class: "muted small" }, S.run ? "This run was created before stage tracking; run reconciliation again to see each stage."
+      : "Run a reconciliation to see Intake, Validate, Map, Reconcile, Exception and Complete with their real outputs."));
+  }
   const open = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
-  put("stages", el("ol", { class: "stages" }, st.map((s, i) => el("li", { class: "stage " + s.status },
-      el("div", { class: "sg-head" }, el("span", { class: "sg-n" }, String(i + 1)), el("b", {}, s.stage),
-        el("span", { class: "badge " + (s.stage === "Complete" && open ? "OPEN" : STAGE_BADGE[s.status] || "IDLE") },
-          s.stage === "Complete" && open ? `${open} open` : nice(s.status))),
-      el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
-        ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
-      s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null,
-      el("div", { class: "sg-meta muted" }, `${s.agents.join(" + ")} · ${(s.step_ids || []).join(", ")}`)))),
-    el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
+  const state = (s) => (s.stage === "Complete" && open ? "open" : s.status === "DONE" ? "done" : s.status === "BLOCKED" ? "blocked" : "idle");
+  // One-line view: all six stages visible at a glance; details expand below.
+  put("stages-sum", st.map((s) => el("span", { class: "sf-st " + state(s) }, el("i", { "aria-hidden": "true" }), s.stage,
+    s.stage === "Complete" && open ? el("em", {}, `${open} open`) : null)));
+  put("stages", el("ol", { class: "stages stl" }, st.map((s, i) => el("li", { class: "stage " + s.status + " st-" + state(s) },
+      el("span", { class: "stl-dot", "aria-hidden": "true" }, state(s) === "done" ? "✓" : String(i + 1)),
+      el("div", { class: "stl-main" },
+        el("div", { class: "sg-head" }, el("b", {}, s.stage),
+          el("span", { class: "badge " + (s.stage === "Complete" && open ? "OPEN" : STAGE_BADGE[s.status] || "IDLE") },
+            s.stage === "Complete" && open ? `${open} open` : nice(s.status))),
+        el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
+          ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
+        s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null),
+      el("div", { class: "sg-meta" }, el("span", {}, s.agents.join(" + ")), el("span", { class: "mono" }, (s.step_ids || []).join(", ")))))),
+    el("div", { class: "muted small stl-foot" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
 }
 function renderRun() {
   renderWorkflow(); renderReadiness(); renderStages();

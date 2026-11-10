@@ -119,7 +119,7 @@
   const sweep = () => Object.values(CJ.instances || {}).forEach((ch) => { if (!ch.canvas || !ch.canvas.isConnected) ch.destroy(); });
   const vgrad = (color, a1, a2) => (ctx) => {
     const { chart } = ctx, area = chart.chartArea;
-    if (!area) return color;
+    if (!area || !(area.bottom > area.top)) return color;
     const v = ctx.raw || 0, g = chart.ctx.createLinearGradient(0, v >= 0 ? area.top : area.bottom, 0, chart.scales.y.getPixelForValue(0));
     g.addColorStop(0, CJ.helpers.color(color).alpha(a1).rgbString()); g.addColorStop(1, CJ.helpers.color(color).alpha(a2).rgbString());
     return g;
@@ -213,7 +213,7 @@
     canvas.setAttribute("aria-label", `Running variance from ${fmtDate(dates[0])} to ${fmtDate(dates[last])}, ending at ${usd(values[last])}; lowest ${usd(lo)} on ${fmtDate(dates[loI])}`);
     box.append(canvas);
     const zeroFill = (color, up) => (ctx) => {
-      const { chart } = ctx, a = chart.chartArea; if (!a) return color;
+      const { chart } = ctx, a = chart.chartArea; if (!a || !(a.bottom > a.top)) return color;
       const y0 = chart.scales.y.getPixelForValue(0), g = chart.ctx.createLinearGradient(0, up ? a.top : a.bottom, 0, y0);
       g.addColorStop(0, CJ.helpers.color(color).alpha(0.32).rgbString()); g.addColorStop(1, CJ.helpers.color(color).alpha(0.02).rgbString());
       return g;
@@ -236,7 +236,7 @@
       data: { labels: dates.map(fmtDate), datasets: [{
         data: values.map((v) => v / 100), cents: values, borderWidth: 2.2, cubicInterpolationMode: "monotone",
         borderColor: (ctx) => {   // hard colour stop at zero: blue above, red below
-          const { chart } = ctx, a = chart.chartArea; if (!a) return col.accent;
+          const { chart } = ctx, a = chart.chartArea; if (!a || !(a.bottom > a.top)) return col.accent;
           const f = Math.min(1, Math.max(0, (chart.scales.y.getPixelForValue(0) - a.top) / (a.bottom - a.top)));
           const g = chart.ctx.createLinearGradient(0, a.top, 0, a.bottom);
           g.addColorStop(0, col.accent); g.addColorStop(f, col.accent); g.addColorStop(f, col.bad); g.addColorStop(1, col.bad);

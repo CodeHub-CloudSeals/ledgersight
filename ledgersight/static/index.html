@@ -173,10 +173,10 @@
         <div id="rc-pipeline"></div>
         <div id="workflow" class="hidden"></div>
       </div>
-      <div class="card gap" id="stages-card">
-        <div class="card-title">Run stages <span class="muted small">Intake → Validate → Map → Reconcile → Exception → Complete</span></div>
+      <details class="card gap stages-fold" id="stages-card">
+        <summary><span class="sf-t">Run stages</span><span id="stages-sum" class="sf-sum"></span><span class="sf-more">Details</span></summary>
         <div id="stages"></div>
-      </div>
+      </details>
       <div class="grid two gap">
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
         <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Select a matched row to compare the bank and ledger lines.</div></div>
