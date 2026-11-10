@@ -1194,3 +1194,37 @@ body.ask-open .ask-fab{opacity:0;pointer-events:none;transform:scale(.8)}
 .upr.st-refused .upr-ico,.upr.st-refused .upr-badge{background:var(--bad-bg);color:var(--bad);border-color:var(--bad-line)}
 .upr.st-refused .upr-detail{color:var(--bad)}
 .upr-foot{padding:10px 14px;border-top:1px solid var(--bad-line);background:var(--bad-bg);color:var(--text-2)}
+
+/* ---- Polish (11/11): matched table, run stages details, review type filter, overview cards ---- */
+/* Matched automatically: fixed columns that always fit; each id shows its date + description */
+.match-table{width:100%;table-layout:fixed}
+.match-table col.mc-bank{width:31%}.match-table col.mc-ledger{width:27%}.match-table col.mc-amt{width:15%}.match-table col.mc-why{width:27%}
+.match-table td,.match-table th{overflow-wrap:anywhere;vertical-align:top}
+.m-sub{font-size:11.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-rule{display:block;font-size:12.5px;color:var(--text)}
+.m-why{color:var(--muted);margin-top:2px}
+/* Run stages: plain summaries; agent codes / step / trace ids only when "Show technical details" is on */
+#stages .sg-meta{display:none}
+#stages.show-ids .sg-meta{display:block}
+#stages .sg-meta>div{margin-top:4px}
+.sg-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#stages .sg-ids{display:none}
+#stages.show-ids .sg-ids{display:inline}
+/* Review queue: type filter row */
+.exc-types{margin-top:-6px;align-items:center}
+.exc-types>.muted{margin-right:2px}
+/* Overview: six case groups fit on one line; decided groups get a green edge like decided review items */
+.case-grid{grid-template-columns:repeat(auto-fit,minmax(165px,1fr))}
+.case-card:not(.open){border-left-color:var(--ok-solid)}
+/* Matched table: Amount gets a fixed width that always fits "-$12,345.00"; clear gap before "Why matched" */
+.match-table col.mc-bank{width:30%}.match-table col.mc-ledger{width:26%}.match-table col.mc-amt{width:118px}.match-table col.mc-why{width:auto}
+.match-table td.num,.match-table th:nth-child(3){white-space:nowrap;text-align:right;padding-right:22px}
+.match-table td:nth-child(4),.match-table th:nth-child(4){padding-left:14px;border-left:1px solid var(--line)}
+/* Reconciliation: give "Matched automatically" more of the row than "Source detail" (wide screens only) */
+@media (min-width:981px){#p-recon .grid.two{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+.match-table col.mc-bank{width:27%}.match-table col.mc-ledger{width:24%}.match-table col.mc-amt{width:112px}
+@media (min-width:981px) and (max-width:1199px){#p-recon .grid.two{grid-template-columns:minmax(0,1fr)}} /* small laptops: Source detail goes under the table */
+/* No visible scrollbars anywhere (page, sidebar, tables, lists, Ask panel). Scrolling still works with the
+   mouse wheel, trackpad, keyboard and touch; only the bars are hidden. */
+html,body,*{scrollbar-width:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{display:none;width:0;height:0}

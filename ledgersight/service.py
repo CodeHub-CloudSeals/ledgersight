@@ -675,6 +675,17 @@ class Service:
     STAGE_OF_AGENT = {"AG-01": "Intake", "AG-02": "Validate · Map", "AG-03": "Reconcile", "AG-04": "Exception",
                       "AG-05": "Complete", "AG-06": "Complete"}
 
+    # Client-facing case statuses in plain words, in the order the Overview shows them.
+    CASE_ORDER = ["UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"]
+    CASE_WORDS = {"UNMATCHED": ("unmatched", "unmatched"), "DUPLICATE": ("duplicate", "duplicates"),
+                  "PARTIAL": ("partial payment", "partial payments"), "TAX_REVIEW": ("tax review", "tax reviews"),
+                  "FX_REVIEW": ("FX review", "FX reviews"), "APPROVAL_REQUIRED": ("needs approval", "need approval")}
+
+    @staticmethod
+    def _case_words(status: str, n: int) -> str:
+        one, many = Service.CASE_WORDS.get(status, (status.lower(), status.lower()))
+        return f"{n} {one if n == 1 else many}"
+
     @staticmethod
     def _stages(steps: list[dict], result: dict) -> list[dict]:
         by = {s["agent"]: s for s in steps}
@@ -686,24 +697,38 @@ class Service:
             status = ("BLOCKED" if any(s["status"] == "BLOCKED" for s in ss)
                       else "DONE" if len(ss) == len(agents) and all(s["status"] == "DONE" for s in ss) else "NOT_RUN")
             s0 = ss[0] if ss else {}
-            if name == "Validate":
-                summary = f"{s0.get('rows_in', 0)} bank and ledger rows checked: integer cents, ISO currency, dates"
+            detail = s0.get("summary", "")  # the agent's own technical summary, shown under "Technical details"
+            files: list[str] = []
+            if name == "Intake":
+                n = len(s0.get("sources") or [])
+                summary = f"{n} file{'s' if n != 1 else ''} received; every stored file re-checked and unchanged since upload" if n else detail
+            elif name == "Validate":
+                summary = f"{s0.get('rows_in', 0)} bank and ledger rows checked: amounts, currencies and dates are valid"
             elif name == "Map":
                 maps = s0.get("mappings") or {}
-                summary = (f"column mappings confirmed by a person for {sum(1 for m in maps.values() if m.get('confirmed_by'))} "
-                           f"of {len(maps)} sources: " + ", ".join(sorted(str(m.get('file')) for m in maps.values())))
+                files = sorted(str(m.get("file")) for m in maps.values())
+                summary = (f"Column mappings confirmed by a person for {sum(1 for m in maps.values() if m.get('confirmed_by'))} "
+                           f"of {len(maps)} files")
+            elif name == "Reconcile":
+                u = result.get("unexplained_variance_cents", 0)
+                summary = (f"{len(result['matches'])} matched automatically · {len(exc)} sent for review · "
+                           f"unexplained difference {'-' if u < 0 else ''}${abs(u) / 100:,.2f}")
             elif name == "Exception":
                 counts: dict[str, int] = {}
                 for e in exc:
-                    counts[e.get("client_status") or e["type"]] = counts.get(e.get("client_status") or e["type"], 0) + 1
-                summary = (f"{len(exc)} case(s) routed for CPA review: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
-                           if exc else "no exceptions")
+                    k = e.get("client_status") or "APPROVAL_REQUIRED"
+                    counts[k] = counts.get(k, 0) + 1
+                parts = [Service._case_words(k, counts[k]) for k in Service.CASE_ORDER if k in counts] + \
+                        [f"{v} {k.replace('_', ' ').lower()}" for k, v in counts.items() if k not in Service.CASE_ORDER]
+                summary = (f"{len(exc)} case{'s' if len(exc) != 1 else ''} sent to a CPA reviewer: " + " · ".join(parts)
+                           if exc else "No exceptions: nothing needs a person")
             elif name == "Complete":
                 summary = (f"Reports ready; {len(open_)} case(s) still awaiting a CPA decision, so they are not complete"
                            if open_ else "Reports ready; every case has a CPA decision")
             else:
-                summary = s0.get("summary", "")
+                summary = detail
             out.append({"stage": name, "agents": list(agents), "status": status, "summary": summary,
+                        "detail": detail, "files": files,
                         "step_ids": [s["step_id"] for s in ss], "trace_id": s0.get("trace_id"),
                         "case_ids": [e.get("case_id") for e in exc] if name == "Exception" else []})
         return out

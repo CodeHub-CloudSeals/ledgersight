@@ -217,9 +217,30 @@ def test_sources_upload_card_has_no_empty_block_under_the_connector():
     assert "#p-import #dz-target{flex:1 1 auto;" in css
 
 
-def test_sidebar_has_no_visible_scrollbar():
+def test_polish_matched_table_stages_review_filter_overview():
+    js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
+    css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    # matched table: fixed columns (no sideways scroll), id + date + description, short reason
+    assert 'class: "match-table"' in js and ".match-table{width:100%;table-layout:fixed}" in css
+    assert "function shortWhy(m)" in js and '"Why matched"' in js
+    # run stages: technical ids behind a toggle
+    assert "Show technical details" in js and "#stages.show-ids .sg-meta{display:block}" in css
+    # review queue: type filter, cleared when a case is opened from elsewhere
+    assert '"All types"' in js and js.count("S.excType = null") >= 3
+    # overview: six case groups on one line; no industry under the client name; review subtitle is accurate
+    assert ".case-grid{grid-template-columns:repeat(auto-fit,minmax(165px,1fr))}" in css
+    assert "[w.industry, w.period]" not in js
+    assert "suggested next step" not in html.split('id="p-exceptions"', 1)[1].split("</section>", 1)[0]
+
+
+def test_no_visible_scrollbars_anywhere():
+    """No scrollbars in the app (page, sidebar, tables, lists); scrolling itself still works."""
     css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
     assert ".sidebar{scrollbar-width:none}.sidebar::-webkit-scrollbar{display:none}" in css
+    assert "html,body,*{scrollbar-width:none}" in css
+    assert "*::-webkit-scrollbar{display:none;width:0;height:0}" in css
+    assert ".tablewrap{scrollbar-width:thin" not in css  # the earlier thin-bar style is gone
 
 
 def test_login_page_uses_the_shield_design():

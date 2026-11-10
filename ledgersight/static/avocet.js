@@ -231,7 +231,7 @@ async function renderOverview() {
   const done = st.runs && !st.open_exceptions;
   put("ov-hero", el("div", {}, el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
       el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "muted small" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
+      el("div", { class: "muted small" }, proper(w.period || ""))),
     el("div", { class: "next" }, el("span", { class: "muted small" }, "Next step"),
       done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
       el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →")));
@@ -976,6 +976,16 @@ function renderWorkflow() {
         el("div", { class: "meta" }, `TrustOps ${s.decision} · ${s.policy_id} ${nice(s.policy_name)} · tool ${nice(s.action)} · step ${s.step_id}`)),
       el("div", { class: "nums" }, el("span", { class: "badge " + s.decision }, s.decision), el("div", {}, `${s.rows_in} in → ${s.rows_out} out`), el("div", {}, `${s.duration_ms} ms`))))));
 }
+// The key fact behind a match, short enough for the table ("Ref INV-1001 · same day"). The full sentence from the
+// matching engine stays in the cell's tooltip and in Source detail.
+function shortWhy(m) {
+  const ref = (m.why.match(/reference '([^']+)'/) || [])[1];
+  const gap = +((m.why.match(/date gap (\d+)d/) || [])[1] || NaN);
+  const when = isNaN(gap) ? "" : gap === 0 ? "same day" : `${gap} day${gap === 1 ? "" : "s"} apart`;
+  if (ref) return [`Ref ${ref}`, when].filter(Boolean).join(" · ");
+  if (m.rule_id === "R2_AMOUNT_DATE") return "Only match for this amount within 3 days · reference differs";
+  return m.why;
+}
 // The six customer-facing stages of the run, from the server (never drawn from fixed text).
 const STAGE_BADGE = { DONE: "ACCEPTED", BLOCKED: "BLOCKED", NOT_RUN: "IDLE" };
 function renderStages() {
@@ -990,8 +1000,15 @@ function renderStages() {
       el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
         ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
       s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null,
-      el("div", { class: "sg-meta muted" }, `${s.agents.join(" + ")} · ${(s.step_ids || []).join(", ")}`)))),
-    el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
+      // technical details: agent codes, step / trace ids, the agent's own wording and the files (hidden by default)
+      el("div", { class: "sg-meta muted" }, `${s.agents.join(" + ")} · ${(s.step_ids || []).join(", ")}`,
+        s.detail && s.detail !== s.summary ? el("div", {}, s.detail) : null,
+        s.files && s.files.length ? el("div", {}, "Files: " + s.files.join(", ")) : null)))),
+    el("div", { class: "sg-foot" },
+      el("button", { class: "linkbtn", "aria-expanded": String(!!S.stageIds), onclick: () => { S.stageIds = !S.stageIds; renderStages(); } },
+        S.stageIds ? "Hide technical details" : "Show technical details"),
+      el("span", { class: "muted small sg-ids" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`)));
+  $("stages").classList.toggle("show-ids", !!S.stageIds);
 }
 function renderRun() {
   renderWorkflow(); renderReadiness(); renderStages();
@@ -1002,10 +1019,21 @@ function renderRun() {
     tile("Variance", usd(r.variance_cents), r.variance_cents ? "amb" : "good"),
     tile("Variance unexplained", usd(r.unexplained_variance_cents), r.unexplained_variance_cents ? "bad" : "good"),
     tile("Matched automatically", r.matches.length, "good"), tile("Exceptions to review", open, open ? "amb" : "good"));
-  put("matches", el("table", {}, el("tr", {}, ["Bank", "Ledger", "Amount", "Rule · why"].map((h) => el("th", {}, h))),
-    r.matches.map((m) => el("tr", { class: "click", ondblclick: () => openTrace(m.bank_id), onclick: () => put("detail", el("div", { class: "row" }, el("button", { class: "secondary", onclick: () => openTrace(m.bank_id) }, "Trace " + m.bank_id + " end to end →")), el("div", { class: "side" }, srcBox(m.bank_id, "Bank"), srcBox(m.ledger_id, "Ledger")), el("div", { class: "sugg" }, el("span", { class: "rid" }, m.rule_id), ": ", rich(m.why, false))) },
-      el("td", {}, el("span", { class: "rid" }, m.bank_id)), el("td", {}, el("span", { class: "rid" }, m.ledger_id)), el("td", { class: "num" }, usd(m.amount_cents)),
-      el("td", { class: "small" }, el("span", { class: "rule-id" }, m.rule_id), rich(m.why))))));
+  // Fixed column widths so the table always fits its card (no sideways scroll, nothing cut off). Each id carries
+  // its date and description underneath, so "PDF-001" reads as a real transaction.
+  const MATCH_RULE = { R1_EXACT_REF: "Exact match", R2_AMOUNT_DATE: "Amount & date match" };
+  const idCell = (id) => { const l = line(id) || {};
+    return el("td", { title: [l.date, l.description].filter(Boolean).join(" · ") }, el("span", { class: "rid" }, id),
+      l.date ? el("div", { class: "m-sub" }, l.date) : null, l.description ? el("div", { class: "m-sub m-desc" }, l.description) : null); };
+  put("matches", el("table", { class: "match-table" },
+    el("colgroup", {}, el("col", { class: "mc-bank" }), el("col", { class: "mc-ledger" }), el("col", { class: "mc-amt" }), el("col", { class: "mc-why" })),
+    el("tr", {}, ["Bank", "Ledger", "Amount", "Why matched"].map((h) => el("th", {}, h))),
+    r.matches.map((m) => el("tr", { class: "click", ondblclick: () => openTrace(m.bank_id), onclick: (ev) => {
+        document.querySelectorAll("#matches tr.sel-row").forEach((t) => t.classList.remove("sel-row")); ev.currentTarget.classList.add("sel-row");
+        put("detail", el("div", { class: "row" }, el("button", { class: "secondary", onclick: () => openTrace(m.bank_id) }, "Trace " + m.bank_id + " end to end →")), el("div", { class: "side" }, srcBox(m.bank_id, "Bank"), srcBox(m.ledger_id, "Ledger")), el("div", { class: "sugg" }, el("span", { class: "rid" }, m.rule_id), ": ", rich(m.why, false))); } },
+      idCell(m.bank_id), idCell(m.ledger_id), el("td", { class: "num" }, usd(m.amount_cents)),
+      el("td", { class: "small", title: `${m.rule_id}: ${m.why}` }, el("b", { class: "m-rule" }, MATCH_RULE[m.rule_id] || nice(m.rule_id)),
+        el("div", { class: "m-why" }, shortWhy(m)))))));
 }
 const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), sub ? el("div", { class: "s" }, sub) : null);
 
@@ -1040,13 +1068,22 @@ function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
   if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
   const reviewer = S.me.role === "owner_reviewer";
-  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; }
+  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; S.excType = null; }
   const all = S.run.result.exceptions, isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
   const nOpen = all.filter(isOpen).length;
-  const shown = all.filter((x) => S.excFilter === "all" || (S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x)));
+  const byStatus = all.filter((x) => S.excFilter === "all" || (S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x)));
+  // Second filter: problem type (Unmatched, Duplicate, Partial, Tax review, FX review, Approval required).
+  const typeOf = (x) => x.client_status || "APPROVAL_REQUIRED";
+  if (S.excType && !byStatus.some((x) => typeOf(x) === S.excType)) S.excType = null;
+  const shown = byStatus.filter((x) => !S.excType || typeOf(x) === S.excType);
   const chip = (k, label, n) => el("button", { class: "pl-chip" + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
     onclick: () => { S.excFilter = k; S.excSeen = new Set(); renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
-  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length));
+  const tchip = (k, label, n) => el("button", { class: "pl-chip t-chip" + (S.excType === k ? " on" : ""), "aria-pressed": String(S.excType === k),
+    onclick: () => { S.excType = k; renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
+  const types = CASE_ORDER.filter((k) => byStatus.some((x) => typeOf(x) === k));
+  const bar = el("div", {}, el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length)),
+    types.length > 1 ? el("div", { class: "pl-chips exc-filter exc-types" }, el("span", { class: "muted small" }, "Type"),
+      tchip(null, "All types", byStatus.length), types.map((k) => tchip(k, CASE_STATUS[k] || nice(k), byStatus.filter((x) => typeOf(x) === k).length))) : null);
   if (!shown.length) return put("exc-list", bar, S.excFilter === "open"
     ? el("div", { class: "empty" }, el("b", {}, "Every item has a decision"), el("span", {}, "This period is ready to report."),
         el("button", { class: "primary", style: "margin-top:10px", onclick: () => go("reports") }, "Download the reports →"))
@@ -1432,7 +1469,7 @@ async function replay(run) {
 }
 // Next step "Review": open the queue on the Open filter and bring the first item that needs this person into view.
 function openReview() {
-  S.excFilter = "open"; S.excSeen = new Set();
+  S.excFilter = "open"; S.excSeen = new Set(); S.excType = null;
   go("exceptions"); renderExceptions();
   const reviewer = S.me.role === "owner_reviewer";
   const pick = [...document.querySelectorAll("#exc-list .exc.OPEN, #exc-list .exc.RETURNED")]
@@ -1452,7 +1489,7 @@ function openCase(ref) {
   const x = all.find((e) => e.id === ref) || all.find((e) => e.case_id === ref) || all.find((e) => e.bank_id === ref || e.ledger_id === ref);
   if (!x) return toast(`${ref} is not a review item in run ${S.run.id}.`);
   const open = x.status === "OPEN" || x.status === "RETURNED";
-  S.excRun = S.run.id; S.excFilter = open ? "open" : "decided"; S.excSeen = new Set();
+  S.excRun = S.run.id; S.excFilter = open ? "open" : "decided"; S.excSeen = new Set(); S.excType = null;
   go("exceptions"); renderExceptions();
   const n = document.querySelector(`#exc-list [data-exc="${x.id}"]`);
   if (!n) return;

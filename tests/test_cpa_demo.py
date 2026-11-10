@@ -110,6 +110,19 @@ def test_run_shows_six_stages_with_linkage(cpa):
     assert all(m["source_record_refs"] and m["client_status"] == "MATCHED" for m in run["match_linkage"])
 
 
+def test_stage_summaries_are_plain_words_with_details_kept(cpa):
+    run = golden_run(cpa)
+    st = {s["stage"]: s for s in run["stages"]}
+    exc = st["Exception"]["summary"]
+    assert "APPROVAL_REQUIRED" not in exc and "_" not in exc and "sent to a CPA reviewer" in exc
+    assert "1 tax review" in exc and "1 FX review" in exc and "1 partial payment" in exc
+    m = st["Map"]
+    assert m["summary"].startswith("Column mappings confirmed by a person for") and ".csv" not in m["summary"]
+    assert any(f.endswith(".csv") for f in m["files"])  # file list kept for "Show technical details"
+    assert "unexplained difference $0.00" in st["Reconcile"]["summary"]
+    assert all("detail" in s for s in run["stages"])  # the agents' own technical wording is kept
+
+
 def test_complete_stage_updates_once_every_case_is_decided(cpa):
     run = golden_run(cpa)
     for e in run["result"]["exceptions"]:
