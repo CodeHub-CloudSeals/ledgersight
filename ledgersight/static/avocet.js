@@ -430,27 +430,7 @@ async function renderOverview() {
   $("ov-charts").classList.toggle("hidden", !cur);
   if (cur) { put("ov-flow", cashFlowChart(S.run)); put("ov-cover", coverageChart(S.run)); }
   renderCaseCards(r && S.run.id === st.last_run ? r : null);
-  if (isActive("home")) { try { await renderEvidence(); } catch (_) { /* counts fall back to last loaded */ } }
-  const ev = S.events || [];
-  const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
-  const govN = [["ALLOW", cnt("ALLOW"), "Allowed"], ["ESCALATE", cnt("ESCALATE"), "Sent to a person"], ["DENY", cnt("DENY"), "Blocked"]];
-  const govT = govN.reduce((a, x) => a + x[1], 0);
-  put("ov-gov",
-    el("div", { class: "gv-bar", "aria-hidden": "true" }, govN.map(([k, n]) => { const i = el("i", { class: k }); i.style.flexGrow = String(n); return n ? i : null; })),
-    el("ul", { class: "gv-list" }, govN.map(([k, n, label]) =>
-      el("li", {}, el("span", { class: "badge " + k }, k), " ", el("b", { class: "gv-n" }, String(n)), el("span", { class: "gv-l" }, label),
-        el("span", { class: "gv-p" }, govT ? `${Math.round(n / govT * 100)}%` : "–")))),
-    el("div", { class: "gv-ev" }, el("span", {}, "Evidence chain"), el("span", { class: "badge " + (S.verify || "") }, S.verify || "–"),
-      el("span", { class: "muted small" }, `${ev.length} signed event${ev.length === 1 ? "" : "s"}`)),
-    el("div", { class: "muted small gv-note" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
-  const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
-  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => { const dec = String(e.policy_decision).split(":")[0];
-    return el("li", { class: "tl " + dec }, el("span", { class: "tl-dot" }),
-      el("div", { class: "tl-b" },
-        el("div", { class: "tl-h" }, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)}`),
-        el("div", { class: "tl-m" }, el("span", { class: "badge " + dec }, dec), e.policy_id ? el("span", { class: "rid" }, e.policy_id) : null, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)))));
-  }));
-  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
+  $("ov-how").classList.toggle("hidden", !!st.uploads);  // onboarding guide until the first file is in
   await loadAgents();
 }
 // Exceptions grouped by what the client sees. Every case is a link to its detail in the review queue.
@@ -711,22 +691,8 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
   side.addEventListener("click", (e) => { if (e.target.closest(".tab")) peek(false, 0); });
   $("side-toggle").onclick = () => { on = !on; peek(false, 0); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
-// Overview sections (Summary / Agents & decisions / Setup & guide): presentation only, every block still renders.
-function ovSec(name, focus) {
-  document.querySelectorAll(".ov-tab").forEach((b) => { const on = b.dataset.sec === name;
-    b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
-  document.querySelectorAll(".ov-sec").forEach((x) => x.classList.toggle("hidden", x.dataset.sec !== name));
-  const sec = $("ovs-" + name); if (window.LSMotion && sec) LSMotion.enter(sec);
-  try { sessionStorage.setItem("ls-ov-sec", name); } catch (_) {}
-}
-document.querySelectorAll(".ov-tab").forEach((b, i, all) => {
-  b.onclick = () => ovSec(b.dataset.sec);
-  b.onkeydown = (e) => { const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!d) return;
-    e.preventDefault(); ovSec(all[(i + d + all.length) % all.length].dataset.sec, true); };
-});
-(() => { let s = null; try { s = sessionStorage.getItem("ls-ov-sec"); } catch (_) {} if (s && $("ovs-" + s)) ovSec(s); })();
 $("period-chip").onclick = () => {
-  go("home"); ovSec("setup"); const d = $("ov-profile"); d.open = true;
+  go("trust"); const d = $("ov-profile");
   setTimeout(() => { d.scrollIntoView({ behavior: REDUCE ? "auto" : "smooth", block: "center" }); $("pf-period").focus({ preventScroll: true }); }, 120);
 };
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
@@ -1419,6 +1385,30 @@ async function renderEvidence() {
         el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, niceDecision(e.policy_decision))),
         el("td", { class: "small" }, e.policy_id || ""),
         el("td", { class: "small" }, (e.source_line_refs || []).slice(0, 6).join(", ")), el("td", { class: "mono" }, e.event_hash.slice(0, 10) + "…")))));
+  renderGovSummary();
+}
+// TrustOps decisions + recent activity (top of the Audit trail page), from the signed events just loaded.
+function renderGovSummary() {
+  const ev = S.events || [];
+  const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
+  const govN = [["ALLOW", cnt("ALLOW"), "Allowed"], ["ESCALATE", cnt("ESCALATE"), "Sent to a person"], ["DENY", cnt("DENY"), "Blocked"]];
+  const govT = govN.reduce((a, x) => a + x[1], 0);
+  put("ov-gov",
+    el("div", { class: "gv-bar", "aria-hidden": "true" }, govN.map(([k, n]) => { const i = el("i", { class: k }); i.style.flexGrow = String(n); return n ? i : null; })),
+    el("ul", { class: "gv-list" }, govN.map(([k, n, label]) =>
+      el("li", {}, el("span", { class: "badge " + k }, k), " ", el("b", { class: "gv-n" }, String(n)), el("span", { class: "gv-l" }, label),
+        el("span", { class: "gv-p" }, govT ? `${Math.round(n / govT * 100)}%` : "–")))),
+    el("div", { class: "gv-ev" }, el("span", {}, "Evidence chain"), el("span", { class: "badge " + (S.verify || "") }, S.verify || "–"),
+      el("span", { class: "muted small" }, `${ev.length} signed event${ev.length === 1 ? "" : "s"}`)),
+    el("div", { class: "muted small gv-note" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
+  const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
+  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => { const dec = String(e.policy_decision).split(":")[0];
+    return el("li", { class: "tl " + dec }, el("span", { class: "tl-dot" }),
+      el("div", { class: "tl-b" },
+        el("div", { class: "tl-h" }, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)}`),
+        el("div", { class: "tl-m" }, el("span", { class: "badge " + dec }, dec), e.policy_id ? el("span", { class: "rid" }, e.policy_id) : null, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)))));
+  }));
+  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
 }
 $("ev-refresh").onclick = renderEvidence;
 $("tamper-btn").onclick = async () => {
@@ -1503,7 +1493,7 @@ $("ag-run").onclick = async (ev) => { await withBusy(ev.currentTarget, async () 
 // Drawn only from GET /agents and the run's own `workflow` steps. Nothing here is invented:
 // "working" means a request is really in flight, or a recorded step is being replayed in order;
 // every number shown (rows, decision, policy, ms) is copied from the server's response.
-const PIPE_IDS = ["ov-agents", "ag-pipeline", "rc-pipeline"];
+const PIPE_IDS = ["ag-pipeline", "rc-pipeline"];
 const STEP_MS = 420;
 const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
