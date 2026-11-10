@@ -191,6 +191,7 @@ async function progress() {
   $("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData; $("reset-btn").title = hasData ? "" : "Nothing to clear yet";
   $("page-sub").textContent = proper(w.period || "");  // top bar: client + period only
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = proper(w.name);
+  $("ws-av").textContent = proper(w.name).split(/[\s\-_.()]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("") || "–";
   S.status = st;
   renderReadiness();
   renderOverview();
@@ -1734,6 +1735,10 @@ function setAsk(open) {
 function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => $("ask-q").focus(), 120); }
 function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
 $("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
+$("tb-search").onclick = () => openAsk();
+document.addEventListener("keydown", (e) => {   // Ctrl/Cmd+K opens Ask LedgerSight (only inside the app, not on the sign-in screen)
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k" && !$("app").classList.contains("hidden")) { e.preventDefault(); S.askOpen ? $("ask-q").focus() : openAsk(); }
+});
 $("ask-close").onclick = closeAsk;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.askOpen && !document.querySelector(".overlay")) closeAsk(); });
 $("ask-drawer").inert = true;
