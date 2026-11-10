@@ -17,7 +17,6 @@
   "connectors": [
     {"id": "file-upload", "name": "File upload from this computer", "status": "VERIFIED_UPLOAD"},
     {"id": "email", "name": "Saved email (.eml) attachments", "status": "VERIFIED_UPLOAD"},
-    {"id": "sample", "name": "Synthetic sample files", "status": "SIMULATED"},
     {"id": "google-drive", "name": "Google Drive picker (read-only)", "status": "PLANNED", "env": ["GOOGLE_CLIENT_ID", "GOOGLE_API_KEY"], "status_when_configured": "LIVE_CONNECTOR"},
     {"id": "quickbooks", "name": "QuickBooks Online API", "status": "PLANNED"},
     {"id": "xero", "name": "Xero API", "status": "PLANNED"},

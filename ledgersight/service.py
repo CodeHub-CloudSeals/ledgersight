@@ -252,11 +252,19 @@ class Service:
     def workspaces_for(self, user: User):
         return [{"id": w, **WORKSPACES[w], "status": self.status(w)} for w in WORKSPACES if w in user.workspaces]
 
+    @staticmethod
+    def _batch_key(w) -> tuple:
+        """Fingerprint of the files currently imported. Same key = same inputs = same run."""
+        return tuple(w.batches[k]["sha256"] for k in sorted(w.batches))
+
     def status(self, wid):
         w = self.ws[wid]
         last = list(w.runs.values())[-1] if w.runs else None
         exc = last["result"]["exceptions"] if last else []
+        key = self._batch_key(w)
+        current = next((r["id"] for r in w.runs.values() if tuple(r.get("batch_key") or ()) == key), None) if w.batches else None
         return {**{k: k in w.batches for k in SOURCE_KINDS},
+                "up_to_date": bool(current), "current_run": current,
                 "runs": len(w.runs), "uploads": len(w.uploads),
                 "last_run": last["id"] if last else None,
                 "matched": len(last["result"]["matches"]) if last else None,
@@ -535,10 +543,10 @@ class Service:
             missing = [labels[k] for k in ("bank", "ledger") if k not in w.batches]
             raise ValueError(f"Missing: {' and '.join(missing)}. Upload and confirm "
                              f"{'it' if len(missing) == 1 else 'them'} on the Sources page, then run again.")
-        key = tuple(w.batches[k]["sha256"] for k in sorted(w.batches))
+        key = self._batch_key(w)
         for r in w.runs.values():
             if r["batch_key"] == key:
-                return r  # idempotent: same inputs, same run
+                return {**r, "reused": True}  # idempotent: same inputs, same run (nothing is run twice)
         b = w.batches
         rid = "RUN-" + uuid.uuid4().hex[:6]
         trace = "TR-" + uuid.uuid4().hex[:12]

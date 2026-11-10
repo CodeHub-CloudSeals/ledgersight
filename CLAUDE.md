@@ -10,7 +10,7 @@ Synthetic data only. Read-only: never post to a ledger, pay, or email anyone.
 - App: Run and Debug -> "LedgerSight (local demo)" (F5) -> http://127.0.0.1:8090. Launch config sets AVOCET_NO_LOGIN=1 (local demo: no login screen, "Acting as" switch
   between CPA Reviewer / Staff Preparer). Honoured only with MFA off + insecure cookie; hosted keeps login.
   Without it: user `presenter`, password from `.env` (gitignored; template `.env.example`). Upload test pack: `demo_files/` (see its README).
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-09: 186 passed, incl. tests/test_cpa_demo.py, tests/test_upload_detection.py). Keep all existing tests green; add tests for every change.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-10: 203 passed, incl. tests/test_cpa_demo.py, tests/test_upload_detection.py). Keep all existing tests green; add tests for every change.
   Use the .venv: with a user-site (Windows Store) Python, the isolated PDF subprocess (`python -I`) cannot import pdfplumber and 13 PDF tests fail.
 - State persists in AVOCET_DATA_DIR (SQLite ledgersight.db + uploaded files + signing-key.pem). Restart keeps
   everything; delete the folder for a truly empty start. AVOCET_PERSIST=0 = memory only. See PRODUCTION.md.
@@ -50,6 +50,15 @@ source envelope, proof panel on Guardrails, demo/synthetic label.
 Diana review 06/11: Ask LedgerSight is a floating button bottom-right; GET /audit-trail.{pdf,csv,xlsx,json} exports the
 whole signed audit trail (button on the Audit trail tab). NOT built here (infra/ops): C10 HTTPS domain + DNS, tenant
 URLs, sandbox pipeline, production URL, email access.
+
+## 10/11 action items (built 2026-11-10)
+Login: dark shield illustration (static/login-shield.jpg) + "Financial intelligence. Built on trust." + 3 points.
+Report logo: done by Praveen (c1c7ea1). Wrong-file refusal is a plain-words message that links to CSV templates
+(GET /v1/templates/{kind}.csv); no template row on Sources. Google sign-in refusal is generic (domain not revealed).
+Sources only links to Reconciliation; Run is disabled when status.up_to_date (same files = same run, `reused`).
+No Run button on Agents. Success messages auto-hide after 7 s. Review card: Return / Reject / Propose / Approve for
+everyone (CPA reviewers may propose: policy set 2026.11.3; approving your own proposal = DENY maker-checker).
+No suggested comments / suggested-next-step box. "Synthetic sample files" connector removed.
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else

@@ -1137,3 +1137,35 @@ body.ask-open .ask-fab{opacity:0;pointer-events:none;transform:scale(.8)}
 @media (max-height:700px){.lg-hero .login-copy p{display:none}}
 .lg-mbrand{display:none}
 @media (max-width:980px){.lg-mbrand{display:flex;justify-content:center;color:#141a3a}}
+
+/* ---- 10/11 action items: suggested comments, friendly refusals, templates ---- */
+.refused-box{margin-top:var(--sp-3);padding:12px 14px;border:1px solid var(--bad-line);background:var(--bad-bg);color:var(--text-2);border-radius:var(--r)}
+.refused-box>b{color:var(--bad)}
+.refused-box ul{margin:6px 0}
+.tpl-link{color:var(--accent);font-weight:500;text-decoration:none}
+.tpl-link:hover{text-decoration:underline}
+
+/* ---- Login: dark "shield" illustration + "Financial intelligence. Built on trust." (10/11 item 1) ---- */
+.lg-art .lg-bg{background:url("/static/login-shield.jpg") 72% center/cover no-repeat}
+.lg-art .lg-bg::after{background:linear-gradient(180deg,rgba(12,10,46,.78) 0%,rgba(12,10,46,.45) 34%,rgba(12,10,46,0) 58%),
+  linear-gradient(90deg,rgba(12,10,46,.55) 0%,rgba(12,10,46,0) 55%)}
+.lg-hero .lv-brand{color:#fff}
+.lg-hero .login-copy{max-width:560px}
+.lg-hero .login-copy h2{color:#fff;text-shadow:0 2px 24px rgba(0,0,0,.35)}
+.lg-hero .login-copy h2 .ln-accent{color:#a9b6ff}
+.lg-hero .login-copy p{color:#cfd3f6;max-width:52ch}
+.lg-rule{height:1px;background:rgba(255,255,255,.16);margin:4px 0 18px;max-width:520px}
+.lg-hero .login-points li{color:#eceafe;font-size:var(--fs);font-weight:500}
+.lg-hero .login-points li::before{background:#7cc4ff;box-shadow:0 0 0 4px rgba(124,196,255,.16)}
+.lg-card-logo{display:block;width:48px;height:48px;margin:0 0 14px}
+.lg-card-eyebrow{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.lg-side .login-card h1{font-size:26px;margin:8px 0 6px}
+@media (max-width:980px){.lg-side{background-image:url("/static/login-shield.jpg");background-position:72% center}
+  .lg-side::before{background:rgba(12,10,46,.55)}.lg-side .login-foot{color:#d5d8f5}.lg-mbrand{color:#fff}}
+/* phones: let the sign-in column shrink to the screen, solid card, no duplicate brand line (card shows the logo) */
+@media (max-width:980px){.lg-side{min-width:0;padding:24px 16px}.lg-side .lg-col{width:100%;max-width:420px;min-width:0}
+  .lg-side .login-card{background:var(--surface);backdrop-filter:none}.lg-mbrand{display:none}}
+/* Sources: the upload card matches the Source status card's height by letting the drop area fill the space
+   (no empty block under the Google Drive connector) */
+#p-import .grid.two>.card:first-child{display:flex;flex-direction:column}
+#p-import #dz-target{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px}

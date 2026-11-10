@@ -48,9 +48,10 @@ def test_wrong_content_is_refused_with_reason(cpa, path):
     r = up(cpa, path)
     assert r.status_code == 422
     d = r.json()["detail"]
-    assert "Not accepted" in d or "JSON must be a list" in d
-    if path.suffix == ".csv":
-        assert "Columns found: employee, role" in d and "missing" in d
+    assert "doesn't look like a bank statement" in d or "JSON must be a list" in d
+    if path.suffix == ".csv":  # plain words: what was found, what is needed, and where to look
+        assert "Columns found: employee, role" in d and "also needs:" in d and "template" in d
+        assert "_" not in d.split("also needs:")[1].split(".")[0]  # field names in plain words, not line_id
 
 
 @pytest.mark.parametrize("path", [DEMO / "3_messy_files" / "03_meeting_notes_should_be_refused.docx",
@@ -116,11 +117,122 @@ def test_ui_handles_cleared_data_and_offers_the_run():
     assert "staleUpload()" in body and "w.uploads.some((u) => u.id === S.upload.id)" in body
     assert "resetIntakeUi(); await switchWs();" in js  # clear all
     assert '$("clear-all").disabled = !hasData' in js and '$("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData' in js
-    for btn in ('$("run-btn").onclick', '$("ag-run").onclick'):
-        handler = js.split(btn, 1)[1][:400]
-        assert "await progress();" in handler and "if (readiness())" in handler
-    assert 'id="up-next"' in html and "Run reconciliation →" in js and "offerRun();" in js
+    handler = js.split('$("run-btn").onclick', 1)[1][:500]
+    assert "await progress();" in handler and "if (readiness())" in handler and "if (alreadyReconciled())" in handler
+    assert 'id="up-next"' in html and "Go to Reconciliation →" in js and "offerRun();" in js
     assert 'window.addEventListener("focus", syncIfStale)' in js
+
+
+def test_sources_prompt_only_navigates_and_agents_page_cannot_run():
+    """Action items 6 and 8: Sources links to Reconciliation (no auto-run); only the Reconciliation page runs."""
+    js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    offer = js.split("async function offerRun()", 1)[1].split("\n}\n", 1)[0]
+    assert 'go("recon")' in offer and "click()" not in offer
+    assert 'id="ag-run"' not in html and "Run reconciliation now" not in html and '$("ag-run")' not in js
+    assert html.count('id="run-btn"') == 1
+
+
+def test_same_files_are_not_run_twice(cpa):
+    """Action item 7: unchanged files return the same run, flagged as reused; status says it's up to date."""
+    cpa.post(WS + "/reset", headers=H)
+    for f in sorted(PACK.glob("0[12]_*")):
+        u = up(cpa, f).json()
+        cpa.post(f"{WS}/uploads/{u['id']}/mapping", headers=H, json={"mapping": u["proposed_mapping"]})
+    st = next(w for w in cpa.get("/v1/workspaces").json() if w["id"] == "client-a")["status"]
+    assert st["up_to_date"] is False and st["current_run"] is None
+    first = cpa.post(WS + "/reconciliation-runs", headers=H).json()
+    assert not first.get("reused")
+    again = cpa.post(WS + "/reconciliation-runs", headers=H).json()
+    assert again["id"] == first["id"] and again["reused"] is True
+    st = next(w for w in cpa.get("/v1/workspaces").json() if w["id"] == "client-a")["status"]
+    assert st["up_to_date"] is True and st["current_run"] == first["id"] and st["runs"] == 1
+    u = up(cpa, PACK / "03_open_invoices.csv").json()  # new file -> the run is no longer up to date
+    cpa.post(f"{WS}/uploads/{u['id']}/mapping", headers=H, json={"mapping": u["proposed_mapping"]})
+    st = next(w for w in cpa.get("/v1/workspaces").json() if w["id"] == "client-a")["status"]
+    assert st["up_to_date"] is False
+    third = cpa.post(WS + "/reconciliation-runs", headers=H).json()
+    assert third["id"] != first["id"] and not third.get("reused")
+
+
+@pytest.mark.parametrize("kind", ["bank", "ledger", "ar", "ap", "documents", "parties"])
+def test_templates_download_and_are_recognised_as_their_type(cpa, kind):
+    """Action item 5: a downloadable template per file type; uploading the template itself is recognised."""
+    r = cpa.get(f"/v1/templates/{kind}.csv")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"] and "text/csv" in r.headers["content-type"]
+    u = cpa.post(WS + "/uploads", headers=H, data={"kind": "auto"}, files={"file": (f"template_{kind}.csv", r.content)})
+    assert u.status_code == 200, u.text
+    assert u.json()["kind"] == kind
+
+
+def test_templates_need_sign_in_and_unknown_kind_404(cpa):
+    from fastapi.testclient import TestClient
+    assert TestClient(appmod.app).get("/v1/templates/bank.csv").status_code == 401
+    assert cpa.get("/v1/templates/payroll.csv").status_code == 404
+
+
+def test_review_card_buttons_and_auto_hiding_success_messages():
+    """Review card: no suggested comments / suggested-next-step box; four actions for everyone
+    (Return to preparer, Reject, Propose resolution for reviewer, Approve). Success messages auto-hide."""
+    js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
+    assert "suggestChips" not in js and "SUGGESTED_NOTES" not in js and "Suggested next step" not in js
+    row = js.split('el("div", { class: "xa-row" },', 1)[1][:900]
+    labels = ["Return to preparer", "Reject", "Propose resolution for reviewer", "Approve"]
+    assert all(l in row for l in labels) and [row.index(l) for l in labels] == sorted(row.index(l) for l in labels)
+    assert "!reviewer ? el(\"button\"" not in row  # Propose is shown to CPA reviewers too
+    m = js.split("const msg = (id, text, kind) =>", 1)[1][:400]
+    assert 'kind === "good"' in m and "setTimeout" in m and "7000" in m
+
+
+def test_templates_only_in_the_error_message_and_no_sample_connector(cpa):
+    """Sources has no template row; a wrong file gets an error message that links to the templates."""
+    js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    assert "tpl-row" not in html and "tpl-chip" not in js and "Not sure of the format" not in js
+    refusal = js.split("function refused(f, reason)", 1)[1].split("\n}\n", 1)[0]
+    assert "We couldn't use this file" in refusal and "templateLinks()" in refusal
+    conns = {c["id"] for c in cpa.get(WS + "/sources").json()["connectors"]}
+    assert "sample" not in conns and {"file-upload", "google-drive"} <= conns
+
+
+def test_sources_upload_card_has_no_empty_block_under_the_connector():
+    """The drop area grows to fill the upload card, so it matches the Source status card without a gap."""
+    css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
+    assert "#p-import .grid.two>.card:first-child{display:flex;flex-direction:column}" in css
+    assert "#p-import #dz-target{flex:1 1 auto;" in css
+
+
+def test_login_page_uses_the_shield_design():
+    """10/11 item 1: dark shield illustration, 'Financial intelligence. Built on trust.', three points, Sign in card."""
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
+    login = html.split('id="login"', 1)[1].split("</section>", 1)[0]
+    assert "Financial intelligence." in login and "Built on trust." in login
+    assert "Every transaction matched. Every decision governed. Every action evidenced." in login
+    assert login.count('<li class="m-in">') == 3 and "<h1 class=\"m-in\">Sign in</h1>" in login
+    assert "LedgerSight v1.0.0 · Governed by TrustOps · Read-only" in login
+    assert (ROOT / "ledgersight" / "static" / "login-shield.jpg").stat().st_size > 50_000
+    assert 'url("/static/login-shield.jpg")' in css
+
+
+def test_cpa_reviewer_can_propose_but_not_approve_own_proposal():
+    """With every Google user a CPA reviewer: reviewer A proposes -> A approving it is DENY (maker-checker);
+    reviewer B approves -> ALLOW."""
+    a = make_user("reviewer-a@demo.test", "owner_reviewer", ["client-a"])
+    b = make_user("reviewer-b@demo.test", "owner_reviewer", ["client-a"])
+    a.post(WS + "/reset", headers=H)
+    for f in sorted(PACK.glob("0[12]_*")):
+        u = up(a, f).json()
+        a.post(f"{WS}/uploads/{u['id']}/mapping", headers=H, json={"mapping": u["proposed_mapping"]})
+    run = a.post(WS + "/reconciliation-runs", headers=H).json()
+    e = next(x for x in run["result"]["exceptions"] if x["bank_id"] == "HB006")
+    base = f"{WS}/runs/{run['id']}/exceptions/{e['id']}"
+    p = a.post(base + "/proposals", headers=H, json={"note": "vendor bill on file"})
+    assert p.status_code == 200 and p.json()["proposed_by"] == "reviewer-a@demo.test"
+    own = a.post(base + "/decisions", headers=H, json={"decision": "ACCEPT", "note": ""})
+    assert own.status_code == 403 and own.json()["detail"]["reason_code"] == "MAKER_CHECKER_SELF_APPROVAL"
+    ok = b.post(base + "/decisions", headers=H, json={"decision": "ACCEPT", "note": "agreed"})
+    assert ok.status_code == 200 and ok.json()["status"] == "ACCEPTED" and ok.json()["reviewer"] == "reviewer-b@demo.test"
 
 
 def test_intake_is_upload_only_device_or_google():

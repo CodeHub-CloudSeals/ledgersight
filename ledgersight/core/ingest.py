@@ -226,6 +226,42 @@ REQUIRED = {
 
 KIND_LABEL = {"bank": "bank statement", "ledger": "general ledger", "ar": "open invoices (AR)",
               "ap": "vendor bills (AP)", "documents": "supporting documents list", "parties": "customer & vendor list"}
+# Plain names for fields, used in messages people read.
+FIELD_LABEL = {"line_id": "transaction ID", "date": "date", "amount": "amount", "currency": "currency",
+               "entry_id": "entry ID", "posted_date": "posting date", "invoice_id": "invoice number",
+               "open_balance": "open balance", "bill_id": "bill number", "doc_id": "document ID",
+               "reference": "reference", "party_id": "contact ID", "name": "name"}
+
+# Downloadable templates: the expected columns with two synthetic example rows (generic names only).
+TEMPLATES = {
+    "bank": (["line_id", "date", "description", "reference", "amount", "currency"],
+             [["TX001", "2026-10-01", "ACH CREDIT CUSTOMER 01", "INV-1001", "2450.00", "USD"],
+              ["TX002", "2026-10-02", "RENT OCT LANDLORD", "LEASE-OCT", "-1200.00", "USD"]]),
+    "ledger": (["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
+               [["GL-001", "2026-10-01", "1100 Accounts Receivable", "Customer 01 payment", "INV-1001", "2450.00", "", "USD"],
+                ["GL-002", "2026-10-02", "6100 Rent", "October rent", "LEASE-OCT", "", "1200.00", "USD"]]),
+    "ar": (["invoice_id", "customer_alias", "issue_date", "amount", "open_balance", "currency"],
+           [["INV-1001", "Customer 01", "2026-09-15", "2450.00", "2450.00", "USD"],
+            ["INV-1005", "Customer 02", "2026-09-25", "1200.00", "1200.00", "USD"]]),
+    "ap": (["bill_id", "vendor_alias", "issue_date", "amount", "open_balance", "currency"],
+           [["BILL-301", "Print Supplier", "2026-10-03", "315.00", "315.00", "USD"],
+            ["BILL-302", "Stock Media Vendor", "2026-10-20", "239.00", "239.00", "USD"]]),
+    "documents": (["doc_id", "doc_type", "reference", "vendor_alias", "amount", "file"],
+                  [["DOC-01", "vendor_invoice", "BILL-301", "Print Supplier", "315.00", "bill_301.pdf"],
+                   ["DOC-02", "receipt", "OD-7741", "Office Supplies Vendor", "245.00", "receipt_7741.pdf"]]),
+    "parties": (["party_id", "name", "type", "aliases", "ref_prefixes"],
+                [["P-CUST01", "Customer 01", "customer", "CUSTOMER 01;CUST-01", "INV-"],
+                 ["P-PRINT", "Print Supplier", "vendor", "PRINT SUPPLIER", "BILL-"]]),
+}
+
+
+def template_csv(kind: str) -> str:
+    cols, rows = TEMPLATES[kind]
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(cols)
+    w.writerows(rows)
+    return buf.getvalue()
 
 
 def detect_kind(header: list[str], rows: list[list], hint: str | None = None) -> tuple[str, dict]:
@@ -244,18 +280,20 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
             continue
         res = import_table(kind, "", b"", mapping, table=(header, rows))
         if not res.accepted:
-            first = res.rejected[0]["reason"] if res.rejected else "no rows"
-            near.append((0.5, kind, [f"rows could not be read ({first})"]))
+            first = res.rejected[0]["reason"] if res.rejected else "the file has no data rows"
+            near.append((0.5, kind, [f"readable rows (first problem: {first})"]))
             continue
         mapped = sum(1 for v in mapping.values() if v)
         fits.append((len(res.accepted) / max(1, len(rows)), mapped / len(CANONICAL[kind]), kind == hint, kind, mapping))
     if not fits:
         near.sort()
-        best = "; ".join(f"as a {KIND_LABEL[k]} it is missing {', '.join(m.replace('_', ' ') for m in miss)}"
-                         for _, k, miss in near[:2])
-        cols = ", ".join(h for h in header if h)[:200] or "(no column names)"
-        raise IngestError(f"Not accepted: this file is not a recognised finance record. Columns found: {cols}. "
-                          f"Closest matches: {best}.")
+        _, k, miss = near[0]
+        cols = ", ".join(h for h in header if h)[:200] or "none"
+        need = ", ".join(FIELD_LABEL.get(m, m.replace("_", " ")) for m in miss)
+        raise IngestError(f"This file doesn't look like a bank statement, general ledger, open invoices, vendor bills, "
+                          f"supporting documents or customer & vendor list. Columns found: {cols}. "
+                          f"The closest match is a {KIND_LABEL[k]}, which also needs: {need}. "
+                          "Download a template to see the expected columns.")
     fits.sort(reverse=True)
     top = fits[0]
     return top[3], {"method": "detected from the file's columns and rows (file name not used)" if not top[2] or len(fits) == 1

@@ -1,5 +1,5 @@
 {
-  "version": "trustops-policy-2026.11.2",
+  "version": "trustops-policy-2026.11.3",
   "owner": "TrustOps",
   "policies": [
     {"id": "POL-01", "name": "CLIENT_SCOPE", "version": "1.0", "effect": "DENY",
@@ -49,7 +49,7 @@
   "allowed_data_classes": ["synthetic"],
   "role_labels": {"owner_reviewer": "CPA reviewer", "preparer": "Staff preparer", "support": "Support"},
   "role_actions": {
-    "owner_reviewer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.decide",
+    "owner_reviewer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.propose", "exception.decide",
                        "export.read", "workspace.reset", "workspace.configure", "party.confirm", "query.ask"],
     "preparer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.propose",
                  "export.read", "party.confirm", "query.ask"],

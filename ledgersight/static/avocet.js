@@ -49,7 +49,13 @@ function niceActor(id) {
   return String(id ?? "").startsWith("agent:") ? `${nice(String(id).slice(6))} Agent` : id;
 }
 function niceDecision(d) { const [k, ...r] = String(d ?? "").split(":"); return r.length ? `${k} · ${nice(r.join(":"))}` : k; }
-const msg = (id, text, kind) => { const n = $(id); n.textContent = text || ""; n.className = "msg " + (kind || ""); };
+// Inline status line. Success ("good") messages clear themselves after a few seconds; errors stay until replaced.
+const MSG_TIMERS = {};
+const msg = (id, text, kind) => {
+  const n = $(id); n.textContent = text || ""; n.className = "msg " + (kind || "");
+  clearTimeout(MSG_TIMERS[id]);
+  if (text && kind === "good") MSG_TIMERS[id] = setTimeout(() => { if (n.textContent === text) { n.textContent = ""; n.className = "msg"; } }, 7000);
+};
 
 async function api(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "x-ledgersight": "1" }, credentials: "same-origin" };
@@ -93,13 +99,19 @@ async function onGoogleCredential(resp) {
   try {
     await api("/v1/login/google", { method: "POST", json: { credential: resp.credential } });
     await boot();
-  } catch (e) { msg("lg-msg", e.message, "err"); }
+  } catch (e) {  // never show a raw status code on the sign-in screen
+    msg("lg-msg", /^HTTP \d+$|server unreachable/.test(e.message) || !e.message
+      ? "We couldn't sign you in. Please try again, or ask your administrator for access." : e.message, "err");
+  }
 }
 async function setUpGoogleSignIn(clientId) {
   try {
     await loadScript("https://accounts.google.com/gsi/client");
     google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential });
-    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", shape: "rectangular", logo_alignment: "center", width: Math.max(220, Math.min(400, ($("lg-card").clientWidth || 440) - 62)) });
+    // The login screen may still be hidden here (card width 0): estimate the card from the screen instead, and keep
+    // the button inside the card's padding on every size.
+    const cardW = $("lg-card").clientWidth || Math.min(400, window.innerWidth - 32);
+    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", shape: "rectangular", logo_alignment: "center", width: Math.max(220, Math.min(360, cardW - 64)) });
     $("lg-google").classList.remove("hidden");
   } catch (_) { /* password sign-in still works without this */ }
 }
@@ -113,7 +125,10 @@ $("lg-btn").onclick = async () => {
     await api("/v1/login", { method: "POST", json: { user_id: $("lg-user").value.trim(), password: $("lg-pw").value, code: $("lg-code").value.trim() } });
     $("lg-pw").value = ""; $("lg-code").value = "";
     await boot();
-  } catch (e) { msg("lg-msg", e.message, "err"); }
+  } catch (e) {
+    msg("lg-msg", /^HTTP \d+$|server unreachable/.test(e.message) || !e.message
+      ? "We couldn't sign you in. Check your details and try again." : e.message, "err");
+  }
 };
 ["lg-user", "lg-pw", "lg-code"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") $("lg-btn").click(); }));
 $("logout").onclick = async () => { await api("/v1/logout", { method: "POST" }); location.reload(); };
@@ -698,8 +713,8 @@ async function offerRun() {
   }
   put("up-next", el("div", { class: "callout gap next-run" },
     el("div", {}, el("b", {}, "Files imported. Bank statement and general ledger are ready."),
-      el("div", { class: "small" }, S.status.runs ? "Run again to include the files you just added." : "Next: match the bank statement to the ledger.")),
-    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); setTimeout(() => $("run-btn").click(), 250); } }, "Run reconciliation →")));
+      el("div", { class: "small" }, "Next: open Reconciliation and run it there.")),
+    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); } }, "Go to Reconciliation →")));
 }
 function guessKind(name) {
   const n = name.toLowerCase();
@@ -719,9 +734,16 @@ const ACCEPTED_TEXT = "CSV, Excel (.xlsx), TSV, JSON, OFX/QFX/QBO bank downloads
 // Every refusal is listed in one place, so a batch of files shows exactly what was not accepted and why.
 function refused(f, reason) {
   S.refusals = (S.refusals || []).concat([{ name: f.name, reason }]);
-  put("up-refused", el("div", { class: "msg err" }, el("b", {}, "Not accepted"),
-    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`)))));
+  put("up-refused", el("div", { class: "refused-box" },
+    el("b", {}, S.refusals.length === 1 ? "We couldn't use this file" : `We couldn't use ${S.refusals.length} files`),
+    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`))),
+    el("div", { class: "small" }, "Download a template to see the expected columns: ", templateLinks())));
 }
+// The expected layout for each file type, as a CSV with two example rows.
+const TEMPLATE_KINDS = [["bank", "Bank statement"], ["ledger", "General ledger"], ["ar", "Open invoices"], ["ap", "Vendor bills"],
+  ["documents", "Supporting documents"], ["parties", "Customers & vendors"]];
+const templateLinks = () => TEMPLATE_KINDS.flatMap(([k, label], i) =>
+  [i ? " · " : null, el("a", { href: `/v1/templates/${k}.csv`, download: "", class: "tpl-link" }, label)]);
 const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 function renderHeld(held) {
   const list = held || [];
@@ -894,7 +916,11 @@ $("run-btn").onclick = async (ev) => { await withBusy(ev.currentTarget, async ()
   msg("run-msg", "");
   await progress();  // re-read the client first: a colleague may have cleared it since this page loaded
   if (readiness()) { renderReadiness(); return msg("run-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
+  if (alreadyReconciled()) { renderReadiness(); return; }  // nothing changed since the last run
+  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" }));
+    // A colleague may have run these exact files a moment ago: say so, don't pretend it ran again.
+    toast(S.run.reused ? `No changes since ${S.run.id}: showing that run. Nothing was run twice.`
+      : `Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
     renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
 }, "Running…"); renderReadiness(); };  // withBusy re-enables the button; keep it off if files are missing
@@ -1034,8 +1060,7 @@ function renderExceptions() {
         x.reason_code ? el("div", { class: "xmiss" }, el("b", {}, "Reason: "), x.reason_code) : null,
         el("div", { class: "muted small" }, x.type === "TAX_REVIEW" ? "Review required. No tax liability or amount is asserted; nothing is filed or paid."
           : "Human review. No exchange rate is invented and the payment is not auto-matched.")) : null,
-      x.suggestion ? el("div", { class: "xs" }, el("div", { class: "xs-k" }, "Suggested next step"), el("div", {}, rich(x.suggestion))) : null,
-      x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${x.proposed_by}`), el("div", {}, `“${x.proposal_note}”`)) : null,
+      x.proposed_by ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Proposed resolution · by ${x.proposed_by}`), el("div", {}, x.proposal_note ? `“${x.proposal_note}”` : "(no note)")) : null,
       x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
       el("details", { class: "xd" }, el("summary", {}, "Details"),
         el("dl", {},
@@ -1052,9 +1077,10 @@ function renderExceptions() {
             el("span", { class: "grow" }),
             el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
             el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
-            !reviewer ? el("button", { class: "primary", onclick: propose }, "Propose resolution for reviewer") : null,
+            el("button", { class: "primary", onclick: propose }, "Propose resolution for reviewer"),
             el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")),
-          el("div", { class: "xa-hint" }, reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
+          el("div", { class: "xa-hint" }, reviewer
+            ? "Propose a resolution for another CPA reviewer, or decide it yourself. You can't approve a resolution you proposed (maker-checker rule)."
             : "You propose. A CPA reviewer who didn't propose it decides."), out)
         : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}`));
   }));
@@ -1203,13 +1229,19 @@ function readiness() {
   return need.length ? el("div", { class: "callout gap" }, el("div", {},
     el("b", {}, `Upload ${need.join(" and ")} before you can run reconciliation.`),
     el("div", { class: "small" }, "Reconciliation compares the bank statement with the general ledger, so both are required. Invoices, bills and documents are optional extras. "
-      + "Test files are in the project's demo_files folder (for example demo_files/1_standard_month)."),
+      + "Demo files are in the project's demo_files/0_client1_october folder."),
     el("div", { class: "row" }, el("button", { class: "primary", onclick: () => go("import") }, "Go to Sources →")))) : null;
 }
+// The latest run already covers exactly the files imported now: running again would only return that same run.
+const alreadyReconciled = () => { const st = S.status || {}; return !!(st.bank && st.ledger && st.up_to_date); };
 function renderReadiness() {
   const box = readiness();
-  put("ag-ready", box); put("recon-ready", readiness());
-  $("ag-run").disabled = !!box; $("run-btn").disabled = !!box;
+  put("ag-ready", box);
+  const st = S.status || {};
+  put("recon-ready", readiness() || (alreadyReconciled() ? el("div", { class: "callout gap" }, el("div", {},
+    el("b", {}, `Already reconciled: ${st.current_run} covers the files imported now.`),
+    el("div", { class: "small" }, "Running again would give the same result. To run again, upload new or changed files on the Sources page."))) : null));
+  $("run-btn").disabled = !!box || alreadyReconciled();
 }
 async function renderAgents() {
   renderReadiness();
@@ -1233,16 +1265,8 @@ async function renderAgents() {
     d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small mono" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + niceActor(e.actor_id)),
       el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, niceDecision(e.decision))),
       el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
-    : empty("No agent activity yet", "Import files or press “Run reconciliation now”."));
+    : empty("No agent activity yet", "Import files on Sources, then run reconciliation on the Reconciliation page."));
 }
-$("ag-run").onclick = async (ev) => { await withBusy(ev.currentTarget, async () => {
-  msg("ag-msg", "");
-  await progress();
-  if (readiness()) { renderReadiness(); return msg("ag-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
-    renderRun(); renderExceptions(); renderResults(); renderAgents(); }
-  catch (e) { msg("ag-msg", e.message, "err"); }
-}, "Running…"); renderReadiness(); };
 
 // ---------------- agent pipeline ----------------
 // Drawn only from GET /agents and the run's own `workflow` steps. Nothing here is invented:

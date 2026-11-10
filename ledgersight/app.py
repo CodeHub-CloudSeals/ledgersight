@@ -22,6 +22,7 @@ from datetime import timedelta
 from datetime import datetime
 
 from .auth import REQUIRE_MFA, AuthStore, Invite, User, now, otpauth_uri
+from .core import ingest
 from .core.ingest import IngestError, MAX_BYTES
 from .core.reports import FORMATS as REPORT_TYPES
 from .service import FIXTURES, WORKSPACES, Denied, Service
@@ -234,6 +235,10 @@ def login(body: dict = Body(...)):
     return resp
 
 
+GOOGLE_SIGNIN_REFUSED = ("This account can't sign in to LedgerSight. Use your work Google account, "
+                         "or ask your administrator for access.")
+
+
 @app.post("/v1/login/google")
 def login_google(body: dict = Body(...)):
     if not _GL:
@@ -245,7 +250,8 @@ def login_google(body: dict = Body(...)):
     email = (claims.get("email") or "").lower()
     domain = claims.get("hd") or email.rsplit("@", 1)[-1]
     if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
-        raise HTTPException(403, f"only @{GOOGLE_LOGIN_DOMAIN} accounts can sign in this way")
+        # Generic on purpose: never reveal which domain or accounts are allowed.
+        raise HTTPException(403, GOOGLE_SIGNIN_REFUSED)
     try:
         tok = auth.google_login(email, claims.get("name") or email, set(WORKSPACES))
     except PermissionError as e:
@@ -438,6 +444,17 @@ def attempt(wid: str, body: dict = Body(...), u=Depends(current_user)):
     except ValueError as e:
         raise HTTPException(422, str(e))
     return {"decision": "ALLOW", "executed": False, "note": "Gate allowed the request; this endpoint never executes."}
+
+
+@app.get("/v1/templates/{kind}.csv")
+def template(kind: str, u=Depends(current_user)):
+    """A blank-but-for-two-examples CSV showing the columns LedgerSight expects for each file type."""
+    if kind not in ingest.TEMPLATES:
+        raise HTTPException(404, "not found")
+    names = {"bank": "bank_statement", "ledger": "general_ledger", "ar": "open_invoices", "ap": "vendor_bills",
+             "documents": "supporting_documents", "parties": "customers_and_vendors"}
+    return Response(ingest.template_csv(kind), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="template_{names[kind]}.csv"'})
 
 
 @app.get("/v1/workspaces/{wid}/sources")
