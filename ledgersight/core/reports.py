@@ -13,6 +13,7 @@ import json
 import re
 import textwrap
 from collections import Counter
+from pathlib import Path
 
 FORMATS = {"json": "application/json", "csv": "text/csv; charset=utf-8",
            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "pdf": "application/pdf"}
@@ -244,8 +245,17 @@ def to_xlsx(rep: dict) -> bytes:
     ws.sheet_view.showGridLines = False
     ws["A1"].value = rep["title"]
     ws["A1"].font = Font(size=18, bold=True, color=ink)
-    ws["A2"].value = f"Report {rep['report_id']}  ·  Run {rep['run_id']}"
+    ws["A2"].value = f"CloudSeals  ·  Report {rep['report_id']}  ·  Run {rep['run_id']}"
     ws["A2"].font = Font(size=10, color=muted)
+    try:  # CloudSeals logo in the top-left corner; the title is indented to sit beside it
+        from openpyxl.drawing.image import Image as XLImage
+        logo = XLImage(str(LOGO_PNG))
+        logo.width = logo.height = 52
+        ws.add_image(logo, "A1")
+        ws.row_dimensions[1].height, ws.row_dimensions[2].height = 26, 18
+        ws["A1"].alignment = ws["A2"].alignment = Alignment(indent=6, vertical="center")
+    except Exception:  # a missing logo must never stop a report
+        pass
     for i, (k, v) in enumerate(rep["summary"], start=4):
         kc = ws.cell(row=i, column=1, value=k)
         kc.font = Font(color=muted)
@@ -416,6 +426,23 @@ def _when(v: str) -> str:
     return f"{m.group(1)} {m.group(2)} UTC" if m else str(v)
 
 
+LOGO_PNG = Path(__file__).resolve().parent.parent / "static" / "logo-report.png"  # CloudSeals logo, rendered from logo.svg
+_LOGO_CACHE: dict = {}
+
+
+def _logo_pixels():
+    """((w, h), rgb_flate, alpha_flate) for the CloudSeals logo, or None if the file or Pillow is unavailable."""
+    if "v" not in _LOGO_CACHE:
+        try:
+            import zlib
+            from PIL import Image
+            im = Image.open(LOGO_PNG).convert("RGBA")
+            _LOGO_CACHE["v"] = (im.size, zlib.compress(im.convert("RGB").tobytes(), 9), zlib.compress(im.getchannel("A").tobytes(), 9))
+        except Exception:  # a missing logo must never stop a report
+            _LOGO_CACHE["v"] = None
+    return _LOGO_CACHE["v"]
+
+
 class _Pdf:
     def __init__(self, landscape=True):
         self.W, self.H = (792, 612) if landscape else (612, 792)
@@ -452,12 +479,26 @@ class _Pdf:
     def line(self, x1, y1, x2, y2, color=LINE, lw=0.6):
         self.ops.append(b"%.3f %.3f %.3f RG %.2f w %.2f %.2f m %.2f %.2f l S\n" % (*color, lw, x1, y1, x2, y2))
 
+    def image(self, x, y, w, h):
+        """Draw the CloudSeals logo (if available) with its lower-left corner at x, y."""
+        if _logo_pixels() is not None:
+            self.ops.append(b"q %.2f 0 0 %.2f %.2f %.2f cm /Logo Do Q\n" % (w, h, x, y))
+
     def build(self, title="", footer=None) -> bytes:
         objs: list[bytes] = []
         add = lambda b: objs.append(b) or len(objs)
         cat, pages_id = add(b""), add(b"")
         fonts = [add(f"<< /Type /Font /Subtype /Type1 /BaseFont /{n} /Encoding /WinAnsiEncoding >>".encode())
                  for n in ("Helvetica", "Helvetica-Bold", "Courier", "Courier-Bold")]
+        xobj = b""
+        px = _logo_pixels()
+        if px is not None:  # RGB image + alpha mask (soft mask keeps the transparent background)
+            (pw, ph), rgb, alpha = px
+            smask = add(b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 "
+                        b"/Filter /FlateDecode /Length %d >>\nstream\n" % (pw, ph, len(alpha)) + alpha + b"\nendstream")
+            img = add(b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+                      b"/SMask %d 0 R /Filter /FlateDecode /Length %d >>\nstream\n" % (pw, ph, smask, len(rgb)) + rgb + b"\nendstream")
+            xobj = b" /XObject << /Logo %d 0 R >>" % img
         kids, n = [], len(self.pages)
         for i, ops in enumerate(self.pages, start=1):
             self.ops = ops
@@ -466,8 +507,8 @@ class _Pdf:
             body = b"".join(ops)
             content = add(b"<< /Length %d >>\nstream\n" % len(body) + body + b"\nendstream")
             kids.append(add(b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %d %d] /Contents %d 0 R "
-                            b"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R >> >> >>"
-                            % (pages_id, self.W, self.H, content, *fonts)))
+                            b"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R >>%s >> >>"
+                            % (pages_id, self.W, self.H, content, *fonts, xobj)))
         objs[cat - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % pages_id
         objs.append(b"<< /Title (%s) /Producer (LedgerSight) >>" % self._esc(title))
         objs[pages_id - 1] = b"<< /Type /Pages /Kids [%s] /Count %d >>" % (b" ".join(b"%d 0 R" % k for k in kids), len(kids))
@@ -510,9 +551,13 @@ def to_pdf(rep: dict) -> bytes:
     # header band
     doc.rect(0, doc.H - 6, W, 6, fill=ACCENT)
     top = doc.H - M
-    doc.text(M, top - 4, "LEDGERSIGHT  ·  GOVERNED BY TRUSTOPS", "F2", 7.5, ACCENT)
-    doc.text(M, top - 28, rep["title"], "F2", 20, INK)
-    doc.text(M, top - 46, " · ".join(str(x) for x in (client, period) if x), "F1", 10.5, MUTED)
+    # CloudSeals logo + wordmark, then the report title
+    lx = M + 50 if _logo_pixels() is not None else M
+    doc.image(M, top - 48, 42, 42)
+    doc.text(lx, top - 4, "CLOUDSEALS", "F2", 7.5, INK)
+    doc.text(lx + _tw("CLOUDSEALS", "F2", 7.5) + 6, top - 4, "·  LEDGERSIGHT  ·  GOVERNED BY TRUSTOPS", "F2", 7.5, ACCENT)
+    doc.text(lx, top - 28, rep["title"], "F2", 20, INK)
+    doc.text(lx, top - 46, " · ".join(str(x) for x in (client, period) if x), "F1", 10.5, MUTED)
     rx = W - M
     for i, (k, v) in enumerate([("Report", rep["report_id"]), ("Run", rep["run_id"]), ("Generated", _when(S.get("Generated at (UTC)", "")))]):
         yy = top - 6 - i * 15
@@ -673,7 +718,7 @@ def to_pdf(rep: dict) -> bytes:
 
     def footer(d, i, n):
         d.line(M, M - 4, W - M, M - 4, LINE, 0.6)
-        d.text(M, M - 16, "LedgerSight  ·  Read-only review output  ·  Confidential", "F1", 7, MUTED)
+        d.text(M, M - 16, "CloudSeals  ·  LedgerSight  ·  Read-only review output  ·  Confidential", "F1", 7, MUTED)
         d.text(W - M, M - 16, f"{rep['report_id']}  ·  Page {i} of {n}", "F1", 7, MUTED, align="right")
 
     return doc.build(title=f"{rep['title']} {rep['report_id']}", footer=footer)
@@ -682,7 +727,9 @@ def to_pdf(rep: dict) -> bytes:
 def _running(doc: _Pdf, rep: dict, client: str):
     """Small running header on continuation pages."""
     doc.rect(0, doc.H - 4, doc.W, 4, fill=ACCENT)
-    doc.text(doc.M, doc.H - doc.M + 6, f"{rep['title']}  ·  {client}", "F2", 8, INK)
+    has_logo = _logo_pixels() is not None
+    doc.image(doc.M, doc.H - doc.M + 2, 14, 14)
+    doc.text(doc.M + (20 if has_logo else 0), doc.H - doc.M + 6, f"{rep['title']}  ·  {client}", "F2", 8, INK)
     doc.text(doc.W - doc.M, doc.H - doc.M + 6, f"Run {rep['run_id']}", "F1", 8, MUTED, align="right")
     doc.line(doc.M, doc.H - doc.M, doc.W - doc.M, doc.H - doc.M, LINE, 0.6)
     doc.y = doc.H - doc.M - 14

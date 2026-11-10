@@ -483,11 +483,18 @@ async function renderSources() {
   let s; try { s = await api(W("/sources")); } catch (_) { return; }
   s.kinds.forEach((k) => { KIND[k.kind] = k.label; });
   SOURCE_KINDS = s.kinds.map((k) => k.kind);
-  put("src-status", s.kinds.map((k) => el("div", {}, el("span", {}, k.label, k.required ? null : el("span", { class: "muted small" }, " · optional")),
-    el("span", { class: "src-right" }, k.rows ? el("span", { class: "small muted" }, `${k.rows} rows `) : null,
-      el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, k.status === "NOT_CONNECTED" ? "Not yet" : nice(k.status)),
-      k.status !== "NOT_CONNECTED" ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null),
-    k.envelope ? srcEnvelope(k.envelope) : null)));
+  put("src-status", s.kinds.map((k) => {
+    const on = k.status !== "NOT_CONNECTED";
+    return el("div", { class: "ss-row" + (on ? "" : " ss-empty") },
+      el("span", { class: "ss-dot " + (on ? "on" : "") }),
+      el("div", { class: "ss-main" },
+        el("div", { class: "ss-name" }, k.label, k.required ? null : el("span", { class: "ss-opt" }, "Optional")),
+        on && k.envelope ? srcEnvelope(k.envelope) : el("div", { class: "ss-meta" }, on ? `${k.rows || 0} records` : (k.required ? "Needed to run reconciliation" : "Not imported"))),
+      el("div", { class: "ss-side" },
+        on ? el("span", { class: "ss-count" }, String(k.rows || 0), el("small", {}, " records")) : null,
+        el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, on ? nice(k.status) : "Not yet"),
+        on ? el("button", { class: "linkbtn ss-clear", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null));
+  }), el("div", { class: "ss-foot" }, "All sources are read-only. Hover a file name for its fingerprint."));
   put("connectors", el("table", {}, el("tr", {}, ["Connection", "Status", "What the label means"].map((h) => el("th", {}, h))),
     s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, nice(c.status))),
       el("td", { class: "small muted" }, s.status_labels[c.status])))));
@@ -500,14 +507,22 @@ async function renderSources() {
 // Where these rows came from, in this client's context: file, fingerprint, when, currency, period, read-only.
 function srcEnvelope(e) {
   const fresh = e.freshness_seconds == null ? "" : ago(e.freshness_seconds);
-  return el("div", { class: "src-env", title: `Tenant ${e.tenant_id} · client ${e.client_id} · SHA-256 ${e.source_digest}` },
-    el("span", { class: "mono" }, e.source_file || "—"),
-    el("span", {}, `${e.row_count} rows`), e.currency && e.currency.length ? el("span", {}, e.currency.join(" / ")) : null,
-    e.date_range ? el("span", {}, `${e.date_range[0]} → ${e.date_range[1]}`) : null,
-    e.period ? el("span", {}, `period ${e.period}`) : null,
-    fresh ? el("span", {}, `imported ${fresh}`) : null,
-    el("span", { class: "mono" }, `sha ${String(e.source_digest).slice(0, 10)}…`),
-    el("span", { class: "badge PLANNED" }, e.access === "READ_ONLY" ? "Read-only" : nice(e.access)));
+  const tip = `${e.source_file || ""}\nSHA-256 ${e.source_digest}\nTenant ${e.tenant_id} · client ${e.client_id}` +
+    (e.period ? `\nPeriod ${e.period}` : "") + `\nAccess ${e.access === "READ_ONLY" ? "read-only" : nice(e.access)}`;
+  return el("div", { class: "src-env" },
+    el("div", { class: "ss-file", title: tip }, e.source_file || "—"),
+    el("div", { class: "ss-meta" }, [e.date_range ? spanDates(e.date_range) : null, e.currency && e.currency.length ? e.currency.join(" / ") : null,
+      fresh ? `Imported ${fresh}` : null].filter(Boolean).join("  ·  ")));
+}
+// 2026-10-01 → 2026-10-31 reads as "Oct 1 – 31, 2026"
+function spanDates([a, b]) {
+  const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const p = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null; };
+  const x = p(a), y = p(b);
+  if (!x || !y) return `${a} – ${b}`;
+  if (x.y === y.y && x.m === y.m) return x.d === y.d ? `${M[x.m]} ${x.d}, ${x.y}` : `${M[x.m]} ${x.d} – ${y.d}, ${x.y}`;
+  if (x.y === y.y) return `${M[x.m]} ${x.d} – ${M[y.m]} ${y.d}, ${x.y}`;
+  return `${M[x.m]} ${x.d}, ${x.y} – ${M[y.m]} ${y.d}, ${y.y}`;
 }
 async function clearSource(k) {
   try { const r = await api(W(`/sources/${k}/clear`), { method: "POST" });
@@ -737,29 +752,53 @@ async function uploadOne(f) {
     msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Confirm the mapping below${left}.`, "good"); renderMapping();
   } catch (e) { refused(f, e.message); msg("up-msg", ""); nextInQueue(); }
 }
+// "File 2 of 7" while a batch is being confirmed one by one.
+function batchPos() {
+  const n = S.queueTotal || 0;
+  return n > 1 ? `File ${n - S.queue.length} of ${n}` : "";
+}
+// The confirm action sits in a bar at the top of the card that stays on screen while scrolling the mapping,
+// and the card scrolls into view as soon as a file is read, so nobody has to hunt for the button.
+function mapBar(title, sub, btn) {
+  const pos = batchPos();
+  return el("div", { class: "map-bar" },
+    el("div", { class: "map-bar-l" }, el("div", { class: "map-title" }, title),
+      el("div", { class: "map-sub" }, [pos, sub].filter(Boolean).join("  ·  "))),
+    el("div", { class: "map-bar-r" }, btn));
+}
+function showMappingCard(box) {
+  box.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    const top = box.getBoundingClientRect().top;
+    if (top < 60 || top > window.innerHeight * 0.55) box.scrollIntoView({ behavior: "smooth", block: "start" });
+    const b = box.querySelector(".map-bar .primary"); if (b) b.focus({ preventScroll: true });
+  });
+}
 function renderMapping() {
   const u = S.upload, box = $("mapping");
-  box.classList.remove("hidden");
   const fields = Object.keys(u.proposed_mapping);
   const selects = {};
+  const confirm = (label) => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+    const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
+    try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
+      toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
+      await refreshWs(); nextInQueue(); }
+    catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
+  }, "Importing…") }, label);
   put(box,
-    el("div", { class: "card-title" }, `Confirm column mapping · ${u.filename} (${u.rows} rows)`),
-    u.detection ? el("div", { class: "row small" }, el("span", { class: "badge PASS" }, `Recognised as ${KIND[u.kind] || u.kind_label}`),
+    mapBar(`Confirm columns · ${u.filename}`, `${KIND[u.kind] || u.kind_label} · ${u.rows} records`,
+      confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")),
+    u.detection ? el("div", { class: "row small gap" }, el("span", { class: "badge PASS" }, `Recognised as ${KIND[u.kind] || u.kind_label}`),
       el("span", { class: "muted" }, u.detection.method)) : null,
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact file was already imported (${u.duplicate_of}). Confirming will not add rows twice.`) : null,
-    el("div", { class: "muted small" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
+    el("div", { class: "muted small gap" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
     el("table", {}, el("tr", {}, el("th", {}, "LedgerSight field"), el("th", {}, "Your column")),
       fields.map((f) => { const s = el("select", {}, el("option", { value: "" }, "— not mapped —"), u.header.map((h) => el("option", { value: h, selected: h === u.proposed_mapping[f] }, h))); selects[f] = s;
         return el("tr", {}, el("td", {}, nice(f)), el("td", {}, s)); })),
-    el("div", { class: "card-title gap" }, "Preview"),
-    el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))),
-    el("div", { class: "row gap" }, el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
-      const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
-      try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
-        toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
-        await refreshWs(); nextInQueue(); }
-      catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
-    }, "Importing…") }, "Confirm mapping & import")));
+    el("details", { class: "gap map-prev" }, el("summary", {}, `Preview first ${u.preview.length} rows`),
+      el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))))),
+    el("div", { class: "row gap" }, confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")));
+  showMappingCard(box);
 }
 // After any upload, confirmation or clear: redraw the Sources page AND refresh the book's status, so the
 // stepper, Overview and the Run button know the bank statement / ledger are now present.
@@ -787,9 +826,14 @@ document.addEventListener("visibilitychange", syncIfStale);
 
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};
-  box.classList.remove("hidden");
   const type = el("select", {}, ["receipt", "vendor_invoice", "other"].map((t) => el("option", { value: t }, nice(t))));
-  put(box, el("div", { class: "card-title" }, `Confirm document fields · ${u.filename} (${u.pages} page${u.pages > 1 ? "s" : ""})`),
+  const go = () => el("button", { class: "primary", onclick: async () => {
+        const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
+        try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } }); box.classList.add("hidden");
+          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await refreshWs(); nextInQueue(); }
+        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } } },
+    S.queue.length ? "Confirm & next file →" : "Confirm & link document");
+  put(box, mapBar(`Confirm document · ${u.filename}`, `${u.pages} page${u.pages > 1 ? "s" : ""}`, go()),
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact PDF was already uploaded (${u.duplicate_of}). Confirming again replaces the same document. Nothing is counted twice.`) : null,
     u.unsafe_content.length ? el("div", { class: "exc REJECTED" }, el("div", { class: "type" }, "⚠ Instruction-like text found in this document"),
       el("div", { class: "small" }, "Treated as data only. No action was taken and none can be triggered from document text. Flagged in the evidence log:"),
@@ -799,12 +843,8 @@ function renderDocConfirm() {
       ["vendor", "reference", "date", "amount"].map((k) => { const f = u.fields[k]; const i = el("input", { value: f.value }); inputs[k] = i;
         return el("tr", {}, el("td", {}, nice(k)), el("td", {}, i), el("td", { class: "small" }, f.page ? `p${f.page} · “${f.source_text}”` : f.source_text),
           el("td", {}, el("span", { class: "badge " + (f.confidence === "high" ? "PASS" : f.confidence === "none" ? "FAIL" : "UNKNOWN") }, f.confidence))); })),
-    el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type,
-      el("button", { class: "primary", onclick: async () => {
-        const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
-        try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } }); box.classList.add("hidden");
-          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await refreshWs(); nextInQueue(); }
-        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } } }, "Confirm & link document")));
+    el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type, go()));
+  showMappingCard(box);
 }
 function renderDocs(docs) {
   if (!docs || !docs.length) return put("docs", el("div", { class: "muted" }, "No supporting documents yet."));
@@ -1055,23 +1095,39 @@ async function renderProof() {
       renderProof(); renderEvidence(); } }, "Try: ask for another client's data");
     return null;
   };
-  const row = (k, v) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", {}, v)];
-  put("proof", el("div", { class: "row" }, el("span", { class: "badge" }, `Policy set ${p.policy_version}`),
+  const row = (k, v, cls) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", cls ? { class: cls } : {}, v)];
+  const when = (t) => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  const actor = (c) => `${niceActor(c.actor_id)}${c.agent_code ? ` (${c.agent_code})` : ""}${c.actor_role_label && !c.agent_code ? ` · ${c.actor_role_label}` : ""}`;
+  put("proof",
+    el("div", { class: "pf-sum" },
       el("span", { class: "badge " + p.chain.state }, `Audit chain ${p.chain.state}`),
-      el("span", { class: "muted small" }, p.all_shown ? "All four decisions are on record for this client." : "Decisions not yet on record show how to produce them live.")),
-    el("div", { class: "proof-grid gap" }, p.cards.map((c) => el("div", { class: "proof " + (c.shown ? c.decision : "pending") },
-      el("div", { class: "pf-head" }, el("span", { class: "badge " + (c.shown ? c.decision : "IDLE") }, c.decision), el("b", {}, c.title)),
-      el("div", { class: "muted small" }, c.what),
-      c.shown ? el("dl", { class: "pf-dl" },
-        row("Actor", `${niceActor(c.actor_id)}${c.agent_code ? ` (${c.agent_code})` : ""}${c.actor_role_label ? ` · ${c.actor_role_label}` : ""}${c.delegated_by ? ` · for ${c.delegated_by}` : ""}`),
-        row("Request", nice(c.action)), row("Reason", nice(c.reason_code)),
-        row("Rule", `${c.policy_id} ${nice(c.policy_name)}${c.policy_rule_version ? ` v${c.policy_rule_version}` : ""}`),
-        row("Policy set", c.policy_version), row("Named authority", c.required_role_label),
-        row("Result", c.result), row("When", new Date(c.time_utc).toLocaleString()),
-        row("Trace", [c.run_id, c.trace_id].filter(Boolean).join(" · ")),
-        row("Evidence", `event #${c.evidence_seq} · ${c.event_hash.slice(0, 12)}… · signature ${c.signature}`))
-        : el("div", { class: "pf-how small" }, el("b", {}, "Not on record yet. "), c.how_to_show),
-      el("div", { class: "row" }, tryBtn(c))))));
+      el("span", { class: "pf-ver" }, "Policy set ", el("span", { class: "rid" }, p.policy_version)),
+      el("span", { class: "pf-note" }, p.all_shown ? "All decisions below are on record for this client." : "Any decision not yet on record shows how to produce it live.")),
+    el("div", { class: "pfc-grid" }, p.cards.map((c) => {
+      const t = tryBtn(c);
+      return el("article", { class: "pfc " + (c.shown ? c.decision : "pending") },
+        el("header", { class: "pfc-head" },
+          el("span", { class: "badge " + (c.shown ? c.decision : "IDLE") }, c.decision),
+          c.shown ? el("span", { class: "pfc-when" }, when(c.time_utc)) : el("span", { class: "pfc-when" }, "Not on record yet")),
+        el("h3", { class: "pfc-title" }, c.title),
+        el("p", { class: "pfc-what" }, c.what),
+        c.shown ? el("dl", { class: "pfc-dl" },
+          row("Who", actor(c)),
+          row("Action", nice(c.action)),
+          row("Rule", el("span", {}, el("span", { class: "rid" }, c.policy_id), ` ${nice(c.policy_name)}`)),
+          row("Decided by", c.required_role_label),
+          row("Outcome", String(c.result || "").replace(/;\s*(\w)/g, (_, ch) => ". " + ch.toUpperCase())),
+          row("Reason", c.reason_code && c.reason_code !== "OK" ? nice(c.reason_code) : null))
+          : el("div", { class: "pfc-how" }, c.how_to_show),
+        c.shown ? el("div", { class: "pfc-ev", title: `Event hash ${c.event_hash}
+Policy set ${c.policy_version}${c.policy_rule_version ? ` · rule v${c.policy_rule_version}` : ""}${c.delegated_by ? `
+Acting for ${c.delegated_by}` : ""}${c.run_id ? `
+Run ${c.run_id}` : ""}${c.trace_id ? ` · ${c.trace_id}` : ""}` },
+          el("span", { class: "pfc-sig" + (c.signature === "PASS" ? " is-ok" : "") }, c.signature === "PASS" ? "✓ Signed" : `Signature ${c.signature}`),
+          el("span", {}, `Event #${c.evidence_seq}`),
+          c.run_id ? el("span", { class: "rid" }, c.run_id) : null) : null,
+        t ? el("footer", { class: "pfc-foot" }, t) : null);
+    })));
 }
 $("proof-refresh").onclick = renderProof;
 const attempts = [];
