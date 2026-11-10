@@ -173,13 +173,17 @@ async function progress() {
   const st = w.status;
   const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0, !!S.exported[S.ws + st.last_run]];
   const cur = done.indexOf(false);
-  const kids = [];
-  STEPS.forEach(([name, tab], i) => {
-    if (i) kids.push(el("span", { class: "bar" + (done[i - 1] ? " done" : "") }));
-    kids.push(el("button", { class: "step" + (done[i] ? " done" : i === cur ? " cur" : ""), onclick: () => go(tab) },
-      el("span", { class: "dot" }, done[i] ? "✓" : String(i + 1)), name));
-  });
-  put("stepper", kids);
+  // Compact month-end progress on Overview: one segment per step (click to open that page) + the current step.
+  const nDone = done.filter(Boolean).length;
+  put("stepper",
+    el("span", { class: "mp-k" }, "Month-end"),
+    el("div", { class: "mp-segs" }, STEPS.map(([name, tab], i) => {
+      const state = done[i] ? "done" : i === cur ? "current" : "to do";
+      return el("button", { type: "button", class: "step" + (done[i] ? " done" : i === cur ? " cur" : ""), title: `${i + 1}. ${name}: ${state}`,
+        "aria-label": `Step ${i + 1}, ${name}: ${state}`, onclick: () => go(tab) }, el("i", {}));
+    })),
+    el("span", { class: "mp-cur" }, cur < 0 ? el("b", {}, "All 5 steps done") : [el("b", {}, STEPS[cur][0]), ` · step ${cur + 1} of ${STEPS.length}`]),
+    el("span", { class: "mp-n" }, `${nDone}/${STEPS.length} done`));
   const nr = $("nav-review"); nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions);
   // Nothing to clear -> the clear buttons are off (they come back as soon as a file is imported or a run exists).
   const hasData = st.uploads > 0 || st.runs > 0;
@@ -389,7 +393,7 @@ async function renderOverview() {
   const r = S.run && S.run.result;
   const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
   const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
-  // Page header (replaces the big hero: match %, counts and period already live in the KPIs, top bar and stepper).
+  // Page header (replaces the big hero: match %, counts and period already live in the KPIs, top bar and progress line).
   put("ov-hero",
     el("div", { class: "ovh-l" },
       el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
