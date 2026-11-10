@@ -717,8 +717,22 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
   side.addEventListener("click", (e) => { if (e.target.closest(".tab")) peek(false, 0); });
   $("side-toggle").onclick = () => { on = !on; peek(false, 0); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
+// Overview sections (Summary / Agents & decisions / Setup & guide): presentation only, every block still renders.
+function ovSec(name, focus) {
+  document.querySelectorAll(".ov-tab").forEach((b) => { const on = b.dataset.sec === name;
+    b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
+  document.querySelectorAll(".ov-sec").forEach((x) => x.classList.toggle("hidden", x.dataset.sec !== name));
+  const sec = $("ovs-" + name); if (window.LSMotion && sec) LSMotion.enter(sec);
+  try { sessionStorage.setItem("ls-ov-sec", name); } catch (_) {}
+}
+document.querySelectorAll(".ov-tab").forEach((b, i, all) => {
+  b.onclick = () => ovSec(b.dataset.sec);
+  b.onkeydown = (e) => { const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!d) return;
+    e.preventDefault(); ovSec(all[(i + d + all.length) % all.length].dataset.sec, true); };
+});
+(() => { let s = null; try { s = sessionStorage.getItem("ls-ov-sec"); } catch (_) {} if (s && $("ovs-" + s)) ovSec(s); })();
 $("period-chip").onclick = () => {
-  go("home"); const d = $("ov-profile"); d.open = true;
+  go("home"); ovSec("setup"); const d = $("ov-profile"); d.open = true;
   setTimeout(() => { d.scrollIntoView({ behavior: REDUCE ? "auto" : "smooth", block: "center" }); $("pf-period").focus({ preventScroll: true }); }, 120);
 };
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }

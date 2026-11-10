@@ -53,13 +53,15 @@
   const ENTER = ".hero-l,.hero-r,.kw,.ch-card,.cc,.pfc,li.tl,.ag-card,.stage,.kpi,tbody>tr,.ss-row";
   let queue = [], qTimer = 0;
   function flush() {
-    const els = queue.filter((e) => e.isConnected && e.offsetParent).slice(0, 36); queue = [];
+    const all = queue; queue = [];
+    const els = all.filter((e) => e.isConnected && e.offsetParent).slice(0, 36);
+    all.forEach((e) => { if (!els.includes(e)) e.style.opacity = ""; });
     if (!els.length) return;
     const anim = M.animate(els, { opacity: [0, 1], y: [14, 0] }, { ...spring(0.5, 0.14), delay: M.stagger(0.035) });
     settle(els, anim);
   }
   function enter(el) {
-    if (!motionOn || performance.now() > windowUntil || el.dataset.entered) return;
+    if (!motionOn || performance.now() > windowUntil || el.dataset.entered || !el.offsetParent) return;
     el.dataset.entered = "1"; el.style.opacity = "0"; queue.push(el);
     clearTimeout(qTimer); qTimer = setTimeout(flush, 16);
   }
@@ -72,6 +74,7 @@
     p.querySelectorAll(ENTER).forEach((e) => { e.dataset.entered = "1"; });
   }
   document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => enterPanel(document.getElementById("p-" + t.dataset.tab))));
+  window.LSMotion = { enter: enterPanel };
   const main = document.querySelector("main");
   if (main && motionOn) {
     new MutationObserver((recs) => {

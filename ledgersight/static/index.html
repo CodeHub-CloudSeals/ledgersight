@@ -94,6 +94,12 @@
     <!-- ================= Overview ================= -->
     <section class="panel active" id="p-home">
       <div id="ov-hero" class="hero"></div>
+      <div class="ov-tabs" role="tablist" aria-label="Overview sections">
+        <button type="button" role="tab" class="ov-tab active" id="ovt-summary" data-sec="summary" aria-selected="true" aria-controls="ovs-summary">Summary</button>
+        <button type="button" role="tab" class="ov-tab" id="ovt-activity" data-sec="activity" aria-selected="false" aria-controls="ovs-activity" tabindex="-1">Agents &amp; decisions</button>
+        <button type="button" role="tab" class="ov-tab" id="ovt-setup" data-sec="setup" aria-selected="false" aria-controls="ovs-setup" tabindex="-1">Setup &amp; guide</button>
+      </div>
+      <div class="ov-sec" id="ovs-summary" data-sec="summary" role="tabpanel" aria-labelledby="ovt-summary">
       <div id="ov-kpis" class="kw-row"></div>
       <div id="ov-charts" class="ov-charts hidden">
         <div class="card ch-card"><div class="ch-head"><div><div class="card-title">Cash movement</div><div class="ch-sub">Money in and out on the bank statement, by day</div></div>
@@ -102,6 +108,8 @@
           <a class="linkbtn" href="#recon" data-go="recon">Details →</a></div><div id="ov-cover"></div></div>
       </div>
       <div class="card gap hidden" id="ov-cases"></div>
+      </div>
+      <div class="ov-sec hidden" id="ovs-activity" data-sec="activity" role="tabpanel" aria-labelledby="ovt-activity">
       <div class="card gap pipe" id="ov-pipe">
         <div class="pipe-head"><div class="card-title">Agent workflow</div>
           <div class="pipe-meta"><a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div></div>
@@ -111,6 +119,18 @@
         <div class="card"><div class="card-title">TrustOps decisions <a class="linkbtn" href="#evidence" data-go="evidence">Audit trail →</a></div><div id="ov-gov"></div></div>
         <div class="card"><div class="card-title">Recent activity <a class="linkbtn" href="#evidence" data-go="evidence">View all →</a></div><ul id="ov-activity" class="feed tl-feed"></ul></div>
       </div>
+      </div>
+      <div class="ov-sec hidden" id="ovs-setup" data-sec="setup" role="tabpanel" aria-labelledby="ovt-setup">
+      <details class="card gap fold" id="ov-profile" open>
+        <summary>Client profile</summary>
+        <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
+        <div class="form-grid gap">
+          <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
+          <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
+          <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
+        </div>
+        <div class="row gap"><button id="pf-save" class="primary">Save profile</button><button id="reset-btn" class="danger">Clear this client's data</button><span id="pf-msg" class="msg"></span><span id="reset-msg" class="msg"></span></div>
+      </details>
       <div class="card gap" aria-label="How it works">
         <div class="card-title">How it works <span class="muted">who does each step</span></div>
         <div class="how">
@@ -121,16 +141,7 @@
           <a href="#reports" data-go="reports"><span class="n">5</span><span class="tx"><b>Download reports</b><span>Finance report and governance report, with proof.</span><em class="who ls">BOTH</em></span></a>
         </div>
       </div>
-      <details class="card gap fold" id="ov-profile">
-        <summary>Client profile</summary>
-        <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
-        <div class="form-grid gap">
-          <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
-          <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
-          <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
-        </div>
-        <div class="row gap"><button id="pf-save" class="primary">Save profile</button><button id="reset-btn" class="danger">Clear this client's data</button><span id="pf-msg" class="msg"></span><span id="reset-msg" class="msg"></span></div>
-      </details>
+      </div>
     </section>
 
     <!-- ================= Sources ================= -->
