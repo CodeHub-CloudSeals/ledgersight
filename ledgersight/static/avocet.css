@@ -1169,3 +1169,28 @@ body.ask-open .ask-fab{opacity:0;pointer-events:none;transform:scale(.8)}
    (no empty block under the Google Drive connector) */
 #p-import .grid.two>.card:first-child{display:flex;flex-direction:column}
 #p-import #dz-target{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px}
+/* Sidebar: no visible scrollbar (the menu still scrolls with the wheel / trackpad when the window is short) */
+.sidebar{scrollbar-width:none}.sidebar::-webkit-scrollbar{display:none}
+
+/* ---- Upload results: one clear line per file, inside the upload card ---- */
+.up-results{margin-top:var(--sp-3);border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);overflow:hidden}
+.up-results.has-bad{border-color:var(--bad-line)}
+.upr-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.upr-head b{font-size:var(--fs-sm)}
+.upr-x{margin-left:auto;width:26px;height:26px;font-size:12px}
+.upr-list{list-style:none;margin:0;padding:0;max-height:520px;overflow:auto}
+.upr{display:flex;gap:12px;align-items:flex-start;padding:10px 14px;border-bottom:1px solid var(--line)}
+.upr:last-child{border-bottom:0}
+.upr-ico{flex:0 0 24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;background:var(--subtle);color:var(--muted)}
+.upr-main{min-width:0;flex:1}
+.upr-name{font-weight:600;font-size:var(--fs-sm);display:flex;flex-wrap:wrap;align-items:center;gap:8px;overflow-wrap:anywhere}
+.upr-badge{font-size:11px;font-weight:700;letter-spacing:.03em;padding:1px 8px;border-radius:var(--r-pill);background:var(--subtle);color:var(--muted);border:1px solid var(--line)}
+.upr-detail{font-size:12.5px;color:var(--text-2);margin-top:2px}
+.upr.st-imported .upr-ico,.upr.st-linked .upr-ico,.upr.st-skipped .upr-ico{background:var(--ok-bg);color:var(--ok)}
+.upr.st-imported .upr-badge,.upr.st-linked .upr-badge,.upr.st-skipped .upr-badge{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-line)}
+.upr.st-confirm .upr-ico,.upr.st-confirm .upr-badge{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-line)}
+.upr.st-checking .upr-ico{background:var(--accent-soft);color:var(--accent)}
+.upr.st-checking .upr-badge{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+.upr.st-refused .upr-ico,.upr.st-refused .upr-badge{background:var(--bad-bg);color:var(--bad);border-color:var(--bad-line)}
+.upr.st-refused .upr-detail{color:var(--bad)}
+.upr-foot{padding:10px 14px;border-top:1px solid var(--bad-line);background:var(--bad-bg);color:var(--text-2)}

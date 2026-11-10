@@ -189,10 +189,25 @@ def test_templates_only_in_the_error_message_and_no_sample_connector(cpa):
     js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
     html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
     assert "tpl-row" not in html and "tpl-chip" not in js and "Not sure of the format" not in js
-    refusal = js.split("function refused(f, reason)", 1)[1].split("\n}\n", 1)[0]
-    assert "We couldn't use this file" in refusal and "templateLinks()" in refusal
+    panel = js.split("function renderBatch()", 1)[1].split("\n}\n", 1)[0]
+    assert "We couldn't use this file" in panel and "templateLinks()" in panel
+    assert 'batchSet(f._bi, "refused", reason)' in js
     conns = {c["id"] for c in cpa.get(WS + "/sources").json()["connectors"]}
     assert "sample" not in conns and {"file-upload", "google-drive"} <= conns
+
+
+def test_upload_results_panel_replaces_corner_popups():
+    """Each file of a batch gets its own line in Upload results (inside the upload card); importing no longer
+    pops a 'rows imported' toast in the corner. Successes clear 10 s after the batch; refusals stay."""
+    js = (ROOT / "ledgersight" / "static" / "avocet.js").read_text(encoding="utf-8")
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    card = html.split('id="dz-target"', 1)[1].split('id="dz-connect"', 1)[0]
+    assert 'id="up-results"' in card and 'id="up-refused"' not in html
+    assert 'rows imported" : "imported"' not in js  # old corner toast text
+    for state in ("checking", "confirm", "imported", "linked", "skipped", "refused"):
+        assert f'batchSet(' in js and (f'"{state}"' in js)
+    panel = js.split("function renderBatch()", 1)[1].split("\n}\n", 1)[0]
+    assert "10000" in panel and 'x.state === "refused"' in panel
 
 
 def test_sources_upload_card_has_no_empty_block_under_the_connector():
@@ -200,6 +215,11 @@ def test_sources_upload_card_has_no_empty_block_under_the_connector():
     css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
     assert "#p-import .grid.two>.card:first-child{display:flex;flex-direction:column}" in css
     assert "#p-import #dz-target{flex:1 1 auto;" in css
+
+
+def test_sidebar_has_no_visible_scrollbar():
+    css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
+    assert ".sidebar{scrollbar-width:none}.sidebar::-webkit-scrollbar{display:none}" in css
 
 
 def test_login_page_uses_the_shield_design():

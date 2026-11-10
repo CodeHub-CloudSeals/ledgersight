@@ -600,8 +600,9 @@ dzTarget.addEventListener("drop", (e) => {
 });
 $("dz-drive-btn").onclick = () => openGoogleConnectModal();
 function queueFiles(files, from) {
-  S.queue = files; S.autoKind = true; S.queueTotal = files.length; S.refusals = []; put("up-refused"); put("up-next");
-  msg("up-msg", `${files.length} file${files.length === 1 ? "" : "s"} from ${from}. Checking each one…`); nextInQueue();
+  S.queue = files; S.autoKind = true; S.queueTotal = files.length; put("up-next"); msg("up-msg", "");
+  S.batch = files.map((f, i) => { f._bi = i; return { name: f.name, state: "waiting", detail: "" }; }); renderBatch();
+  nextInQueue();
 }
 
 const b64file = (a) => { const bin = atob(a.data_b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new File([u], a.name); };
@@ -692,15 +693,15 @@ async function openGoogleConnectModal() {
 }
 function nextInQueue() {
   const f = S.queue.shift();
-  if (!f) { if (S.queueTotal > 1) msg("up-msg", `All ${S.queueTotal} files done.`, "good"); S.queueTotal = 0; $("up-file").value = ""; offerRun(); return; }
+  if (!f) { S.queueTotal = 0; $("up-file").value = ""; offerRun(); return; }
   uploadOne(f);
 }
 // Forget every half-finished upload on this page: pending mapping, messages, refusals, queue. Used when the
 // client's data is cleared (here or by a colleague) or another client is opened, so nothing stale remains.
 function resetIntakeUi() {
-  S.queue = []; S.queueTotal = 0; S.upload = null; S.refusals = [];
+  S.queue = []; S.queueTotal = 0; S.upload = null; S.batch = []; renderBatch();
   $("mapping").classList.add("hidden"); put("mapping");
-  msg("up-msg", ""); put("up-refused"); put("up-next"); put("em-view"); put("drive-view"); $("up-file").value = "";
+  msg("up-msg", ""); put("up-next"); put("em-view"); put("drive-view"); $("up-file").value = "";
 }
 // Once the bank statement and general ledger are both in, take the user straight to the next step.
 async function offerRun() {
@@ -731,14 +732,38 @@ function guessKind(name) {
 // Formats the importer can read. Anything else (Word, PowerPoint, ZIP, macro workbooks, images...) is refused.
 const IMPORTABLE = /\.(csv|xlsx|tsv|txt|json|ofx|qfx|qbo|pdf)$/i;
 const ACCEPTED_TEXT = "CSV, Excel (.xlsx), TSV, JSON, OFX/QFX/QBO bank downloads, PDF, or a saved email (.eml)";
-// Every refusal is listed in one place, so a batch of files shows exactly what was not accepted and why.
-function refused(f, reason) {
-  S.refusals = (S.refusals || []).concat([{ name: f.name, reason }]);
-  put("up-refused", el("div", { class: "refused-box" },
-    el("b", {}, S.refusals.length === 1 ? "We couldn't use this file" : `We couldn't use ${S.refusals.length} files`),
-    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`))),
-    el("div", { class: "small" }, "Download a template to see the expected columns: ", templateLinks())));
+// ---- Upload results: one line per file of the current batch, inside the upload card ----
+// waiting -> checking -> confirm -> imported / linked, or refused / skipped. Successful lines clear themselves
+// 10 s after the whole batch is done; files that were not accepted stay (with template links) until the next upload.
+const UP_STATE = { waiting: ["Waiting", "•"], checking: ["Checking…", "…"], confirm: ["Confirm below", "✎"], imported: ["Imported", "✓"],
+  linked: ["Linked", "✓"], skipped: ["Already imported", "✓"], refused: ["Not accepted", "✕"] };
+const UP_FINAL = new Set(["imported", "linked", "skipped", "refused"]);
+let upHideTimer = null;
+function batchSet(i, state, detail) {
+  if (!S.batch) S.batch = [];
+  if (i == null || !S.batch[i]) { S.batch.push({ name: "file", state, detail }); } else { Object.assign(S.batch[i], { state, detail }); }
+  renderBatch();
 }
+function renderBatch() {
+  const list = S.batch || [];
+  clearTimeout(upHideTimer);
+  if (!list.length) return put("up-results");
+  const done = list.filter((x) => UP_FINAL.has(x.state)).length, bad = list.filter((x) => x.state === "refused");
+  const allDone = done === list.length;
+  put("up-results", el("div", { class: "up-results" + (bad.length ? " has-bad" : ""), role: "status", "aria-live": "polite" },
+    el("div", { class: "upr-head" }, el("b", {}, "Upload results"),
+      el("span", { class: "muted small" }, allDone ? `${done - bad.length} of ${list.length} imported` : `${done} of ${list.length} done`),
+      el("button", { class: "iconbtn upr-x", title: "Hide", "aria-label": "Hide upload results", onclick: () => { S.batch = []; renderBatch(); } }, "✕")),
+    el("ul", { class: "upr-list" }, list.map((x) => el("li", { class: "upr st-" + x.state },
+      el("span", { class: "upr-ico", "aria-hidden": "true" }, UP_STATE[x.state][1]),
+      el("div", { class: "upr-main" }, el("div", { class: "upr-name" }, x.name, el("span", { class: "upr-badge" }, UP_STATE[x.state][0])),
+        x.detail ? el("div", { class: "upr-detail" }, x.detail) : null)))),
+    bad.length ? el("div", { class: "small upr-foot" }, bad.length === 1 ? "We couldn't use this file. " : `We couldn't use ${bad.length} files. `,
+      "Download a template to see the expected columns: ", templateLinks()) : null));
+  if (allDone) upHideTimer = setTimeout(() => { S.batch = (S.batch || []).filter((x) => x.state === "refused"); renderBatch(); }, 10000);
+}
+// A file that could not be used: its line in Upload results says why.
+function refused(f, reason) { batchSet(f._bi, "refused", reason); }
 // The expected layout for each file type, as a CSV with two example rows.
 const TEMPLATE_KINDS = [["bank", "Bank statement"], ["ledger", "General ledger"], ["ar", "Open invoices"], ["ap", "Vendor bills"],
   ["documents", "Supporting documents"], ["parties", "Customers & vendors"]];
@@ -764,15 +789,14 @@ async function uploadOne(f) {
     refused(f, `${ext} files are not supported. Accepted: ${ACCEPTED_TEXT}.`);
     msg("up-msg", ""); return nextInQueue();
   }
-  const left = S.queue.length ? ` (${S.queue.length} more after this)` : "";
   const fd = new FormData(); fd.append("file", f); fd.append("kind", "auto"); fd.append("hint", guessKind(f.name));
-  msg("up-msg", `Reading ${f.name} to work out what it is…`);
+  batchSet(f._bi, "checking", "Reading the file to work out what it is");
   try {
     const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, `Checking ${f.name}`, api(W("/uploads"), { method: "POST", form: fd }));
-    S.upload = r;
-    if (r.routed === "document") { msg("up-msg", `${f.name} is a receipt or invoice. Fields extracted; check them, then confirm${left}.`, "good"); return renderDocConfirm(); }
-    msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Confirm the mapping below${left}.`, "good"); renderMapping();
-  } catch (e) { refused(f, e.message); msg("up-msg", ""); nextInQueue(); }
+    S.upload = r; r._bi = f._bi;
+    if (r.routed === "document") { batchSet(f._bi, "confirm", "Receipt or invoice. Check the fields below, then confirm."); return renderDocConfirm(); }
+    batchSet(f._bi, "confirm", `Recognised as ${KIND[r.kind] || r.kind_label} · ${r.rows} rows. Confirm the columns below.`); renderMapping();
+  } catch (e) { refused(f, e.message); nextInQueue(); }
 }
 // "File 2 of 7" while a batch is being confirmed one by one.
 function batchPos() {
@@ -803,7 +827,10 @@ function renderMapping() {
   const confirm = (label) => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
     const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
     try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
-      toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
+      const h = r.health || {}, rej = (h.rejected || []).length, label = KIND[u.kind] || u.kind_label;
+      if (r.state === "DUPLICATE_BATCH") batchSet(u._bi, "skipped", `${label} · same file was imported earlier, so no rows were added twice.`);
+      else batchSet(u._bi, "imported", `${label} · ${h.accepted != null ? h.accepted : u.rows} rows imported` +
+        (rej ? ` · ${rej} row${rej === 1 ? "" : "s"} could not be read (see Import health)` : ""));
       await refreshWs(); nextInQueue(); }
     catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
   }, "Importing…") }, label);
@@ -834,7 +861,8 @@ async function refreshWs() {
 function staleUpload() {
   const name = S.upload ? S.upload.filename : "The file";
   resetIntakeUi();
-  msg("up-msg", `${name} is no longer on this client: its data was cleared. Upload it again if you still need it.`, "err");
+  S.batch = [{ name, state: "refused", detail: "No longer on this client: its data was cleared. Upload it again if you still need it." }];
+  renderBatch();
 }
 // Several people can work on the same client. When this tab comes back into view, re-read the client so a
 // clear, upload or run done elsewhere is reflected (at most every 3 seconds).
@@ -852,7 +880,7 @@ function renderDocConfirm() {
   const go = () => el("button", { class: "primary", onclick: async () => {
         const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
         try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } }); box.classList.add("hidden");
-          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await refreshWs(); nextInQueue(); }
+          batchSet(u._bi, "linked", `Receipt / invoice · linked to reference ${fields.reference}`); await refreshWs(); nextInQueue(); }
         catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } } },
     S.queue.length ? "Confirm & next file →" : "Confirm & link document");
   put(box, mapBar(`Confirm document · ${u.filename}`, `${u.pages} page${u.pages > 1 ? "s" : ""}`, go()),
