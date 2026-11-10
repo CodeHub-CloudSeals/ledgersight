@@ -50,7 +50,7 @@
 
   /* ---------- 2. page transitions + entrance of freshly rendered content ---------- */
   let windowUntil = performance.now() + 1500;   // entrance animations only right after a page opens (never on live polling)
-  const ENTER = ".hero-l,.hero-r,.kw,.ch-card,.cc,.pfc,li.tl,.ag-card,.stage,.kpi,tbody>tr,.ss-row";
+  const ENTER = ".ovh-l,.ovh-r,.kw,.ch-card,.cc,.pfc,li.tl,.ag-card,.stage,.kpi,tbody>tr,.ss-row";
   let queue = [], qTimer = 0;
   function flush() {
     const all = queue; queue = [];

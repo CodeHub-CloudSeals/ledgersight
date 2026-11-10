@@ -1594,3 +1594,20 @@ table tr:hover td{background:var(--accent-soft)}
 .cj-var-plot{height:92px}
 .cj-var-ax{display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
 .cj-var-ax .lo{color:var(--bad);font-weight:600}
+
+/* ---------- overview page header (replaces the hero card) + underline section tabs ---------- */
+.ov-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;margin:4px 0 0}
+.ov-head .ovh-l{min-width:0}
+.ov-head .greet{font-size:13px;color:var(--muted);font-weight:500}
+.ov-head h2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 4px;font-size:28px;font-weight:700;letter-spacing:-.025em;color:var(--navy,var(--text))}
+.ov-head .hero-meta{font-size:13.5px;color:var(--muted)}
+.ov-head .ovh-r{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.ov-head .next-k{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.ov-head .next-btns{display:flex;gap:8px;flex-wrap:wrap}
+.ov-head .primary{padding:10px 18px;border-radius:10px;box-shadow:0 8px 20px -10px color-mix(in srgb,var(--accent) 70%,transparent)}
+.ov-tabs{width:auto;max-width:none;margin:20px 0 4px;padding:0;gap:22px;background:none;border:0;border-bottom:1px solid var(--line);border-radius:0}
+.ov-tab{position:relative;padding:10px 2px 12px;border-radius:0;font-size:13.5px;background:none}
+.ov-tab:hover{background:none;color:var(--text)}
+.ov-tab.active{background:none;color:var(--accent)}
+.ov-tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px 2px 0 0;background:var(--accent)}
+@media (max-width:640px){.ov-head{align-items:flex-start}.ov-head .ovh-r{width:100%}.ov-head .next-k{display:none}.ov-head h2{font-size:24px}}

@@ -389,26 +389,17 @@ async function renderOverview() {
   const r = S.run && S.run.result;
   const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
   const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
-  // Hero: client, period, status, next step; ring = share of bank transactions matched automatically (same figure as the KPI).
-  const R = 54, C = 2 * Math.PI * R, f = pct == null ? 0 : Math.min(1, pct / 100);
+  // Page header (replaces the big hero: match %, counts and period already live in the KPIs, top bar and stepper).
   put("ov-hero",
-    el("div", { class: "hero-l" },
+    el("div", { class: "ovh-l" },
       el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
       el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · ")),
-      el("div", { class: "next" }, el("span", { class: "next-k" }, "Next step"),
-        el("div", { class: "next-btns" },
-          el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →"),
-          done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null))),
-    el("div", { class: "hero-r" },
-      el("div", { class: "hero-ring" },
-        sv("svg", { viewBox: "0 0 128 128", "aria-hidden": "true" }, sv("circle", { cx: 64, cy: 64, r: R, class: "ht" }),
-          pct ? sv("circle", { cx: 64, cy: 64, r: R, class: "hv", "stroke-dasharray": `${C * f} ${C}`, transform: "rotate(-90 64 64)" }) : null),
-        el("div", { class: "hm" }, el("b", {}, pct == null ? "–" : counter("h-pct", pct, (n) => `${n}%`)), el("span", {}, pct == null ? "no run yet" : "matched automatically"))),
-      el("ul", { class: "hero-stats" },
-        el("li", {}, el("span", {}, "Bank transactions"), el("b", {}, r ? String(bankLines) : "–")),
-        el("li", {}, el("span", {}, "Matched"), el("b", {}, r ? String(r.matches.length) : "–")),
-        el("li", {}, el("span", {}, "Open for review"), el("b", {}, r ? String(st.open_exceptions) : "–")))));
+      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
+    el("div", { class: "ovh-r" },
+      el("span", { class: "next-k" }, "Next step"),
+      el("div", { class: "next-btns" },
+        done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
+        el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →"))));
   const nSrc = SOURCE_KINDS.filter((k) => st[k]).length;
   const decided = r ? r.exceptions.length - st.open_exceptions : 0;
   const vSeries = r && S.run.id === st.last_run ? varianceSeries(S.run) : null;
