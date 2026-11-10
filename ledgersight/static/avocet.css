@@ -1165,10 +1165,6 @@ body.ask-open .ask-fab{opacity:0;pointer-events:none;transform:scale(.8)}
 /* phones: let the sign-in column shrink to the screen, solid card, no duplicate brand line (card shows the logo) */
 @media (max-width:980px){.lg-side{min-width:0;padding:24px 16px}.lg-side .lg-col{width:100%;max-width:420px;min-width:0}
   .lg-side .login-card{background:var(--surface);backdrop-filter:none}.lg-mbrand{display:none}}
-/* Sources: the upload card matches the Source status card's height by letting the drop area fill the space
-   (no empty block under the Google Drive connector) */
-#p-import .grid.two>.card:first-child{display:flex;flex-direction:column}
-#p-import #dz-target{flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px}
 /* Sidebar: no visible scrollbar (the menu still scrolls with the wheel / trackpad when the window is short) */
 .sidebar{scrollbar-width:none}.sidebar::-webkit-scrollbar{display:none}
 
@@ -1228,3 +1224,24 @@ body.ask-open .ask-fab{opacity:0;pointer-events:none;transform:scale(.8)}
    mouse wheel, trackpad, keyboard and touch; only the bars are hidden. */
 html,body,*{scrollbar-width:none}
 html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{display:none;width:0;height:0}
+/* Scrolling the menu (or a table, list or the Ask panel) to its end never carries on into the page behind it */
+.sidebar,.tablewrap,.upr-list,#ask-scroll,.drawer-body{overscroll-behavior:contain}
+/* Login card: CloudSeals name beside the logo */
+.lg-card-brand{display:flex;align-items:center;gap:12px;margin:0 0 14px}.lg-card-brand .lg-card-logo{margin:0}
+.lg-card-brand span{font-size:20px;font-weight:700;letter-spacing:-.01em;color:var(--text)}
+/* Review card: final decision + comments & decisions trail */
+.xdec{margin:12px 0;padding:12px 14px;border-radius:var(--r);border:1px solid var(--ok-line);background:var(--ok-bg)}
+.xdec.xdec-bad{border-color:var(--bad-line);background:var(--bad-bg)}
+.xdec-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.xdec-note{margin:6px 0 4px;font-size:var(--fs);color:var(--text)}
+.xtrail{margin:12px 0;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2)}
+.xtrail ul{margin:6px 0 0}
+.xtrail li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.xtrail li:first-child{border-top:0}
+.xt-by{font-size:var(--fs-sm);font-weight:600;color:var(--text-2)}
+.xt-note{flex-basis:100%;font-size:var(--fs-sm);color:var(--text)}
+/* Sources: the upload card fits its content (no stretched, empty drop area). On wide screens it stays in view
+   while the longer Source status list beside it is scrolled. */
+#p-import .grid.two{align-items:start}
+#p-import #dz-target{padding:26px 22px 24px}
+@media (min-width:981px){#p-import .grid.two>.card:first-child{position:sticky;top:76px}}

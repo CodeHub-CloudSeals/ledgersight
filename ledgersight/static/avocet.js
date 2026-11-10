@@ -57,7 +57,16 @@ const msg = (id, text, kind) => {
   if (text && kind === "good") MSG_TIMERS[id] = setTimeout(() => { if (n.textContent === text) { n.textContent = ""; n.className = "msg"; } }, 7000);
 };
 
-async function api(path, opts = {}) {
+// An identical read (GET) that is already on its way is shared instead of being sent twice. Writes never are.
+const INFLIGHT = {};
+function api(path, opts = {}) {
+  const shareable = !opts.method && opts.json === undefined && !opts.form;
+  if (shareable && INFLIGHT[path]) return INFLIGHT[path];
+  const p = apiFetch(path, opts);
+  if (shareable) { INFLIGHT[path] = p; p.then(() => {}, () => {}).then(() => { if (INFLIGHT[path] === p) delete INFLIGHT[path]; }); }
+  return p;
+}
+async function apiFetch(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "x-ledgersight": "1" }, credentials: "same-origin" };
   if (opts.json !== undefined) { o.headers["content-type"] = "application/json"; o.body = JSON.stringify(opts.json); }
   if (opts.form) o.body = opts.form;
@@ -133,9 +142,12 @@ $("lg-btn").onclick = async () => {
 ["lg-user", "lg-pw", "lg-code"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") $("lg-btn").click(); }));
 $("logout").onclick = async () => { await api("/v1/logout", { method: "POST" }); location.reload(); };
 
+// "Who am I" is asked at the same time as the login settings (not after them), saving a round trip on every load.
+S.firstMe = api("/v1/me"); S.firstMe.catch(() => {});
 async function boot() {
   await authConfig;
-  try { S.me = await api("/v1/me"); } catch (_) { showLogin(); return; }
+  const meP = S.firstMe || api("/v1/me"); S.firstMe = null;
+  try { S.me = await meP; } catch (_) { showLogin(); return; }
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
   $("logout").classList.toggle("hidden", !!S.noLogin);
   $("me-name").parentElement.classList.toggle("hidden", !!S.noLogin);
@@ -152,25 +164,30 @@ async function boot() {
   put("ws-select", S.wsList.map((w) => el("option", { value: w.id }, proper(w.name))));
   S.ws = S.wsList[0] && S.wsList[0].id;
   document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer" || !!S.noLogin);
-  await switchWs();
+  await switchWs(S.wsList);  // the client list was just fetched: don't ask for it again
   const fromHash = location.hash.slice(1);
   if (fromHash === "ask") openAsk();
-  else if (fromHash && document.getElementById("p-" + fromHash)) go(fromHash);
+  else if (fromHash && fromHash !== "home" && document.getElementById("p-" + fromHash)) go(fromHash);  // Overview is already shown
 }
 const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", support: "Support" };
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
-async function switchWs() {
+async function switchWs(list) {
   S.run = null; S.agents = null; S.anim = null; renderPipelines(); resetIntakeUi();
-  const w = await api(W());
+  // The Overview's TrustOps summary and agent status start now, alongside the client's details.
+  S.ovPrefetch = Promise.all([isActive("home") ? refreshEvidence().catch(() => {}) : null, loadAgents()]);
+  const w = await api(W("?with_run=1"));  // client details + latest run in one request
   S.wsMeta = w;
   renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
-  if (w.runs.length) S.run = await api(W(`/runs/${w.runs[w.runs.length - 1].id}`));
-  renderRun(); renderExceptions(); renderControls(); await renderEvidence(); await renderTrust();
+  S.run = w.latest_run || (w.runs.length ? await api(W(`/runs/${w.runs[w.runs.length - 1].id}`)) : null);
+  renderRun(); renderExceptions(); renderControls();
   S.asks = S.asks.filter((x) => x.ws === S.ws); renderAskLog(); if (S.askOpen) renderAsk(); if (isActive("reports")) renderReports();
-  if (S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
   fillProfile(w);
-  await progress();
+  await progress(list);
+  // Pages that are not on screen load their own data when opened (Audit trail, Data & security, People).
+  if (isActive("evidence")) renderEvidence();
+  if (isActive("trust")) renderTrust();
+  if (isActive("team") && S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
 }
 
 // ---------------- progress: stepper + overview ----------------
@@ -182,8 +199,8 @@ function markExported() {  // the Report step is done once this run's report has
   setTimeout(progress, 300);
 }
 const STEPS = [["Import", "import"], ["Confirm columns", "import"], ["Reconcile", "recon"], ["Review", "exceptions"], ["Report", "reports"]];
-async function progress() {
-  S.wsList = await api("/v1/workspaces");
+async function progress(list) {
+  S.wsList = list || await api("/v1/workspaces");  // reuse a list fetched a moment ago (first load) instead of asking twice
   const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
   const st = w.status;
   const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0, !!S.exported[S.ws + st.last_run]];
@@ -245,19 +262,21 @@ async function renderOverview() {
     tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
     tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
   renderCaseCards(r && S.run.id === st.last_run ? r : null);
-  if (isActive("home")) { try { await renderEvidence(); } catch (_) { /* counts fall back to last loaded */ } }
-  const ev = S.events || [];
-  const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
-  put("ov-gov", el("div", { class: "kpis" }, [["ALLOW", cnt("ALLOW")], ["ESCALATE", cnt("ESCALATE")], ["DENY", cnt("DENY")], ["Evidence", S.verify || "–"]]
+  // The TrustOps counts and recent activity come from a small summary, fetched at the same time as the agents
+  // (the full audit trail is only downloaded on the Audit trail page).
+  const pre = S.ovPrefetch; S.ovPrefetch = null;  // already started by switchWs on first load
+  await (pre || Promise.all([isActive("home") ? refreshEvidence().catch(() => {}) : null, loadAgents()]));
+  const sm = S.evsum || { counts: {}, recent: [], verification: {} };
+  const cnt = (k) => (sm.counts && sm.counts[k]) || 0;
+  const vstate = (sm.verification && sm.verification.state) || S.verify || "–";
+  put("ov-gov", el("div", { class: "kpis" }, [["ALLOW", cnt("ALLOW")], ["ESCALATE", cnt("ESCALATE")], ["DENY", cnt("DENY")], ["Evidence", vstate]]
       .map(([k, v]) => el("div", { class: "kpi" }, el("div", { class: "k" }, k), el("div", { class: "v" }, el("span", { class: "badge " + (k === "Evidence" ? v : k) }, String(v)))))),
     el("div", { class: "muted small" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
-  const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
-  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => el("li", {}, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)),
+  put("ov-activity", (sm.recent || []).map((e) => el("li", {}, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)),
     el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)} `,
       el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0]),
       e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
-  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
-  await loadAgents();
+  if (!(sm.recent || []).length) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
 }
 // Exceptions grouped by what the client sees. Every case is a link to its detail in the review queue.
 const CASE_ORDER = ["UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
@@ -291,7 +310,7 @@ function fillProfile(w) {
 $("pf-save").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   try {
     const r = await api(W("/profile"), { method: "POST", json: { name: $("pf-name").value, period: $("pf-period").value, industry: $("pf-industry").value } });
-    msg("pf-msg", ""); toast("Client profile saved. The change is recorded in the audit trail.", "good"); S.wsMeta = r; await renderEvidence(); await progress();
+    msg("pf-msg", ""); toast("Client profile saved. The change is recorded in the audit trail.", "good"); S.wsMeta = r; await refreshEvidence(); await progress();
   } catch (e) { msg("pf-msg", e.message, "err"); }
 }, "Saving…");
 document.addEventListener("click", (e) => { const a = e.target.closest("[data-go]"); if (a) { e.preventDefault(); go(a.dataset.go); } });
@@ -486,6 +505,8 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "reports") renderReports();
   if (t.dataset.tab === "rules") renderRules();
   if (t.dataset.tab === "controls") renderProof();
+  if (t.dataset.tab === "trust") renderTrust();
+  if (t.dataset.tab === "team" && S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
   if (t.dataset.tab === "recon") progress();  // never judge "ready to run" from stale status
   if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
 });
@@ -845,9 +866,8 @@ function renderMapping() {
       fields.map((f) => { const s = el("select", {}, el("option", { value: "" }, "— not mapped —"), u.header.map((h) => el("option", { value: h, selected: h === u.proposed_mapping[f] }, h))); selects[f] = s;
         return el("tr", {}, el("td", {}, nice(f)), el("td", {}, s)); })),
     el("details", { class: "gap map-prev" }, el("summary", {}, `Preview first ${u.preview.length} rows`),
-      el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))))),
-    el("div", { class: "row gap" }, confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")));
-  showMappingCard(box);
+      el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))))));
+  showMappingCard(box);  // one confirm button only: in the bar at the top, which stays visible while scrolling
 }
 // After any upload, confirmation or clear: redraw the Sources page AND refresh the book's status, so the
 // stepper, Overview and the Run button know the bank statement / ledger are now present.
@@ -893,7 +913,7 @@ function renderDocConfirm() {
       ["vendor", "reference", "date", "amount"].map((k) => { const f = u.fields[k]; const i = el("input", { value: f.value }); inputs[k] = i;
         return el("tr", {}, el("td", {}, nice(k)), el("td", {}, i), el("td", { class: "small" }, f.page ? `p${f.page} · “${f.source_text}”` : f.source_text),
           el("td", {}, el("span", { class: "badge " + (f.confidence === "high" ? "PASS" : f.confidence === "none" ? "FAIL" : "UNKNOWN") }, f.confidence))); })),
-    el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type, go()));
+    el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type));  // confirm is in the top bar only
   showMappingCard(box);
 }
 function renderDocs(docs) {
@@ -1041,6 +1061,39 @@ const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el(
 const TYPE_LABEL = { POSSIBLE_DUPLICATE: "Possible duplicate charge", PARTIAL_RECEIPT: "Partial payment received", MISSING_GL: "Bank debit not in ledger",
   MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment",
   TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing" };
+// Review comments: every step on an item (proposed, returned, approved, rejected) with who, when and the comment.
+const STEP_LABEL = { PROPOSE: ["Proposed", "SIMULATED"], ACCEPT: ["Approved", "ACCEPTED"], REJECT: ["Rejected", "REJECTED"], RETURN: ["Returned to preparer", "RETURNED"] };
+const when = (t) => (t ? new Date(t).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "");
+function reviewSteps(x) {
+  const steps = (x.history || []).map((h) => ({ kind: h.decision, by: h.by, at: h.at, note: h.note }));
+  if (x.proposed_by) steps.push({ kind: "PROPOSE", by: x.proposed_by, at: x.proposed_at, note: x.proposal_note });
+  return steps.sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+}
+// The final decision of a decided item, shown clearly at the top of its card.
+function decisionBox(x) {
+  if (!(x.status === "ACCEPTED" || x.status === "REJECTED")) return null;
+  const ok = x.status === "ACCEPTED";
+  return el("div", { class: "xdec " + (ok ? "xdec-ok" : "xdec-bad") },
+    el("div", { class: "xdec-h" }, el("span", { class: "badge " + x.status }, ok ? "Approved" : "Rejected"),
+      el("b", {}, `by ${x.reviewer}`), el("span", { class: "muted small" }, when(x.reviewed_at))),
+    el("div", { class: "xdec-note" }, x.review_note ? `“${x.review_note}”` : el("span", { class: "muted" }, "No comment added")),
+    el("div", { class: "muted small" }, `${x.approval_id} · ${x.approval_policy || "POL-06"} · ${x.effect || "Nothing posted to any accounting system or bank."}`));
+}
+// Everything said on the item, oldest first. For a decided item the final decision is in decisionBox, so it is left out here.
+function commentTrail(x) {
+  let steps = reviewSteps(x);
+  if (x.status === "ACCEPTED" || x.status === "REJECTED") {  // the final decision is already shown in decisionBox
+    const i = steps.map((s) => s.kind).lastIndexOf(x.status === "ACCEPTED" ? "ACCEPT" : "REJECT");
+    if (i >= 0) steps.splice(i, 1);
+  }
+  if (!steps.length) return null;
+  return el("div", { class: "xtrail" }, el("div", { class: "xs-k" }, "Comments & decisions"),
+    el("ul", { class: "plain" }, steps.map((s) => el("li", {},
+      el("span", { class: "badge " + (STEP_LABEL[s.kind] || [s.kind, ""])[1] }, (STEP_LABEL[s.kind] || [nice(s.kind)])[0]),
+      el("span", { class: "xt-by" }, `${s.by}${s.at ? " · " + when(s.at) : ""}`),
+      el("div", { class: "xt-note" }, s.note ? `“${s.note}”` : el("span", { class: "muted" }, "No comment added"))))),
+    x.status === "RETURNED" ? el("div", { class: "muted small" }, "Waiting for a new proposal, then a CPA reviewer decides.") : null);
+}
 // Client-facing case status (an open case is never shown as completed)
 const CASE_STATUS = { DUPLICATE: "Duplicate", PARTIAL: "Partial", UNMATCHED: "Unmatched", TAX_REVIEW: "Tax review", FX_REVIEW: "FX review", APPROVAL_REQUIRED: "Approval required" };
 const caseStatus = (x) => x.status === "ACCEPTED" || x.status === "REJECTED" ? `${nice(x.status)} by ${x.reviewer}` : (CASE_STATUS[x.client_status] || nice(x.client_status || x.type));
@@ -1091,7 +1144,7 @@ function renderExceptions() {
   put("exc-list", bar, shown.map((x) => {
     const note = el("textarea", { rows: 2, placeholder: "Add a note (saved with your name in the audit trail)", "aria-label": "Review note" });
     const out = el("div", { class: "msg" });
-    const fail = (e) => { out.textContent = denyText(e); out.className = "msg err"; renderEvidence(); };
+    const fail = (e) => { out.textContent = denyText(e); out.className = "msg err"; refreshEvidence(); };
     const act = (d) => async () => {
       try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/decisions`), { method: "POST", json: { decision: d, note: note.value } });
         Object.assign(x, res); S.excSeen.add(x.id); renderExceptions(); renderRun(); renderResults(); }
@@ -1125,8 +1178,7 @@ function renderExceptions() {
         x.reason_code ? el("div", { class: "xmiss" }, el("b", {}, "Reason: "), x.reason_code) : null,
         el("div", { class: "muted small" }, x.type === "TAX_REVIEW" ? "Review required. No tax liability or amount is asserted; nothing is filed or paid."
           : "Human review. No exchange rate is invented and the payment is not auto-matched.")) : null,
-      x.proposed_by ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Proposed resolution · by ${x.proposed_by}`), el("div", {}, x.proposal_note ? `“${x.proposal_note}”` : "(no note)")) : null,
-      x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
+      decisionBox(x), commentTrail(x),
       el("details", { class: "xd" }, el("summary", {}, "Details"),
         el("dl", {},
           el("dt", {}, "Rule"), el("dd", {}, el("span", { class: "rid" }, x.rule_id)),
@@ -1147,7 +1199,7 @@ function renderExceptions() {
           el("div", { class: "xa-hint" }, reviewer
             ? "Propose a resolution for another CPA reviewer, or decide it yourself. You can't approve a resolution you proposed (maker-checker rule)."
             : "You propose. A CPA reviewer who didn't propose it decides."), out)
-        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}`));
+        : null);
   }));
 }
 
@@ -1166,7 +1218,7 @@ const ATTACKS = [
 function renderControls() {
   put("attack-grid", ATTACKS.map((a) => el("div", { class: "card" }, el("div", { class: "card-title" }, a.t), el("div", { class: "muted small" }, a.d),
     el("div", { class: "row" }, el("button", { class: "danger", onclick: () => attempt(a) }, "Attempt")))));
-  renderProof();
+  if (isActive("controls")) renderProof();  // otherwise loaded when the Guardrails page is opened
 }
 // ---------------- TrustOps proof: ALLOW / ESCALATE / DENY / DENY, read from the signed audit trail ----------------
 async function renderProof() {
@@ -1178,12 +1230,12 @@ async function renderProof() {
     if (c.key === "deny_preparer_approval" && isPrep && firstOpen) return el("button", { class: "danger", onclick: async () => {
       try { await api(W(`/runs/${S.run.id}/exceptions/${firstOpen.id}/decisions`), { method: "POST", json: { decision: "ACCEPT", note: "" } }); }
       catch (e) { toast(denyText(e), "bad"); }
-      renderProof(); renderEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
+      renderProof(); refreshEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
     if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin ? "Switch “Acting as” to Staff Preparer to try it." : "Sign in as a staff preparer to try it.");
     if (c.key === "deny_cross_client") return el("button", { class: "danger", onclick: async () => {
       const q = "Show bank transactions for another client";
       try { const a = await api(W("/ask"), { method: "POST", json: { question: q } }); S.asks.push({ q, a, ws: S.ws }); renderAskLog(); } catch (_) { /* refusal is the point */ }
-      renderProof(); renderEvidence(); } }, "Try: ask for another client's data");
+      renderProof(); refreshEvidence(); } }, "Try: ask for another client's data");
     return null;
   };
   const row = (k, v, cls) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", cls ? { class: cls } : {}, v)];
@@ -1235,6 +1287,13 @@ async function attempt(a) {
 }
 
 // ---------------- evidence ----------------
+// After an action: refresh the full trail only if the Audit trail page is open; otherwise just the small summary
+// (counts, verification state, latest actions) that the Overview shows.
+async function refreshEvidence() {
+  if (!S.ws) return;
+  if (isActive("evidence")) return renderEvidence();
+  S.evsum = await api(W("/evidence/summary")); S.verify = S.evsum.verification.state;
+}
 async function renderEvidence() {
   if (!S.ws) return;
   const ev = await api(W("/evidence"));

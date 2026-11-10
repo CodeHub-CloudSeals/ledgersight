@@ -10,7 +10,7 @@ Synthetic data only. Read-only: never post to a ledger, pay, or email anyone.
 - App: Run and Debug -> "LedgerSight (local demo)" (F5) -> http://127.0.0.1:8090. Launch config sets AVOCET_NO_LOGIN=1 (local demo: no login screen, "Acting as" switch
   between CPA Reviewer / Staff Preparer). Honoured only with MFA off + insecure cookie; hosted keeps login.
   Without it: user `presenter`, password from `.env` (gitignored; template `.env.example`). Upload test pack: `demo_files/` (see its README).
-- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-10: 207 passed, incl. tests/test_cpa_demo.py, tests/test_upload_detection.py). Keep all existing tests green; add tests for every change.
+- Tests: `.venv\Scripts\python.exe -m pytest -q` (baseline 2026-11-10: 217 passed, incl. tests/test_cpa_demo.py, tests/test_upload_detection.py, tests/test_performance_and_polish.py). Keep all existing tests green; add tests for every change.
   Use the .venv: with a user-site (Windows Store) Python, the isolated PDF subprocess (`python -I`) cannot import pdfplumber and 13 PDF tests fail.
 - State persists in AVOCET_DATA_DIR (SQLite ledgersight.db + uploaded files + signing-key.pem). Restart keeps
   everything; delete the folder for a truly empty start. AVOCET_PERSIST=0 = memory only. See PRODUCTION.md.
@@ -65,6 +65,17 @@ successes clear 10 s after the batch, refusals stay. No visible scrollbars anywh
 Polish: Matched table has fixed columns (id + date + description, "Exact match · Ref X · same day"); Run stages
 summaries are plain words (service._stages; technical text in `detail`/`files`, shown via "Show technical details");
 Review queue has a Type filter; Overview shows six case groups on one row and no industry under the client name.
+
+## 11/11 action items (built 2026-11-10, tests in tests/test_performance_and_polish.py)
+Latency: Overview uses GET /evidence/summary (counts + verification + recent) instead of the whole trail; the full
+trail loads only on the Audit trail tab. GET /workspaces/{wid}?with_run=1 includes latest_run; signature check is
+cached per chain state (`Service._verify`; the tamper check stays uncached); GETs are de-duplicated in `api()`;
+static files are no-cache + ETag (304), data is no-store. Measured at 300 ms latency: 4.3 s -> 2.2 s, 14 -> 7 requests.
+CSV export starts with a "LedgerSight Review Export" header block (client, period, run, trace, rulebook, by, at);
+review-pack.json starts with report/title/report_id. Review cards show a decision box (.xdec, classes xdec-ok/xdec-bad,
+never .ok/.bad = button styles) and a "Comments & decisions" trail. Chat button = question bubble icon. One confirm
+button in column mapping. Menu/page scroll separately (overscroll-behavior:contain). Upload card is sized to its
+content and sticky on wide screens. Login card shows the logo + "CloudSeals".
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else

@@ -210,11 +210,12 @@ def test_upload_results_panel_replaces_corner_popups():
     assert "10000" in panel and 'x.state === "refused"' in panel
 
 
-def test_sources_upload_card_has_no_empty_block_under_the_connector():
-    """The drop area grows to fill the upload card, so it matches the Source status card without a gap."""
+def test_sources_upload_card_fits_its_content():
+    """11/11: the upload card fits its content (no stretched empty drop area) and stays in view on wide screens."""
     css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
-    assert "#p-import .grid.two>.card:first-child{display:flex;flex-direction:column}" in css
-    assert "#p-import #dz-target{flex:1 1 auto;" in css
+    assert "#p-import .grid.two{align-items:start}" in css
+    assert "#p-import #dz-target{flex:1 1 auto;" not in css
+    assert "#p-import .grid.two>.card:first-child{position:sticky;top:76px}" in css
 
 
 def test_polish_matched_table_stages_review_filter_overview():

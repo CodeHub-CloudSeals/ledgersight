@@ -105,7 +105,9 @@ async def headers(request: Request, call_next):
     resp.headers["X-Request-ID"] = rid
     resp.headers.update({
         "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-        "Cache-Control": "no-store",
+        # Data is never cached. The app's own static files (script, styles, images) may be kept by the browser but
+        # are re-checked on every load (ETag -> 304 when unchanged), so a deploy still takes effect immediately.
+        "Cache-Control": "no-cache" if request.url.path.startswith("/static/") else "no-store",
         "Content-Security-Policy": CSP,
     })
     if SECURE_COOKIE:
@@ -312,11 +314,15 @@ def workspaces(u=Depends(current_user)):
 
 
 @app.get("/v1/workspaces/{wid}")
-def workspace(wid: str, u=Depends(current_user)):
+def workspace(wid: str, with_run: int = 0, u=Depends(current_user)):
+    """with_run=1 also returns the latest run, so the first page load needs one request instead of two."""
     w = handle(svc.gate, u, wid, "workspace.read")
-    return {"id": wid, **w.meta, "status": svc.status(wid), "uploads": list(w.uploads.values()),
-            "documents": svc.documents(w), "held": list(w.held.values()),
-            "runs": [{"id": r["id"], "created_at": r["created_at"], "created_by": r["created_by"]} for r in w.runs.values()]}
+    out = {"id": wid, **w.meta, "status": svc.status(wid), "uploads": list(w.uploads.values()),
+           "documents": svc.documents(w), "held": list(w.held.values()),
+           "runs": [{"id": r["id"], "created_at": r["created_at"], "created_by": r["created_by"]} for r in w.runs.values()]}
+    if with_run and w.runs:
+        out["latest_run"] = _run_view(list(w.runs.values())[-1])
+    return out
 
 
 @app.post("/v1/workspaces/{wid}/uploads")
@@ -537,6 +543,12 @@ def trace(wid: str, line_id: str, u=Depends(current_user)):
 @app.get("/v1/workspaces/{wid}/evidence")
 def evidence(wid: str, u=Depends(current_user)):
     return handle(svc.evidence, u, wid)
+
+
+@app.get("/v1/workspaces/{wid}/evidence/summary")
+def evidence_summary(wid: str, u=Depends(current_user)):
+    """Decision counts, verification state and the latest actions, for the Overview (not the whole trail)."""
+    return handle(svc.evidence_summary, u, wid)
 
 
 @app.post("/v1/workspaces/{wid}/evidence/tamper-check")
