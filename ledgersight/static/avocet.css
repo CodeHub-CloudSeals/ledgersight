@@ -1695,3 +1695,12 @@ table tr:hover td{background:var(--accent-soft)}
 .stl .sg-meta .mono{font-size:11px;word-break:break-all}
 .stl-foot{padding-top:10px;border-top:1px solid var(--line)}
 @media (max-width:760px){.stl .stage{grid-template-columns:28px minmax(0,1fr)}.stl .sg-meta{grid-column:2;align-items:flex-start;text-align:left}.stages-fold .sf-more{margin-left:0}}
+/* top bar: client + period never shrink (fixes the dropdown arrow overlapping the "/" separator); page name and search give way */
+.tb-left{flex:0 1 auto;min-width:0}
+.tb-left .ws-pill,.tb-left .period-chip,.tb-left .tb-sep{flex:none}
+.tb-left .ws-pill select{field-sizing:content;min-width:60px;padding-right:24px;background-position:calc(100% - 11px) 55%,calc(100% - 6px) 55%}
+.tb-left .crumb{flex:0 1 auto;min-width:0;overflow:hidden}
+.tb-left .crumb b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tb-search{flex:0 1 340px;min-width:44px}
+.tb-right{flex:none}
+@media (max-width:1280px){.tb-left .crumb,.tb-left .tb-sep:last-of-type{display:none}}
