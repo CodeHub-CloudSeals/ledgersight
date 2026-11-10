@@ -10,46 +10,39 @@
 <body>
 
 <section id="login" class="login hidden">
-  <div class="login-visual" id="lv" aria-hidden="true">
-    <div class="holo-grid"></div>
-    <div class="holo-blob b1" data-depth="18"></div>
-    <div class="holo-blob b2" data-depth="-14"></div>
-    <div class="holo-blob b3" data-depth="10"></div>
-    <div class="lv-spot" id="lv-spot"></div>
-    <div class="lv-inner">
+  <div class="lg-art">
+    <div class="lg-bg" id="lv" data-depth="-12" aria-hidden="true"></div>
+    <div class="lg-sparks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="lg-hero">
       <div class="lv-brand m-in"><img src="/static/logo.svg" alt=""><span>CloudSeals</span></div>
       <div class="login-copy">
         <div class="eyebrow on-dark m-in">LedgerSight · Governed by TrustOps</div>
         <h2 class="m-words"><span class="ln">Every number reconciled.</span> <span class="ln ln-accent">Every step proven.</span></h2>
         <p class="m-in">LedgerSight matches your bank to your books. TrustOps checks every action and keeps a signed record, ready for your auditor.</p>
       </div>
-      <div class="lv-hero m-in">
-        <img src="/static/login-scene.webp" alt="" class="lv-scene" width="1110" height="1002" decoding="async">
-        <div class="lv-chip lv-chip-a" data-depth="14"><div class="lv-feed one" id="lv-feed"></div></div>
-        <div class="lv-chip lv-chip-b" data-depth="-10"><span class="lv-live"></span><span><b data-count="10">0</b> matched</span><span class="lv-sep"></span><span><b>$0.00</b> unexplained</span></div>
-      </div>
     </div>
   </div>
-  <div class="login-formside">
-    <div class="login-card" id="lg-card">
-      <div class="lg-mark m-in"><span class="lg-ring"></span><img src="/static/logo.svg" alt="CloudSeals" class="logo-lg"></div>
-      <div class="eyebrow m-in">CloudSeals · LedgerSight</div>
-      <h1 class="m-in">Welcome back</h1>
-      <p class="muted m-in" id="lg-hint">Invitation-only access.</p>
-      <div id="lg-pwform" class="m-in">
-        <label>User ID<input id="lg-user" autocomplete="username"></label>
-        <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
-        <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
-        <button id="lg-btn" class="primary wide lg-cta"><span>Sign in</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+  <div class="lg-side">
+    <div class="lg-col">
+      <div class="lv-brand lg-mbrand"><img src="/static/logo.svg" alt=""><span>CloudSeals</span></div>
+      <div class="login-card" id="lg-card">
+        <h1 class="m-in">Welcome back</h1>
+        <p class="muted m-in" id="lg-hint">Invitation-only access.</p>
+        <div id="lg-pwform" class="m-in">
+          <label>User ID<input id="lg-user" autocomplete="username"></label>
+          <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
+          <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
+          <button id="lg-btn" class="primary wide lg-cta"><span>Sign in</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+        <div id="lg-msg" class="msg"></div>
+        <div id="lg-google" class="lg-google hidden">
+          <div id="lg-divider" class="lg-divider"><span>or</span></div>
+          <div id="g_id_button"></div>
+        </div>
+        <div class="lg-trust m-in"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>Every sign-in is recorded in the signed audit trail</div>
       </div>
-      <div id="lg-msg" class="msg"></div>
-      <div id="lg-google" class="lg-google hidden">
-        <div id="lg-divider" class="lg-divider"><span>or</span></div>
-        <div id="g_id_button"></div>
-      </div>
-      <div class="lg-trust m-in"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>Every sign-in is recorded in the signed audit trail</div>
+      <div class="login-foot m-in">© CloudSeals · LedgerSight v1.0.0</div>
     </div>
-    <div class="login-foot m-in">© CloudSeals · LedgerSight v1.0.0 · Read-only</div>
   </div>
 </section>
 

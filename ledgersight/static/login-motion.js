@@ -90,20 +90,19 @@
 
   // Cursor spotlight and depth parallax on the brand panel; gentle 3D tilt on the sign-in card.
   if (!reduce) {
-    const lv = document.getElementById("lv"), spot = document.getElementById("lv-spot");
+    const spot = document.getElementById("lv-spot");
     const layers = [...root.querySelectorAll("[data-depth]")];
     let raf = 0, mx = 0.5, my = 0.5;
-    lv && lv.addEventListener("pointermove", (ev) => {
-      const r = lv.getBoundingClientRect(); mx = (ev.clientX - r.left) / r.width; my = (ev.clientY - r.top) / r.height;
+    root.addEventListener("pointermove", (ev) => {
+      const r = root.getBoundingClientRect(); mx = (ev.clientX - r.left) / r.width; my = (ev.clientY - r.top) / r.height;
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        spot.style.transform = `translate(${mx * r.width - 300}px, ${my * r.height - 300}px)`;
-        spot.style.opacity = "1";
+        if (spot) { spot.style.transform = `translate(${mx * r.width - 300}px, ${my * r.height - 300}px)`; spot.style.opacity = "1"; }
         layers.forEach((l) => { const d = +l.dataset.depth; l.style.translate = `${(mx - 0.5) * d}px ${(my - 0.5) * d}px`; });
       });
     });
-    lv && lv.addEventListener("pointerleave", () => { spot.style.opacity = "0"; layers.forEach((l) => { l.style.translate = "0 0"; }); });
+    root.addEventListener("pointerleave", () => { if (spot) spot.style.opacity = "0"; layers.forEach((l) => { l.style.translate = "0 0"; }); });
     const card = document.getElementById("lg-card");
     card && card.addEventListener("pointermove", (ev) => {
       const r = card.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width - 0.5, y = (ev.clientY - r.top) / r.height - 0.5;

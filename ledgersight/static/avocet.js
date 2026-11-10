@@ -99,7 +99,7 @@ async function setUpGoogleSignIn(clientId) {
   try {
     await loadScript("https://accounts.google.com/gsi/client");
     google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential });
-    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", width: 280 });
+    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", shape: "rectangular", logo_alignment: "center", width: Math.max(220, Math.min(400, ($("lg-card").clientWidth || 440) - 62)) });
     $("lg-google").classList.remove("hidden");
   } catch (_) { /* password sign-in still works without this */ }
 }
