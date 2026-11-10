@@ -270,7 +270,9 @@ function varianceSeries(run) {
   if (sum("bank") !== r.bank_net_cents || sum("ledger") !== r.ledger_net_cents) return null;
   const byDate = {};
   lines.forEach((l) => { if (l.kind === "bank" || l.kind === "ledger") byDate[l.date] = (byDate[l.date] || 0) + (l.kind === "bank" ? l.amount_cents : -l.amount_cents); });
-  let cum = 0; const out = Object.keys(byDate).sort().map((d) => (cum += byDate[d]));
+  const dates = Object.keys(byDate).sort();
+  let cum = 0; const out = dates.map((d) => (cum += byDate[d]));
+  out.dates = dates;
   return out.length && out[out.length - 1] === r.variance_cents ? out : null;
 }
 
@@ -423,7 +425,8 @@ async function renderOverview() {
       extra: r && r.exceptions.length ? progBar() : null }),
     kpiCard({ icon: "variance", label: "Variance", wide: true, value: r ? counter("k-v", r.variance_cents, usd) : "–",
       sub: r ? "bank net minus ledger net" : "",
-      extra: r ? el("div", {}, vSeries ? (() => { const sp = sparkline(vSeries, ""); sp.setAttribute("class", "spark spark-lg"); return sp; })() : null,
+      extra: r ? el("div", {}, vSeries ? (window.LSCharts ? LSCharts.variance({ values: vSeries, dates: vSeries.dates, fmtDate: shortDate, usd })
+          : (() => { const sp = sparkline(vSeries, ""); sp.setAttribute("class", "spark spark-lg"); return sp; })()) : null,
         el("div", { class: "kw-pair" }, el("span", {}, "Bank net", el("b", {}, usd(r.bank_net_cents))), el("span", {}, "Ledger net", el("b", {}, usd(r.ledger_net_cents))))) : null }),
     kpiCard({ icon: "unexplained", label: "Unexplained", tone: r ? (unx ? "bad" : "good") : "", cls: r ? "kw-status " + (unx ? "bad" : "good") : "",
       value: r ? counter("k-u", unx, usd) : "–", sub: r ? "after review items" : "",

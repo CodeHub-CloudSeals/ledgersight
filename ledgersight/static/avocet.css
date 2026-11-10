@@ -1588,3 +1588,9 @@ table tr:hover td{background:var(--accent-soft)}
 .ov-tab.active{background:var(--accent-soft);color:var(--accent)}
 .ov-tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ov-sec>:first-child{margin-top:14px}
+
+/* variance KPI chart */
+.cj-var{margin-top:12px}
+.cj-var-plot{height:92px}
+.cj-var-ax{display:flex;justify-content:space-between;gap:8px;margin-top:4px;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.cj-var-ax .lo{color:var(--bad);font-weight:600}

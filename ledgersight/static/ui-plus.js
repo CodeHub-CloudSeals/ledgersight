@@ -203,7 +203,73 @@
     return canvas;
   }
 
-  window.LSCharts = { flow, donut };
+  // Variance: running bank-minus-ledger by date (series computed by the app, ends exactly at the run's variance).
+  function variance({ values, dates, fmtDate, usd }) {
+    const col = colors();
+    const lo = Math.min(...values), loI = values.indexOf(lo), last = values.length - 1;
+    const wrap = document.createElement("div"); wrap.className = "cj-var";
+    const box = document.createElement("div"); box.className = "cj-wrap cj-var-plot";
+    const canvas = document.createElement("canvas"); canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", `Running variance from ${fmtDate(dates[0])} to ${fmtDate(dates[last])}, ending at ${usd(values[last])}; lowest ${usd(lo)} on ${fmtDate(dates[loI])}`);
+    box.append(canvas);
+    const zeroFill = (color, up) => (ctx) => {
+      const { chart } = ctx, a = chart.chartArea; if (!a) return color;
+      const y0 = chart.scales.y.getPixelForValue(0), g = chart.ctx.createLinearGradient(0, up ? a.top : a.bottom, 0, y0);
+      g.addColorStop(0, CJ.helpers.color(color).alpha(0.32).rgbString()); g.addColorStop(1, CJ.helpers.color(color).alpha(0.02).rgbString());
+      return g;
+    };
+    const sign = (v) => (v < 0 ? col.bad : col.accent);
+    // soft halo on the latest point
+    const halo = { id: "lsHalo", afterDatasetsDraw(chart) {
+      const p = chart.getDatasetMeta(0).data[last]; if (!p) return;
+      const c = chart.ctx; c.save(); c.fillStyle = CJ.helpers.color(sign(values[last])).alpha(0.16).rgbString();
+      c.beginPath(); c.arc(p.x, p.y, 9, 0, Math.PI * 2); c.fill(); c.restore();
+    } };
+    const zeroLine = { id: "lsZero", beforeDatasetsDraw(chart) {
+      const a = chart.chartArea, y = chart.scales.y.getPixelForValue(0), c = chart.ctx;
+      if (y < a.top || y > a.bottom) return;
+      c.save(); c.strokeStyle = col.line2; c.setLineDash([3, 4]); c.lineWidth = 1;
+      c.beginPath(); c.moveTo(a.left, y); c.lineTo(a.right, y); c.stroke(); c.restore();
+    } };
+    mount(canvas, {
+      type: "line",
+      data: { labels: dates.map(fmtDate), datasets: [{
+        data: values.map((v) => v / 100), cents: values, borderWidth: 2.2, cubicInterpolationMode: "monotone",
+        borderColor: (ctx) => {   // hard colour stop at zero: blue above, red below
+          const { chart } = ctx, a = chart.chartArea; if (!a) return col.accent;
+          const f = Math.min(1, Math.max(0, (chart.scales.y.getPixelForValue(0) - a.top) / (a.bottom - a.top)));
+          const g = chart.ctx.createLinearGradient(0, a.top, 0, a.bottom);
+          g.addColorStop(0, col.accent); g.addColorStop(f, col.accent); g.addColorStop(f, col.bad); g.addColorStop(1, col.bad);
+          return g;
+        },
+        fill: { target: "origin", above: zeroFill(col.accent, true), below: zeroFill(col.bad, false) },
+        pointRadius: (c) => (c.dataIndex === last ? 4 : c.dataIndex === loI && lo < 0 ? 3 : 0),
+        pointBackgroundColor: (c) => sign(values[c.dataIndex]), pointBorderColor: col.surface, pointBorderWidth: 2,
+        pointHoverRadius: 5, pointHoverBorderWidth: 2, pointHitRadius: 12,
+      }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, layout: { padding: { top: 10, right: 10, left: 4, bottom: 0 } },
+        interaction: { mode: "index", intersect: false },
+        animation: REDUCED ? false : { duration: 1000, easing: "easeOutQuart" },
+        scales: {
+          x: { display: false },
+          y: { display: false, grace: "12%" },
+        },
+        plugins: { legend: { display: false },
+          tooltip: { ...tooltipBase(col), displayColors: false,
+            callbacks: { title: (it) => it[0].label, label: (c) => `Running variance ${usd(values[c.dataIndex])}`,
+              afterLabel: (c) => c.dataIndex ? `Change that day ${usd(values[c.dataIndex] - values[c.dataIndex - 1])}` : "" } } },
+      },
+      plugins: [zeroLine, crosshair, halo],
+    });
+    const axis = document.createElement("div"); axis.className = "cj-var-ax";
+    const mk = (t, cls) => { const sp = document.createElement("span"); if (cls) sp.className = cls; sp.textContent = t; return sp; };
+    axis.append(mk(fmtDate(dates[0])), lo < 0 ? mk(`Lowest ${usd(lo)} · ${fmtDate(dates[loI])}`, "lo") : mk(""), mk(fmtDate(dates[last])));
+    wrap.append(box, axis);
+    return wrap;
+  }
+
+  window.LSCharts = { flow, donut, variance };
 
   // Theme switch: charts read colours at draw time, so redraw the overview when the theme changes.
   new MutationObserver(() => {
