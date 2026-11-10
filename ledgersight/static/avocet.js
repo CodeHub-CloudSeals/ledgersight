@@ -237,10 +237,11 @@ function kpiIcon(name) {
   return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" },
     sv("path", { d: KPI_ICON[name] }));
 }
-function kpiCard({ icon, label, value, tone, sub, viz }) {
-  return el("div", { class: "kw" + (tone ? " " + tone : "") },
+function kpiCard({ icon, label, value, tone, sub, viz, extra, wide, cls }) {
+  return el("div", { class: "kw" + (tone ? " " + tone : "") + (wide ? " kw-wide" : "") + (cls ? " " + cls : "") },
     el("div", { class: "kw-top" }, el("span", { class: "kw-k" }, label), el("span", { class: "kw-ico" }, kpiIcon(icon))),
     el("div", { class: "kw-mid" }, el("div", { class: "kw-v" }, value), viz ? el("div", { class: "kw-viz" }, viz) : null),
+    extra || null,
     sub ? el("div", { class: "kw-s" }, sub) : null);
 }
 // small radial progress (0..1)
@@ -282,7 +283,8 @@ function cashFlowChart(run) {
   const keys = Object.keys(days).sort();
   const totIn = keys.reduce((s, k) => s + days[k].in, 0), totOut = keys.reduce((s, k) => s + days[k].out, 0);
   const W = 720, H = 230, L = 54, R = 12, T = 14, B = 30, pw = W - L - R, ph = H - T - B;
-  const maxIn = Math.max(...keys.map((k) => days[k].in), 0), maxOut = Math.max(...keys.map((k) => days[k].out), 0);
+  let acc = 0; const cum = keys.map((k) => (acc += days[k].in - days[k].out));  // running net on the statement; ends at bank net
+  const maxIn = Math.max(...keys.map((k) => days[k].in), ...cum, 0), maxOut = Math.max(...keys.map((k) => days[k].out), ...cum.map((v) => -v), 0);
   const tot = (maxIn + maxOut) || 1, y0 = T + ph * (maxIn / tot), sc = ph / tot;
   const slot = pw / keys.length, bw = Math.max(4, Math.min(16, slot * 0.32));
   const g = sv("g", {});
@@ -298,13 +300,18 @@ function cashFlowChart(run) {
     const hit = sv("rect", { x: L + slot * i, y: T, width: slot, height: ph, class: "cf-hit" });
     hit.dataset.i = i; g.append(hit);
   });
+  const pts = keys.map((k, i) => [L + slot * i + slot / 2, y0 - cum[i] * sc]);
+  g.append(sv("path", { d: pts.map((q, i) => (i ? "L" : "M") + q[0].toFixed(1) + " " + q[1].toFixed(1)).join(" "), class: "cf-net", pathLength: "1" }));
+  pts.forEach((q) => g.append(sv("circle", { cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: 2.6, class: "cf-net-dot" })));
+  g.querySelectorAll(".cf-hit").forEach((h) => g.append(h));  // hover targets stay on top
   const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "cf-svg", role: "img", "aria-label": `Bank money in ${usd(totIn)} and money out ${usd(totOut)} by day` }, g);
   const tip = el("div", { class: "cf-tip", "aria-hidden": "true" });
   const wrap = el("div", { class: "cf-wrap" }, svg, tip);
   svg.addEventListener("pointermove", (ev) => {
     const h = ev.target.closest && ev.target.closest(".cf-hit"); if (!h) { tip.classList.remove("on"); return; }
     const k = keys[+h.dataset.i], d = days[k];
-    put(tip, el("b", {}, shortDate(k)), el("span", { class: "in" }, `In ${usd(d.in)}`), el("span", { class: "out" }, `Out ${usd(d.out)}`), el("span", {}, `${d.n} transaction${d.n === 1 ? "" : "s"}`));
+    put(tip, el("b", {}, shortDate(k)), el("span", { class: "in" }, `In ${usd(d.in)}`), el("span", { class: "out" }, `Out ${usd(d.out)}`),
+      el("span", {}, `Running net ${usd(cum[+h.dataset.i])}`), el("span", {}, `${d.n} transaction${d.n === 1 ? "" : "s"}`));
     const box = wrap.getBoundingClientRect(), hb = h.getBoundingClientRect();
     tip.style.left = `${Math.min(box.width - 150, Math.max(0, hb.left - box.left + hb.width / 2 - 70))}px`;
     tip.classList.add("on");
@@ -315,7 +322,7 @@ function cashFlowChart(run) {
     el("div", { class: "cf-stats" },
       el("div", {}, el("span", { class: "lg in" }), el("span", { class: "k" }, "Money in"), el("b", {}, usd(totIn))),
       el("div", {}, el("span", { class: "lg out" }), el("span", { class: "k" }, "Money out"), el("b", {}, usd(totOut))),
-      el("div", {}, el("span", { class: "k" }, "Bank net"), el("b", {}, usd(run.result.bank_net_cents))),
+      el("div", {}, el("span", { class: "lg net" }), el("span", { class: "k" }, "Running net"), el("b", {}, usd(run.result.bank_net_cents))),
       el("div", {}, el("span", { class: "k" }, "Days with activity"), el("b", {}, String(keys.length)))),
     wrap);
 }
@@ -375,39 +382,54 @@ async function renderOverview() {
   const next = !st.uploads ? ["Upload this period's files", "import"] : !(st.bank && st.ledger) ? ["Add the bank statement and ledger", "import"]
     : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
   const done = st.runs && !st.open_exceptions;
+  const r = S.run && S.run.result;
+  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
+  const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
+  // Hero: client, period, status, next step; ring = share of bank transactions matched automatically (same figure as the KPI).
+  const R = 54, C = 2 * Math.PI * R, f = pct == null ? 0 : Math.min(1, pct / 100);
   put("ov-hero",
     el("div", { class: "hero-l" },
       el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
       el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
-    el("div", { class: "next" }, el("span", { class: "next-k" }, "Next step"),
-      el("div", { class: "next-btns" },
-        done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
-        el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →"))));
-  const r = S.run && S.run.result;
-  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
-  const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
+      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · ")),
+      el("div", { class: "next" }, el("span", { class: "next-k" }, "Next step"),
+        el("div", { class: "next-btns" },
+          el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →"),
+          done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null))),
+    el("div", { class: "hero-r" },
+      el("div", { class: "hero-ring" },
+        sv("svg", { viewBox: "0 0 128 128", "aria-hidden": "true" }, sv("circle", { cx: 64, cy: 64, r: R, class: "ht" }),
+          pct ? sv("circle", { cx: 64, cy: 64, r: R, class: "hv", "stroke-dasharray": `${C * f} ${C}`, transform: "rotate(-90 64 64)" }) : null),
+        el("div", { class: "hm" }, el("b", {}, pct == null ? "–" : counter("h-pct", pct, (n) => `${n}%`)), el("span", {}, pct == null ? "no run yet" : "matched automatically"))),
+      el("ul", { class: "hero-stats" },
+        el("li", {}, el("span", {}, "Bank transactions"), el("b", {}, r ? String(bankLines) : "–")),
+        el("li", {}, el("span", {}, "Matched"), el("b", {}, r ? String(r.matches.length) : "–")),
+        el("li", {}, el("span", {}, "Open for review"), el("b", {}, r ? String(st.open_exceptions) : "–")))));
   const nSrc = SOURCE_KINDS.filter((k) => st[k]).length;
   const decided = r ? r.exceptions.length - st.open_exceptions : 0;
   const vSeries = r && S.run.id === st.last_run ? varianceSeries(S.run) : null;
+  const progBar = () => { const t = r.exceptions.length || 1, pt = el("div", { class: "pt" }), d = el("i", { class: "d" }), o = el("i", { class: "o" });
+    d.style.width = `${decided / t * 100}%`; o.style.width = `${st.open_exceptions / t * 100}%`; if (decided) pt.append(d); if (st.open_exceptions) pt.append(o);
+    return el("div", { class: "prog" }, pt, el("div", { class: "pl" }, el("span", {}, el("b", {}, String(decided)), " decided"), el("span", {}, el("b", {}, String(st.open_exceptions)), " open"))); };
+  const unx = r ? r.unexplained_variance_cents : null;
   put("ov-kpis",
-    kpiCard({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "",
-      value: el("span", {}, counter("k-src", nSrc, String), ` / ${SOURCE_KINDS.length}`),
-      sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
-      viz: el("div", { class: "segs", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }),
     kpiCard({ icon: "matched", label: "Matched automatically", tone: r ? "good" : "",
       value: r ? counter("k-m", r.matches.length, String) : "–",
       sub: r ? `${pct}% of ${bankLines} bank transactions` : "no run yet", viz: r ? ring(pct / 100, "ok") : null }),
     kpiCard({ icon: "review", label: "Awaiting review", tone: r && st.open_exceptions ? "amb" : r ? "good" : "",
-      value: r ? counter("k-o", st.open_exceptions, String) : "–",
-      sub: r ? `${r.exceptions.length} raised in total` : "",
-      viz: r && r.exceptions.length ? (() => { const b = el("div", { class: "split", title: `${decided} decided · ${st.open_exceptions} open` });
-        const d = el("i", { class: "d" }); d.style.width = `${decided / r.exceptions.length * 100}%`; b.append(d); return b; })() : null }),
-    kpiCard({ icon: "variance", label: "Variance", value: r ? counter("k-v", r.variance_cents, usd) : "–",
-      sub: r ? "bank net minus ledger net" : "", viz: vSeries ? sparkline(vSeries, r.variance_cents < 0 ? "neg" : "") : null }),
-    kpiCard({ icon: "unexplained", label: "Unexplained", tone: r ? (r.unexplained_variance_cents ? "bad" : "good") : "",
-      value: r ? counter("k-u", r.unexplained_variance_cents, usd) : "–", sub: r ? "after review items" : "",
-      viz: r ? el("span", { class: "chip " + (r.unexplained_variance_cents ? "bad" : "good") }, r.unexplained_variance_cents ? "Needs attention" : "Fully explained") : null }));
+      value: r ? counter("k-o", st.open_exceptions, String) : "–", sub: r ? `${r.exceptions.length} raised in total` : "",
+      extra: r && r.exceptions.length ? progBar() : null }),
+    kpiCard({ icon: "variance", label: "Variance", wide: true, value: r ? counter("k-v", r.variance_cents, usd) : "–",
+      sub: r ? "bank net minus ledger net" : "",
+      extra: r ? el("div", {}, vSeries ? (() => { const sp = sparkline(vSeries, ""); sp.setAttribute("class", "spark spark-lg"); return sp; })() : null,
+        el("div", { class: "kw-pair" }, el("span", {}, "Bank net", el("b", {}, usd(r.bank_net_cents))), el("span", {}, "Ledger net", el("b", {}, usd(r.ledger_net_cents))))) : null }),
+    kpiCard({ icon: "unexplained", label: "Unexplained", tone: r ? (unx ? "bad" : "good") : "", cls: r ? "kw-status " + (unx ? "bad" : "good") : "",
+      value: r ? counter("k-u", unx, usd) : "–", sub: r ? "after review items" : "",
+      viz: r ? el("span", { class: "chip " + (unx ? "bad" : "good") }, unx ? "Needs attention" : "Fully explained") : null }),
+    kpiCard({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "",
+      value: el("span", {}, counter("k-src", nSrc, String), ` / ${SOURCE_KINDS.length}`),
+      sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
+      extra: el("div", { class: "segs lg", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }));
   const cur = r && S.run.id === st.last_run;
   $("ov-charts").classList.toggle("hidden", !cur);
   if (cur) { put("ov-flow", cashFlowChart(S.run)); put("ov-cover", coverageChart(S.run)); }
@@ -667,6 +689,28 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "recon") progress();  // never judge "ready to run" from stale status
   if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
 });
+// ---------------- shell: breadcrumb, collapsible sidebar, period chip (presentation only) ----------------
+function setCrumb(t) {
+  let g = t.previousElementSibling; while (g && !g.classList.contains("navlabel")) g = g.previousElementSibling;
+  $("crumb-group").textContent = g ? proper(g.textContent.trim().toLowerCase()).replace(/^\w/, (c) => c.toUpperCase()) : "";
+  $("crumb-page").textContent = (t.querySelector(".lbl-t") || t).textContent.trim();
+}
+document.querySelectorAll(".tab").forEach((t) => {
+  t.title = (t.querySelector(".lbl-t") || t).textContent.trim();
+  t.addEventListener("click", () => setCrumb(t));
+});
+setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab"));
+(function sideMini() {
+  let on = false; try { on = localStorage.getItem("ls-side-mini") === "1"; } catch (_) {}
+  const apply = () => { document.body.classList.toggle("side-mini", on); const b = $("side-toggle");
+    b.title = b.ariaLabel = on ? "Expand menu" : "Collapse menu"; b.setAttribute("aria-expanded", String(!on)); };
+  apply();
+  $("side-toggle").onclick = () => { on = !on; apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
+})();
+$("period-chip").onclick = () => {
+  go("home"); const d = $("ov-profile"); d.open = true;
+  setTimeout(() => { d.scrollIntoView({ behavior: REDUCE ? "auto" : "smooth", block: "center" }); $("pf-period").focus({ preventScroll: true }); }, 120);
+};
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
 
 // ---------------- import ----------------
