@@ -44,9 +44,18 @@ def totp_code(secret: str, t: float | None = None, step: int = 30) -> str:
     return f"{(struct.unpack('>I', digest[off:off + 4])[0] & 0x7FFFFFFF) % 1_000_000:06d}"
 
 
-def totp_verify(secret: str, code: str) -> bool:
+def totp_step(secret: str, code: str) -> int | None:
+    """The 30-second step a code belongs to (within one step either side), or None."""
     code = (code or "").strip()
-    return any(hmac.compare_digest(totp_code(secret, time.time() + d * 30), code) for d in (-1, 0, 1))
+    now_step = int(time.time() // 30)
+    for d in (-1, 0, 1):
+        if hmac.compare_digest(totp_code(secret, (now_step + d) * 30), code):
+            return now_step + d
+    return None
+
+
+def totp_verify(secret: str, code: str) -> bool:
+    return totp_step(secret, code) is not None
 
 
 def otpauth_uri(secret: str, user_id: str) -> str:
@@ -79,6 +88,7 @@ class User:
     failed: int = 0
     terms_accepted_at: datetime | None = None
     locked_until: datetime | None = None
+    last_totp_step: int = 0  # an authenticator code works once
 
     def public(self):
         return {"user_id": self.user_id, "display_name": self.display_name, "role": self.role,
@@ -152,12 +162,16 @@ class AuthStore:
             raise generic
         if u.locked_until and u.locked_until <= now():  # lock expired: start counting again
             u.locked_until, u.failed = None, 0
-        if not (check_pw(password, u.pw_hash) and (not REQUIRE_MFA or totp_verify(u.totp, code))):
+        step = totp_step(u.totp, code) if REQUIRE_MFA else None
+        mfa_ok = not REQUIRE_MFA or (step is not None and step > u.last_totp_step)
+        if not (check_pw(password, u.pw_hash) and mfa_ok):
             u.failed += 1
             if u.failed >= MAX_FAILED:
                 u.locked_until = now() + LOCK_FOR
             raise generic
         u.failed, u.locked_until = 0, None
+        if step is not None:
+            u.last_totp_step = step
         tok = secrets.token_urlsafe(32)
         self.sessions[tok] = (user_id, now() + SESSION_TTL)
         return tok

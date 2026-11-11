@@ -75,6 +75,16 @@
   }
   document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => enterPanel(document.getElementById("p-" + t.dataset.tab))));
   window.LSMotion = { enter: enterPanel };
+  // UI-8: hide the floating Ask button while the page scrolls down; bring it back on scroll up or at the end
+  (function () {
+    let lastY = window.scrollY;
+    window.addEventListener("scroll", () => {
+      const y = window.scrollY, atEnd = window.innerHeight + y >= document.documentElement.scrollHeight - 8;
+      document.body.classList.toggle("fab-away", y > lastY + 4 && y > 120 && !atEnd);
+      if (y < lastY - 4 || atEnd) document.body.classList.remove("fab-away");
+      lastY = y;
+    }, { passive: true });
+  })();
   const main = document.querySelector("main");
   if (main && motionOn) {
     new MutationObserver((recs) => {

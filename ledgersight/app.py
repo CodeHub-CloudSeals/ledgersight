@@ -90,7 +90,7 @@ CSP = ("default-src 'self'; img-src 'self' data:" + (" https://*.googleuserconte
        "; script-src 'self'" + (" https://apis.google.com https://accounts.google.com" if _GOOGLE_WEB else "") +
        ("; frame-src https://docs.google.com https://accounts.google.com https://content.googleapis.com" if _GOOGLE_WEB else "") +
        ("; connect-src 'self' https://www.googleapis.com https://content.googleapis.com" if _GOOGLE_WEB else "") +
-       "; frame-ancestors 'none'")
+       "; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'")
 
 
 _WS_PATH = re.compile(r"^/v1/workspaces/([^/]+)")
@@ -137,7 +137,7 @@ async def headers(request: Request, call_next):
         _log(level="INFO", msg="request", request_id=rid, method=request.method, path=request.url.path,
              status=resp.status_code, ms=round((_t.perf_counter() - t0) * 1000, 1))
     if SECURE_COOKIE:
-        resp.headers["Strict-Transport-Security"] = "max-age=31536000"
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return resp
 
 

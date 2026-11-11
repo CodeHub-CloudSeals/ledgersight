@@ -350,7 +350,8 @@ function coverageChart(run) {
   const matched = r.matches.length;
   const review = Math.min(Math.max(0, bankIds.length - matched), new Set(r.exceptions.map((x) => x.bank_id).filter((id) => id && !matchedIds.has(id))).size);
   const other = Math.max(0, bankIds.length - matched - review);
-  const segs = [["Matched", matched, "seg-m"], ["Raised for review", review, "seg-r"], ["Not matched", other, "seg-o"]].filter((s) => s[1] > 0);
+  const matchedReview = new Set(r.exceptions.map((x) => x.bank_id).filter((id) => id && matchedIds.has(id))).size;
+  const segs = [["Matched", matched, "seg-m"], ["Unmatched, raised for review", review, "seg-r"], ["Unmatched, not raised", other, "seg-o"]].filter((s) => s[1] > 0);
   const total = bankIds.length, R = 52, C = 2 * Math.PI * R;
   let acc = 0;
   const arcs = segs.map(([, n, cls], i) => {
@@ -365,6 +366,7 @@ function coverageChart(run) {
     el("div", { class: "dn-mid" }, el("b", {}, counter("cov-pct", pct, (n) => `${n}%`)), el("span", {}, "matched")));
   const legend = el("ul", { class: "dn-legend" }, segs.map(([k, n, cls]) =>
     el("li", {}, el("span", { class: "lg " + cls }), el("span", { class: "k" }, k), el("b", {}, String(n)))),
+    matchedReview ? el("li", { class: "sub" }, el("span", { class: "k" }, "of the matched, still under review"), el("b", {}, String(matchedReview))) : null,
     el("li", { class: "tot" }, el("span", { class: "k" }, "Bank transactions"), el("b", {}, String(total))));
   const mx = Math.max(Math.abs(r.bank_net_cents), Math.abs(r.ledger_net_cents), 1);
   const bar = (k, v, cls) => el("div", { class: "nb" }, el("div", { class: "nb-k" }, el("span", {}, k), el("b", {}, usd(v))),
@@ -395,7 +397,8 @@ async function renderOverview() {
     }
   }
   const next = !st.uploads ? ["Upload this period's files", "import"] : !(st.bank && st.ledger) ? ["Add the bank statement and ledger", "import"]
-    : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
+    : !st.runs ? ["Run reconciliation", "recon"] : st.stale ? ["Run reconciliation again (files changed)", "recon"]
+    : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
   const done = st.runs && !st.open_exceptions;
   const r = S.run && S.run.result;
   const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank" && inBase(S.run, l)).length : 0;
@@ -1306,7 +1309,8 @@ function renderExceptions() {
             el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")),
           el("div", { class: "xa-hint" }, reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer who didn't propose it decides."), out)
-        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}`));
+        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
+            (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")));
   }));
 }
 

@@ -170,8 +170,10 @@ def test_scoped_october_query_returns_cases_with_citations(cpa):
     assert a["status"] == "ANSWERED" and "between 2026-10-01 and 2026-10-31" in a["answer"]
     assert len(a["rows"]) == len(run["result"]["exceptions"]) and a["citations"]
     assert {r[-1] for r in a["rows"]} >= {"CA-TAX-01", "UK-FX-01"}
+    # audit FUNC-11: different kinds of exception are totalled per type, never in one mixed sum
     total = sum(e["amount_cents"] for e in run["result"]["exceptions"])
-    assert f"${abs(total) / 100:,.2f}" in a["answer"]
+    assert "By type:" in a["answer"] and f"totalling ${abs(total) / 100:,.2f}" not in a["answer"]
+    assert "tax review" in a["answer"].lower()
     narrow = ask(cpa, "Show exceptions from 1-10 October 2026")
     assert {r[1] for r in narrow["rows"]} == {"HB004", "HB005", "HB006"}
 

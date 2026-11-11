@@ -266,8 +266,15 @@ def _list(c: _Ctx, q: str, types: set[str]):
     scope = f"{c.client['name']} · {c.client['period']}" + (f" · {dtext}" if dtext else "")
     if not rows:
         return _ok("list_exceptions", f"No {what} found for {scope} in run {c.run['id']}.")
-    total = sum(e["amount_cents"] for e in rows)
-    return _ok("list_exceptions", f"{len(rows)} item{'s' if len(rows) != 1 else ''} ({what}) for {scope}, totalling {usd(total)}.",
+    kinds = {e["type"] for e in rows}
+    if len(kinds) == 1:
+        total_text = f", totalling {usd(sum(e['amount_cents'] for e in rows))}"
+    else:  # different kinds of item: a single sum would mix receipts, debits and matched sales
+        per = {}
+        for e in rows:
+            per[e["type"]] = per.get(e["type"], 0) + e["amount_cents"]
+        total_text = ". By type: " + "; ".join(f"{_type_label(t)} {usd(v)}" for t, v in sorted(per.items()))
+    return _ok("list_exceptions", f"{len(rows)} item{'s' if len(rows) != 1 else ''} ({what}) for {scope}{total_text}.",
                [[e["id"], e.get("bank_id") or e.get("ledger_id"), c.bank_date(e), usd(e["amount_cents"]), _type_label(e["type"]),
                  e["status"], (e.get("trustops") or {}).get("policy_id", ""), e.get("case_id") or ""] for e in rows],
                ["Exception", "Line", "Date", "Amount", "Type", "Status", "Policy", "Case"], c.cites(rows))

@@ -1937,3 +1937,42 @@ body.side-mini .sidebar:not(.peek) .tab .count{min-width:18px;height:18px;line-h
   body.side-mini .sidebar:not(.peek) .side-toggle{width:30px;height:30px}
 }
 .row-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* =========================== audit P3: accessibility, touch, clarity =========================== */
+/* UI-5: helper text meets WCAG AA (4.5:1) on white and on the grey panels, in both themes */
+:root{--muted:#5B677A;--faint:#5F6B80}
+:root[data-theme="dark"]{--muted:#A9B4C6;--faint:#94A0B6}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--muted:#A9B4C6;--faint:#94A0B6}}
+/* UI-7: visible keyboard focus on the client and role pickers */
+.ws-pill:focus-within,.role-pill:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35%,transparent)}
+select:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+/* UI-6: 44 px touch targets on touch screens */
+@media (pointer:coarse){
+  .ws-pill select,.role-pill select,.tbl select{min-height:44px}
+  input,select,textarea{min-height:44px}
+  .mprog .step{padding:19px 0}
+  .pl-chip,.pillbtn,.linkbtn,#proof-refresh{min-height:44px;display:inline-flex;align-items:center}
+  .case-link,.cr-links .case-link{min-height:32px;padding:6px 6px;display:inline-flex;align-items:center}
+  .tab{min-height:44px}
+}
+/* UI-8: the floating Ask button steps aside while scrolling down, so it never covers Approve, Clear or a note */
+.ask-fab{transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .2s}
+body.fab-away .ask-fab:not(.on){transform:translateY(120%) scale(.9);opacity:0;pointer-events:none}
+/* UI-9: wide tables wrap long values instead of running past their card */
+.tablewrap table{width:100%}
+.tablewrap th,.tablewrap td{white-space:normal}
+.tablewrap td.mono,.tablewrap td .mono{word-break:break-all;max-width:180px}
+.tablewrap td.small{overflow-wrap:anywhere;max-width:240px}
+/* FUNC-09 legend sub-row */
+.dn-legend li.sub{font-size:12px;color:var(--muted);padding-left:16px}
+#health table td{overflow-wrap:anywhere}
+#health table td:last-child,#health .mono{word-break:break-all;max-width:160px}
+/* small-text contrast near misses */
+.xs-k{color:#2F5BC9}
+:root[data-theme="dark"] .xs-k{color:#8FB0FF}
+@media (pointer:coarse){
+  button,.btnlink,a.primary,a.secondary{min-height:44px}
+  summary{min-height:44px;display:flex;align-items:center}
+  .ss-clear{min-width:44px;justify-content:center}
+  .mprog .step i{width:40px}
+}

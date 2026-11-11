@@ -293,6 +293,7 @@ class Service:
         w = self.ws[wid]
         last = list(w.runs.values())[-1] if w.runs else None
         exc = last["result"]["exceptions"] if last else []
+        current = [w.batches[k]["sha256"] for k in sorted(w.batches)]
         return {**{k: k in w.batches for k in SOURCE_KINDS},
                 "runs": len(w.runs), "uploads": len(w.uploads),
                 "last_run": last["id"] if last else None,
@@ -300,7 +301,9 @@ class Service:
                 "exceptions": len(exc), "open_exceptions": sum(e["status"] in ("OPEN", "RETURNED") for e in exc),
                 "variance_cents": last["result"]["variance_cents"] if last else None,
                 "unexplained_cents": last["result"]["unexplained_variance_cents"] if last else None,
-                "last_activity": w.log.events[-1]["timestamp_utc"] if w.log.events else w.started_at}
+                "last_activity": w.log.events[-1]["timestamp_utc"] if w.log.events else w.started_at,
+                # inputs changed since the last run: its figures no longer describe the current files
+                "stale": bool(last) and list(last.get("batch_key") or []) != current}
 
     # ---- uploads -------------------------------------------------------
     def upload(self, user, wid, kind, filename, blob, data_class="synthetic", origin="upload", hint=None):
@@ -735,8 +738,31 @@ class Service:
                "match_linkage": match_linkage,
                "lines": {k: {kk: (str(vv) if kk == "date" else vv) for kk, vv in v.items()} for k, v in lines.items()},
                "decisions": {}}
+        self._carry_decisions(user, w, run)
         w.runs[rid] = run
         return run
+
+    CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy",
+                    "proposed_by", "proposal_note", "history")
+
+    def _carry_decisions(self, user, w, run):
+        """A re-run after an input change keeps the CPA's decision on any case whose facts did not change
+        (same type, lines, amount and case id). Each carried decision is signed into the audit trail."""
+        prev = list(w.runs.values())[-1] if w.runs else None
+        if not prev:
+            return
+        fp = lambda e: (e["type"], e.get("bank_id"), e.get("ledger_id"), e["amount_cents"], e.get("case_id"))
+        old = {fp(e): e for e in prev["result"]["exceptions"] if e["status"] != "OPEN" or e.get("proposed_by")}
+        for e in run["result"]["exceptions"]:
+            o = old.get(fp(e))
+            if not o:
+                continue
+            e.update({k: o[k] for k in self.CARRY_FIELDS if k in o}, carried_from=prev["id"])
+            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="system", actor_id="ledgersight",
+                         run_id=run["id"], action="exception.decision_carried", policy_decision="ALLOW:UNCHANGED_FACTS",
+                         approval_id=o.get("approval_id"), source_line_refs=e.get("evidence_refs") or [],
+                         matching_rule_id=e.get("rule_id"), workflow_pack="cpa-bank-reconciliation",
+                         trace_id=run.get("trace_id"))
 
     # The customer-facing six stages of a run. The six registered agents carry them; AG-02 both validates the
     # canonical form and proves the column mapping, and AG-05/AG-06 together complete the run.
