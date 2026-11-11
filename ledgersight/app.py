@@ -75,6 +75,9 @@ if _boot:
     print(f"[ledgersight] one-time presenter invite: /invite?token={_boot.token}", file=sys.stderr, flush=True)
 
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 _G = bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_API_KEY"))
@@ -93,24 +96,46 @@ CSP = ("default-src 'self'; img-src 'self' data:" + (" https://*.googleuserconte
 _WS_PATH = re.compile(r"^/v1/workspaces/([^/]+)")
 
 
+MAX_BODY = 26 * 1024 * 1024  # largest upload (25 MB email) plus form overhead
+
+
+def _log(**fields):
+    """One JSON line per event on stdout (Cloud Logging parses it). Never includes file contents or secrets."""
+    import json as _json
+    print(_json.dumps(fields, separators=(",", ":")), flush=True)
+
+
 @app.middleware("http")
 async def headers(request: Request, call_next):
+    import time as _t
+    t0 = _t.perf_counter()
     rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > MAX_BODY:  # refuse before the body is read or spooled
+        return JSONResponse(status_code=413, content={"detail": "request too large"}, headers={"X-Request-ID": rid})
     resp = await call_next(request)
-    # Persist after every request: reads add evidence events too, so the audit trail is always on disk.
+    # Persist: reads only append their audit events; writes also store the book. Off the event loop, under a lock.
     try:
         m = _WS_PATH.match(request.url.path)
-        svc.save(m.group(1) if m else None)
-        if request.method != "GET" and request.url.path.startswith(("/v1/invites", "/v1/users", "/v1/login")):
-            save_users()
-    except Exception as e:  # storage trouble is reported by /readyz and in the server log
-        print(f"[ledgersight] storage error on {request.url.path} (request {rid}): {e!r}", file=sys.stderr, flush=True)
+        write = request.method != "GET"
+        await run_in_threadpool(svc.save, m.group(1) if m else None, write)
+        if write and request.url.path.startswith(("/v1/invites", "/v1/users", "/v1/login")):
+            await run_in_threadpool(save_users)
+    except Exception as e:  # fail closed: a change that could not be stored is reported, never a silent 200
+        _log(level="ERROR", msg="storage error", request_id=rid, path=request.url.path, error=repr(e))
+        if request.method != "GET":
+            resp = JSONResponse(status_code=503, content={"detail": "storage unavailable; the change may not have been saved"})
+    static = request.url.path.startswith("/static/")
     resp.headers["X-Request-ID"] = rid
     resp.headers.update({
         "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-        "Cache-Control": "no-store",
+        # static files revalidate with ETag (304, no re-download, never stale); API answers are never stored
+        "Cache-Control": "no-cache" if static else "no-store",
         "Content-Security-Policy": CSP,
     })
+    if not static:
+        _log(level="INFO", msg="request", request_id=rid, method=request.method, path=request.url.path,
+             status=resp.status_code, ms=round((_t.perf_counter() - t0) * 1000, 1))
     if SECURE_COOKIE:
         resp.headers["Strict-Transport-Security"] = "max-age=31536000"
     return resp
@@ -565,8 +590,10 @@ def trace(wid: str, line_id: str, u=Depends(current_user)):
 
 
 @app.get("/v1/workspaces/{wid}/evidence")
-def evidence(wid: str, u=Depends(current_user)):
-    return handle(svc.evidence, u, wid)
+def evidence(wid: str, limit: int | None = None, u=Depends(current_user)):
+    if limit is not None and not 1 <= limit <= 5000:
+        raise HTTPException(422, "limit must be between 1 and 5000")
+    return handle(svc.evidence, u, wid, limit)
 
 
 @app.post("/v1/workspaces/{wid}/evidence/tamper-check")

@@ -6,7 +6,8 @@ LedgerSight does the reconciliation work; TrustOps governs, authorises and evide
 Synthetic data only. Read-only: never post to a ledger, pay, or email anyone.
 
 ## Run / test (Windows, VS Code)
-- Env: `.venv\Scripts\activate` ; deps: `pip install -r requirements.txt httpx`
+- Env: `.venv\Scripts\activate` ; deps: `pip install -r requirements-dev.txt` (runtime pins in requirements.txt)
+- Browser tests: `bash tests/e2e/run_all.sh` (needs Playwright; see tests/e2e/README.md)
 - App: Run and Debug -> "LedgerSight (local demo)" (F5) -> http://127.0.0.1:8090. Launch config sets AVOCET_NO_LOGIN=1 (local demo: no login screen, "Acting as" switch
   between CPA Reviewer / Staff Preparer). Honoured only with MFA off + insecure cookie; hosted keeps login.
   Without it: user `presenter`, password from `.env` (gitignored; template `.env.example`). Upload test pack: `demo_files/` (see its README).

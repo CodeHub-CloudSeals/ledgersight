@@ -14,6 +14,7 @@ import io
 import os
 import hashlib
 import shutil
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -103,12 +104,20 @@ class Workspace:
 
 
 PERSIST = os.environ.get("AVOCET_PERSIST", "1") != "0"
+_PDF_SLOTS = threading.BoundedSemaphore(int(os.environ.get("AVOCET_PDF_WORKERS", "2")))
+
+
+def svc_pdf_slots():
+    """Limit concurrent PDF parsing processes (memory safety on a small instance)."""
+    return _PDF_SLOTS
 
 
 class Service:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.store = Store(DATA_DIR / "ledgersight.db") if PERSIST else None
+        self._save_lock = threading.RLock()
+        self._verify_cache: dict[str, tuple] = {}
         self._key, self.key_source = self._load_key()
         self.ws: dict[str, Workspace] = {}
         for w in WORKSPACES:
@@ -143,25 +152,31 @@ class Service:
             f.write(pem)
         return key, "key file in the data directory"
 
-    def save(self, wid: str | None = None) -> None:
-        """Write the book's state and any new evidence events to durable storage."""
+    def save(self, wid: str | None = None, state: bool = True) -> None:
+        """Write new evidence events (always) and, when `state` is true, the book's state to durable storage.
+        Read-only requests pass state=False: they only add audit events, so the whole book is not rewritten.
+        One lock covers the slice, insert and counter update, so concurrent saves cannot reorder or skip events."""
         if not self.store:
             return
+        with self._save_lock:
+            self._save_locked(wid, state)
+
+    def _save_locked(self, wid, write_state):
         for w in ([self.ws[wid]] if wid in self.ws else []):
-            for _ in range(3):  # another request may change the state mid-copy; retry
+            state = None
+            for _ in range(3 if write_state else 0):  # another request may change the state mid-copy; retry
                 try:
                     state = copy.deepcopy(w.to_state())
                     break
                 except RuntimeError:
                     continue
-            else:
-                state = None
             if state is not None:
                 self.store.save_workspace(w.id, state)
-            new = w.log.events[w.saved_events:]
+            start = w.saved_events
+            new = w.log.events[start:]
             if new:
-                self.store.append_events(w.id, w.saved_events, list(new))
-                w.saved_events += len(new)
+                self.store.append_events(w.id, start, list(new))
+                w.saved_events = start + len(new)
         new = self.security_log.events[self._security_saved:]
         if new:
             self.store.append_events("_security", self._security_saved, list(new))
@@ -175,11 +190,22 @@ class Service:
             self._chain_ok = all(evidence.verify(w.log.events, pub)["state"] != "FAIL" for w in self.ws.values() if w.log.events)
         return self._chain_ok
 
+    @staticmethod
+    def storage_durable() -> bool | None:
+        """True when the deployment declares durable storage (AVOCET_STORAGE_DURABLE=1, e.g. a mounted volume or
+        Cloud SQL); False on Cloud Run without that declaration (the container disk is wiped on redeploy);
+        None when unknown (local)."""
+        if os.environ.get("AVOCET_STORAGE_DURABLE") == "1":
+            return True
+        if os.environ.get("K_SERVICE"):  # set by Cloud Run
+            return False
+        return None
+
     def ready(self) -> dict:
         checks = {"signer": self._key is not None, "storage": (self.store.healthy() if self.store else None),
                   "config": bool(policy.POLICIES) and bool(WORKSPACES), "audit_chain_matches_key": self._chains_verify()}
         return {"ready": all(v is not False for v in checks.values()), "checks": checks,
-                "persistence": "sqlite" if self.store else "memory only"}
+                "persistence": "sqlite" if self.store else "memory only", "durable_storage": self.storage_durable()}
 
     def public_key_pem(self) -> bytes:
         return self._key.public_key().public_bytes(serialization.Encoding.PEM,
@@ -388,6 +414,11 @@ class Service:
 
     @staticmethod
     def _pdf_worker(blob: bytes, mode: str | None = None) -> dict:
+        with svc_pdf_slots():
+            return Service._pdf_worker_unlimited(blob, mode)
+
+    @staticmethod
+    def _pdf_worker_unlimited(blob: bytes, mode: str | None = None) -> dict:
         """Parse a PDF in a separate, resource-limited process with a minimal environment."""
         import json, subprocess, sys
         try:
@@ -1017,10 +1048,26 @@ class Service:
                 "steps": steps, "events": evs, "decision": decision,
                 "chain": evidence.verify(w.log.events, self.public_key_pem())}
 
-    def evidence(self, user, wid):
+    def verify_cached(self, wid, events):
+        """Full-chain verification, cached by (length, head hash): an unchanged chain is not re-verified."""
+        key = (len(events), events[-1]["event_hash"] if events else None)
+        hit = self._verify_cache.get(wid)
+        if hit and hit[0] == key:
+            return hit[1]
+        res = evidence.verify(events, self.public_key_pem())
+        self._verify_cache[wid] = (key, res)
+        return res
+
+    def evidence(self, user, wid, limit: int | None = None):
         w = self.gate(user, wid, "export.read")
-        return {"events": w.log.events, "verification": evidence.verify(w.log.events, self.public_key_pem()),
-                "key_id": w.log.key_id, "key_source": self.key_source}
+        events = list(w.log.events)
+        counts: dict[str, int] = {}
+        for e in events:
+            k = str(e.get("policy_decision") or "").split(":")[0]
+            counts[k] = counts.get(k, 0) + 1
+        shown = events[-limit:] if limit else events
+        return {"events": shown, "total": len(events), "decision_counts": counts,
+                "verification": self.verify_cached(wid, events), "key_id": w.log.key_id, "key_source": self.key_source}
 
     def tamper_check(self, user, wid):
         """Demonstrates detection on a COPY of the chain; the real chain is never altered."""
@@ -1356,7 +1403,11 @@ class Service:
             "evidence": {"algorithm": "Ed25519 over SHA-256 hash chain", "key_source": self.key_source,
                          "public_key_pem": self.public_key_pem().decode()},
             "retention": "Client files are deleted when a client's data is cleared; the audit trail of a cleared client is archived, not deleted.",
-            "storage": ("SQLite database and file store in the data directory" if self.store else "memory only (lost on restart)"),
+            "storage": ("memory only (lost on restart)" if not self.store else
+                        "SQLite database and file store on durable storage" if self.storage_durable() else
+                        "SQLite database and file store on the server's temporary disk: cleared when the service is redeployed "
+                        "or restarted (demo / sandbox setting)" if self.storage_durable() is False else
+                        "SQLite database and file store in the data directory"),
             "policy_version": policy.POLICY_VERSION,
             "security_events": len(self.security_log.events),
         }

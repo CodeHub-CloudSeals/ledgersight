@@ -1396,9 +1396,9 @@ async function attempt(a) {
 // ---------------- evidence ----------------
 async function renderEvidence() {
   if (!S.ws) return;
-  const ev = await api(W("/evidence"));
+  const ev = await api(W("/evidence?limit=500"));  // newest 500 on screen; the downloads hold the full trail
   const v = ev.verification;
-  S.events = ev.events; S.verify = v.state;
+  S.events = ev.events; S.verify = v.state; S.evTotal = ev.total || ev.events.length; S.evCounts = ev.decision_counts || null;
   const b = $("verify-badge"); b.className = "badge " + v.state;
   b.textContent = v.state === "PASS" ? `VERIFIED · ${v.checked} signed events` : `${v.state === "UNKNOWN" ? "NOT VERIFIED" : "FAILED"} · ${v.reason}`;
   for (const [id, p] of [["exp-csv", "export.csv"], ["exp-pack", "review-pack.json"]]) {
@@ -1407,7 +1407,8 @@ async function renderEvidence() {
   $("exp-print").classList.toggle("disabled", !S.run);
   $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv");
   $("exp-print").href = S.run ?`/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
-  put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first.`),
+  put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first` +
+      (S.evTotal > ev.events.length ? `; showing the latest ${ev.events.length} of ${S.evTotal}. Download the audit trail for every event.` : ".")),
     el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Policy", "Source refs", "Hash"].map((h) => el("th", {}, h))),
       ev.events.slice().reverse().map((e) => el("tr", {}, el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)),
         el("td", {}, e.agent_code ? el("span", {}, el("b", {}, e.agent_code), " " + niceActor(e.actor_id)) : niceActor(e.actor_id)),
@@ -1419,7 +1420,7 @@ async function renderEvidence() {
 // TrustOps decisions + recent activity (top of the Audit trail page), from the signed events just loaded.
 function renderGovSummary() {
   const ev = S.events || [];
-  const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
+  const cnt = (k) => (S.evCounts ? S.evCounts[k] || 0 : ev.filter((e) => String(e.policy_decision).startsWith(k)).length);
   const govN = [["ALLOW", cnt("ALLOW"), "Allowed"], ["ESCALATE", cnt("ESCALATE"), "Sent to a person"], ["DENY", cnt("DENY"), "Blocked"]];
   const govT = govN.reduce((a, x) => a + x[1], 0);
   put("ov-gov",
@@ -1428,7 +1429,7 @@ function renderGovSummary() {
       el("li", {}, el("span", { class: "badge " + k }, k), " ", el("b", { class: "gv-n" }, String(n)), el("span", { class: "gv-l" }, label),
         el("span", { class: "gv-p" }, govT ? `${Math.round(n / govT * 100)}%` : "–")))),
     el("div", { class: "gv-ev" }, el("span", {}, "Evidence chain"), el("span", { class: "badge " + (S.verify || "") }, S.verify || "–"),
-      el("span", { class: "muted small" }, `${ev.length} signed event${ev.length === 1 ? "" : "s"}`)),
+      el("span", { class: "muted small" }, `${S.evTotal || ev.length} signed event${(S.evTotal || ev.length) === 1 ? "" : "s"}`)),
     el("div", { class: "muted small gv-note" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
   const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
   put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => { const dec = String(e.policy_decision).split(":")[0];

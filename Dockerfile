@@ -1,4 +1,5 @@
-# LedgerSight. One process, one worker; state, audit trail and files persist in /data (SQLite + file store).
+# LedgerSight. One process, one worker; state, audit trail and files in /data (SQLite + file store).
+# /data must be durable storage for real use (Cloud Run: a mounted volume; see deploy/cloudrun.sh). Runtime deps only.
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 AVOCET_DATA_DIR=/data
 WORKDIR /app

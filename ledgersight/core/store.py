@@ -38,6 +38,21 @@ class Store:
         self._db.execute("PRAGMA synchronous=FULL")
         self._db.executescript(SCHEMA)
         self._db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
+        found = self._db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
+        if found != SCHEMA_VERSION:  # never run against a database written by another schema version
+            raise RuntimeError(f"database schema {found} does not match this build ({SCHEMA_VERSION}); migrate or restore first")
+
+    def backup(self, dest: Path) -> Path:
+        """Consistent online copy of the database (SQLite backup API; safe while the app is running)."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            out = sqlite3.connect(str(dest))
+            try:
+                self._db.backup(out)
+            finally:
+                out.close()
+        return dest
 
     # ---- workspaces ----
     def save_workspace(self, wid: str, state: dict) -> None:

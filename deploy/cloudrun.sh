@@ -6,9 +6,13 @@
 # Re-running is safe: it redeploys and keeps the existing secrets.
 #
 # IMPORTANT (state): LedgerSight keeps its SQLite database and audit trail in /data. On Cloud Run that
-# folder lives inside the single running instance, so the service is pinned to exactly 1 instance that
-# stays warm. Data survives normal use but is LOST when you redeploy or Google restarts the instance.
-# Fine for a demo / sandbox with sample data; for a pilot, move storage to Cloud SQL or a Filestore volume.
+# folder lives inside the single running instance (in memory), so the service is pinned to exactly 1 instance
+# that stays warm. Data survives normal use but is LOST when you redeploy or Google restarts the instance.
+# The app says so on its Data & security page and in /readyz ("durable_storage": false).
+# Fine for a demo / sandbox with sample data. For a pilot: mount durable storage (see DURABLE below, which
+# needs a bucket or Filestore share created by an administrator) or move to Cloud SQL, then set
+# AVOCET_STORAGE_DURABLE=1. Until then, deploy only when nobody is using the app: during a rollout the old
+# and new revision briefly run side by side, each with its own /data.
 set -euo pipefail
 
 PROJECT="${1:?usage: ./deploy/cloudrun.sh <GCP_PROJECT_ID> [REGION]}"
@@ -50,15 +54,26 @@ for s in ledgersight-admin-password ledgersight-admin-totp ledgersight-signing-k
   gcloud secrets add-iam-policy-binding "$s" --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
 done
 
+# DURABLE (optional, needs an existing Cloud Storage bucket; this script never creates one):
+#   export LEDGERSIGHT_BUCKET=<bucket>   then the deploy adds a volume at /data and declares durable storage.
+#   Note: SQLite on a bucket mount suits a single low-traffic instance only; Cloud SQL is the long-term home.
+EXTRA_FLAGS=()
+if [ -n "${LEDGERSIGHT_BUCKET:-}" ]; then
+  EXTRA_FLAGS+=(--execution-environment gen2 --add-volume "name=data,type=cloud-storage,bucket=${LEDGERSIGHT_BUCKET}"
+                --add-volume-mount "volume=data,mount-path=/data" --update-env-vars "AVOCET_STORAGE_DURABLE=1")
+fi
+
 echo "==> Building and deploying to Cloud Run ($REGION)"
 gcloud run deploy "$SERVICE" \
-  --source . \
+  --source . "${EXTRA_FLAGS[@]}" \
   --region "$REGION" \
   --service-account "$SA" \
   --allow-unauthenticated \
   --min-instances 1 --max-instances 1 --concurrency 40 \
   --cpu 1 --memory 1Gi --no-cpu-throttling \
   --timeout 120 \
+  --startup-probe "httpGet.path=/readyz,initialDelaySeconds=2,periodSeconds=5,failureThreshold=24,timeoutSeconds=3" \
+  --liveness-probe "httpGet.path=/healthz,periodSeconds=30,failureThreshold=3,timeoutSeconds=3" \
   --set-env-vars "^@^AVOCET_REQUIRE_MFA=1@AVOCET_SECURE_COOKIE=1@AVOCET_NO_LOGIN=0@AVOCET_SHOW_SAMPLES=0@AVOCET_DATA_DIR=/data@AVOCET_BOOTSTRAP_USER=presenter@AVOCET_BOOTSTRAP_NAME=CloudSeals Presenter@AVOCET_REGION_DECLARED=Google Cloud ${REGION} (Cloud Run; app, data and logs in this region)" \
   --set-secrets "^@^AVOCET_BOOTSTRAP_PASSWORD=ledgersight-admin-password:latest@AVOCET_BOOTSTRAP_TOTP=ledgersight-admin-totp:latest@AVOCET_SIGNING_KEY_PEM=ledgersight-signing-key:latest"
 
