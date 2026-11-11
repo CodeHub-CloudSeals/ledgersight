@@ -1403,6 +1403,7 @@ async function renderEvidence() {
   const ev = await api(W("/evidence?limit=500"));  // newest 500 on screen; the downloads hold the full trail
   const v = ev.verification;
   S.events = ev.events; S.verify = v.state; S.evTotal = ev.total || ev.events.length; S.evCounts = ev.decision_counts || null;
+  S.evActivity = ev.recent_activity || null;  // newest real activity, even when it is older than the events shown
   const b = $("verify-badge"); b.className = "badge " + v.state;
   b.textContent = v.state === "PASS" ? `VERIFIED · ${v.checked} signed events` : `${v.state === "UNKNOWN" ? "NOT VERIFIED" : "FAILED"} · ${v.reason}`;
   for (const [id, p] of [["exp-csv", "export.csv"], ["exp-pack", "review-pack.json"]]) {
@@ -1436,13 +1437,14 @@ function renderGovSummary() {
       el("span", { class: "muted small" }, `${S.evTotal || ev.length} signed event${(S.evTotal || ev.length) === 1 ? "" : "s"}`)),
     el("div", { class: "muted small gv-note" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
   const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
-  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => { const dec = String(e.policy_decision).split(":")[0];
+  const recent = S.evActivity ? S.evActivity.slice(0, 7) : ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse();
+  put("ov-activity", recent.map((e) => { const dec = String(e.policy_decision).split(":")[0];
     return el("li", { class: "tl " + dec }, el("span", { class: "tl-dot" }),
       el("div", { class: "tl-b" },
         el("div", { class: "tl-h" }, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)}`),
         el("div", { class: "tl-m" }, el("span", { class: "badge " + dec }, dec), e.policy_id ? el("span", { class: "rid" }, e.policy_id) : null, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)))));
   }));
-  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
+  if (!recent.length) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
 }
 $("ev-refresh").onclick = renderEvidence;
 $("tamper-btn").onclick = async () => {

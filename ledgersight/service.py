@@ -1092,7 +1092,9 @@ class Service:
             k = str(e.get("policy_decision") or "").split(":")[0]
             counts[k] = counts.get(k, 0) + 1
         shown = events[-limit:] if limit else events
-        return {"events": shown, "total": len(events), "decision_counts": counts,
+        routine = {"workspace.read", "export.read", "query.ask"}  # page views; not "activity"
+        activity = [e for e in reversed(events) if e.get("action") not in routine][:10]
+        return {"events": shown, "total": len(events), "decision_counts": counts, "recent_activity": activity,
                 "verification": self.verify_cached(wid, events), "key_id": w.log.key_id, "key_source": self.key_source}
 
     def tamper_check(self, user, wid):

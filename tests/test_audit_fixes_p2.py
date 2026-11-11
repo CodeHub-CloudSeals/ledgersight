@@ -109,3 +109,15 @@ def test_prod08_runtime_requirements_pinned_without_test_tools():
     lines = [x for x in req.splitlines() if x and not x.startswith("#")]
     assert all("==" in x for x in lines) and not any(x.startswith(("pytest", "httpx")) for x in lines)
     assert "pytest" in (ROOT / "requirements-dev.txt").read_text()
+
+
+def test_prod05_recent_activity_survives_paging(owner):
+    """Regression found during the fix pass: with only the newest N events on screen, real activity
+    (uploads, runs, decisions) must still be reported even when many page views came after it."""
+    golden_run(owner)
+    for _ in range(30):
+        owner.get(WS)  # routine page views
+    page = owner.get(WS + "/evidence?limit=10").json()
+    acts = [e["action"] for e in page["recent_activity"]]
+    assert acts and not any(a in ("workspace.read", "export.read", "query.ask") for a in acts)
+    assert all(e["action"] in ("workspace.read", "export.read") for e in page["events"][-5:])
