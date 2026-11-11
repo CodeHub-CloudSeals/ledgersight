@@ -70,7 +70,14 @@
       <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span><span class="lbl-t">People</span></button>
       <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span><span class="lbl-t">Data &amp; security</span></button>
     </nav>
-    <div class="sidefoot"><div id="app-version" class="small">LedgerSight</div></div>
+    <div class="sidefoot">
+      <div class="side-promo">
+        <div class="sp-t">Ask LedgerSight</div>
+        <div class="sp-s">Questions about this client, answered with sources. Read-only.</div>
+        <button type="button" id="side-ask" class="sp-btn">Ask a question</button>
+      </div>
+      <div id="app-version" class="small">LedgerSight</div>
+    </div>
   </aside>
   <div class="content">
   <header class="topbar">
@@ -96,13 +103,14 @@
       <div id="ov-hero" class="ov-head"></div>
       <nav class="mprog" id="stepper" aria-label="Month-end progress"></nav>
       <div id="ov-kpis" class="kw-row"></div>
-      <div id="ov-charts" class="ov-charts hidden">
-        <div class="card ch-card"><div class="ch-head"><div><div class="card-title">Cash movement</div><div class="ch-sub">Money in and out on the bank statement, by day</div></div>
+      <div id="ov-charts" class="sk-grid hidden">
+        <div class="card ch-card sk-flow"><div class="ch-head"><div><div class="card-title">Cash movement</div><div class="ch-sub">Money in and out on the bank statement, by day</div></div>
           <a class="linkbtn" href="#trace" data-go="trace">Trace a transaction →</a></div><div id="ov-flow"></div></div>
-        <div class="card ch-card"><div class="ch-head"><div><div class="card-title">Match coverage</div><div class="ch-sub">Bank transactions in this run</div></div>
+        <div class="sk-var" id="ov-var"></div>
+        <div class="card hidden sk-cases" id="ov-cases"></div>
+        <div class="card ch-card sk-cover"><div class="ch-head"><div><div class="card-title">Match coverage</div><div class="ch-sub">Bank transactions in this run</div></div>
           <a class="linkbtn" href="#recon" data-go="recon">Details →</a></div><div id="ov-cover"></div></div>
       </div>
-      <div class="card gap hidden" id="ov-cases"></div>
       <div class="card gap hidden" id="ov-how" aria-label="How it works">
         <div class="card-title">How it works <span class="muted">who does each step</span></div>
         <div class="how">

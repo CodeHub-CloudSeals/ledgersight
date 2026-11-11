@@ -155,9 +155,9 @@
           { type: "line", label: "Running net", data: cum.map((v) => v / 100), borderColor: col.navy, backgroundColor: col.navy, borderWidth: 2.2,
             cubicInterpolationMode: "monotone", stack: "net", pointRadius: 0, pointHoverRadius: 5, pointHoverBorderWidth: 2, pointHoverBorderColor: col.surface, order: 0, cents: cum },
           { type: "bar", label: "Money in", data: inC.map((v) => v / 100), backgroundColor: vgrad(col.accent, 1, 0.55), hoverBackgroundColor: col.accent,
-            borderRadius: 6, borderSkipped: false, stack: "s", barPercentage: 0.62, categoryPercentage: 0.7, order: 1, cents: inC },
+            borderRadius: 20, borderSkipped: false, stack: "s", barPercentage: 0.62, categoryPercentage: 0.7, order: 1, cents: inC },
           { type: "bar", label: "Money out", data: outC.map((v) => -v / 100), backgroundColor: vgrad(col.bad, 0.85, 0.4), hoverBackgroundColor: col.bad,
-            borderRadius: 6, borderSkipped: false, stack: "s", barPercentage: 0.62, categoryPercentage: 0.7, order: 2, cents: outC.map((v) => -v) },
+            borderRadius: 20, borderSkipped: false, stack: "s", barPercentage: 0.62, categoryPercentage: 0.7, order: 2, cents: outC.map((v) => -v) },
         ],
       },
       options: {

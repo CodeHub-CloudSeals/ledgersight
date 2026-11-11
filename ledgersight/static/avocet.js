@@ -242,9 +242,13 @@ function kpiIcon(name) {
   return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" },
     sv("path", { d: KPI_ICON[name] }));
 }
-function kpiCard({ icon, label, value, tone, sub, viz, extra, wide, cls }) {
+const GO_ICON = () => sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: "M7 17 17 7M8 7h9v9" }));
+function kpiCard({ icon, label, value, tone, sub, viz, extra, wide, cls, link, linkLabel }) {
+  // link: an existing page; the round arrow opens it (navigation only)
   return el("div", { class: "kw" + (tone ? " " + tone : "") + (wide ? " kw-wide" : "") + (cls ? " " + cls : "") },
-    el("div", { class: "kw-top" }, el("span", { class: "kw-k" }, label), el("span", { class: "kw-ico" }, kpiIcon(icon))),
+    el("div", { class: "kw-top" }, el("span", { class: "kw-k" }, label),
+      link ? el("button", { type: "button", class: "kw-go", title: linkLabel || "Open", "aria-label": linkLabel || "Open", onclick: () => (link === "exceptions" ? openReview() : go(link)) }, GO_ICON())
+        : el("span", { class: "kw-ico" }, kpiIcon(icon))),
     el("div", { class: "kw-mid" }, el("div", { class: "kw-v" }, value), viz ? el("div", { class: "kw-viz" }, viz) : null),
     extra || null,
     sub ? el("div", { class: "kw-s" }, sub) : null);
@@ -413,24 +417,25 @@ async function renderOverview() {
     return el("div", { class: "prog" }, pt, el("div", { class: "pl" }, el("span", {}, el("b", {}, String(decided)), " decided"), el("span", {}, el("b", {}, String(st.open_exceptions)), " open"))); };
   const unx = r ? r.unexplained_variance_cents : null;
   put("ov-kpis",
-    kpiCard({ icon: "matched", label: "Matched automatically", tone: r ? "good" : "",
-      value: r ? counter("k-m", r.matches.length, String) : "–",
-      sub: r ? `${pct}% of ${bankLines} bank transactions` : "no run yet", viz: r ? ring(pct / 100, "ok") : null }),
-    kpiCard({ icon: "review", label: "Awaiting review", tone: r && st.open_exceptions ? "amb" : r ? "good" : "",
-      value: r ? counter("k-o", st.open_exceptions, String) : "–", sub: r ? `${r.exceptions.length} raised in total` : "",
+    kpiCard({ icon: "matched", label: "Matched automatically", tone: r ? "good" : "", cls: "kw-hero", link: "recon", linkLabel: "Open Reconciliation",
+      value: r ? counter("k-m", r.matches.length, String) : "–", viz: r ? ring(pct / 100, "ok") : null,
+      sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "kt-n" }, `${pct}%`), `of ${bankLines} bank transactions`) : "no run yet" }),
+    kpiCard({ icon: "review", label: "Awaiting review", tone: r && st.open_exceptions ? "amb" : r ? "good" : "", link: "exceptions", linkLabel: "Open the review queue",
+      value: r ? counter("k-o", st.open_exceptions, String) : "–",
+      sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "kt-n" }, String(r.exceptions.length)), "raised in total") : "",
       extra: r && r.exceptions.length ? progBar() : null }),
-    kpiCard({ icon: "variance", label: "Variance", wide: true, value: r ? counter("k-v", r.variance_cents, usd) : "–",
-      sub: r ? "bank net minus ledger net" : "",
-      extra: r ? el("div", {}, vSeries ? (window.LSCharts ? LSCharts.variance({ values: vSeries, dates: vSeries.dates, fmtDate: shortDate, usd })
-          : (() => { const sp = sparkline(vSeries, ""); sp.setAttribute("class", "spark spark-lg"); return sp; })()) : null,
-        el("div", { class: "kw-pair" }, el("span", {}, "Bank net", el("b", {}, usd(r.bank_net_cents))), el("span", {}, "Ledger net", el("b", {}, usd(r.ledger_net_cents))))) : null }),
-    kpiCard({ icon: "unexplained", label: "Unexplained", tone: r ? (unx ? "bad" : "good") : "", cls: r ? "kw-status " + (unx ? "bad" : "good") : "",
-      value: r ? counter("k-u", unx, usd) : "–", sub: r ? "after review items" : "",
-      viz: r ? el("span", { class: "chip " + (unx ? "bad" : "good") }, unx ? "Needs attention" : "Fully explained") : null }),
-    kpiCard({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "",
-      value: el("span", {}, counter("k-src", nSrc, String), ` / ${SOURCE_KINDS.length}`),
+    kpiCard({ icon: "unexplained", label: "Unexplained variance", tone: r ? (unx ? "bad" : "good") : "", cls: r ? "kw-status " + (unx ? "bad" : "good") : "", link: "exceptions", linkLabel: "Open the review queue",
+      value: r ? counter("k-u", unx, usd) : "–",
+      sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "chip " + (unx ? "bad" : "good") }, unx ? "Needs attention" : "Fully explained"), "after review items") : "" }),
+    kpiCard({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "", link: "import", linkLabel: "Open Sources",
+      value: el("span", {}, counter("k-src", nSrc, String), el("small", {}, ` / ${SOURCE_KINDS.length}`)),
       sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
       extra: el("div", { class: "segs lg", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }));
+  put("ov-var", r ? kpiCard({ icon: "variance", label: "Variance", cls: "kw-var", link: "recon", linkLabel: "Open Reconciliation", value: counter("k-v", r.variance_cents, usd),
+      sub: "bank net minus ledger net",
+      extra: el("div", {}, vSeries ? (window.LSCharts ? LSCharts.variance({ values: vSeries, dates: vSeries.dates, fmtDate: shortDate, usd })
+          : (() => { const sp = sparkline(vSeries, ""); sp.setAttribute("class", "spark spark-lg"); return sp; })()) : null,
+        el("div", { class: "kw-pair" }, el("span", {}, "Bank net", el("b", {}, usd(r.bank_net_cents))), el("span", {}, "Ledger net", el("b", {}, usd(r.ledger_net_cents))))) }) : null);
   const cur = r && S.run.id === st.last_run;
   $("ov-charts").classList.toggle("hidden", !cur);
   if (cur) { put("ov-flow", cashFlowChart(S.run)); put("ov-cover", coverageChart(S.run)); }
@@ -448,20 +453,24 @@ function renderCaseCards(r) {
   r.exceptions.forEach((x) => { (groups[x.client_status || "APPROVAL_REQUIRED"] = groups[x.client_status || "APPROVAL_REQUIRED"] || []).push(x); });
   const keys = CASE_ORDER.filter((k) => groups[k]).concat(Object.keys(groups).filter((k) => !CASE_ORDER.includes(k)));
   const isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
-  put(box, el("div", { class: "card-title" }, "Cases to review ", el("span", { class: "muted small" }, "click a case to open its detail and source rows"),
-      el("button", { class: "linkbtn", onclick: openReview }, "Review queue →")),
-    el("div", { class: "case-grid" }, keys.map((k) => {
+  const amt = (xs) => xs.reduce((sum, x) => sum + Math.abs(x.amount_cents), 0);
+  put(box, el("div", { class: "card-title" }, "Cases to review", el("button", { class: "pillbtn", title: "Open the review queue", onclick: openReview }, "View all")),
+    el("ul", { class: "case-list" }, keys.map((k) => {
       const xs = groups[k], open = xs.filter(isOpen).length;
-      return el("div", { class: "case-card" + (open ? " open" : ""), role: "button", tabindex: "0", title: "Open the first case in this group",
+      return el("li", { class: "case-row" + (open ? " open" : ""), role: "button", tabindex: "0", title: "Open the first case in this group",
           onclick: (ev) => { if (!ev.target.closest(".case-link")) openCase((xs.find(isOpen) || xs[0]).id); },
           onkeydown: (ev) => { if (ev.key === "Enter") openCase((xs.find(isOpen) || xs[0]).id); } },
-        el("div", { class: "cc-k" }, CASE_STATUS[k] || nice(k), el("span", { class: "badge " + (open ? "OPEN" : "ACCEPTED") }, open ? `${open} open` : "decided")),
-        el("div", { class: "cc-v" }, usd(xs.reduce((s, x) => s + Math.abs(x.amount_cents), 0))),
-        (() => { const all = r.exceptions.reduce((s, x) => s + Math.abs(x.amount_cents), 0) || 1, b = el("div", { class: "cc-bar" }), f = el("i", {});
-          f.style.width = `${xs.reduce((s, x) => s + Math.abs(x.amount_cents), 0) / all * 100}%`; b.append(f); return b; })(),
-        el("div", { class: "cc-list" }, xs.map((x) => caseLink(x.id, `${x.case_id || x.id} · ${TYPE_LABEL[x.type] || nice(x.type)}`))));
+        el("span", { class: "cr-ico " + (open ? "amb" : "ok") }, caseIcon(k)),
+        el("div", { class: "cr-main" },
+          el("div", { class: "cr-h" }, el("b", {}, CASE_STATUS[k] || nice(k)), el("span", { class: "cr-amt" }, usd(amt(xs)))),
+          el("div", { class: "cr-sub" }, el("span", { class: "badge " + (open ? "OPEN" : "ACCEPTED") }, open ? `${open} open` : "decided"),
+            el("span", { class: "cr-links" }, xs.map((x) => caseLink(x.id, x.case_id || x.id))))));
     })));
 }
+const CASE_ICON = { UNMATCHED: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 4 8M8 12h3M2 2l20 20", DUPLICATE: "M8 8h12v12H8zM4 16V4h12",
+  PARTIAL: "M21 12A9 9 0 1 1 12 3v9z", TAX_REVIEW: "M4 2v20l3-2 3 2 3-2 3 2 3-2 1 1V2l-1 1-3-2-3 2-3-2-3 2-3-2zM8 8h8M8 12h8M8 16h5",
+  FX_REVIEW: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20", APPROVAL_REQUIRED: "M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6zM8.5 12l2.5 2.5 4.5-5" };
+function caseIcon(k) { return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: CASE_ICON[k] || CASE_ICON.APPROVAL_REQUIRED })); }
 let SOURCE_KINDS = ["bank", "ledger", "ar", "ap", "documents", "parties"];
 function fillProfile(w) {
   const reviewer = S.me.role === "owner_reviewer";
@@ -1745,6 +1754,7 @@ function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() =>
 function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
 $("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
 $("tb-search").onclick = () => openAsk();
+$("side-ask").onclick = () => openAsk();
 document.addEventListener("keydown", (e) => {   // Ctrl/Cmd+K opens Ask LedgerSight (only inside the app, not on the sign-in screen)
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k" && !$("app").classList.contains("hidden")) { e.preventDefault(); S.askOpen ? $("ask-q").focus() : openAsk(); }
 });
