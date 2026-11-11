@@ -991,7 +991,12 @@ class Service:
         w = self.gate(user, wid, "export.read", run_id=run_id)
         run = w.runs[run_id]
         buf = io.StringIO()
-        wr = csv.writer(buf)
+        out = csv.writer(buf)
+
+        class wr:  # every cell goes through the spreadsheet-injection guard, like the other exports
+            @staticmethod
+            def writerow(cells):
+                out.writerow([reports._safe(c) for c in cells])
         wr.writerow(["client", "run_id", "record", "type", "bank_line", "ledger_line", "amount_usd", "rule",
                      "reason", "status", "reviewer", "approval_id", "review_note", "source_sha256_bank"])
         bank_sha = w.batches["bank"]["sha256"]

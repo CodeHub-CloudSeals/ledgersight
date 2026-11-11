@@ -691,7 +691,9 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab"));
 (function sideMini() {
-  let on = false; try { on = localStorage.getItem("ls-side-mini") === "1"; } catch (_) {}
+  // Narrow windows (or a zoomed browser) start with the icon rail unless the user chose otherwise.
+  let saved = null; try { saved = localStorage.getItem("ls-side-mini"); } catch (_) {}
+  let on = saved === null ? matchMedia("(min-width:821px) and (max-width:1100px)").matches : saved === "1";
   const apply = () => { document.body.classList.toggle("side-mini", on); const b = $("side-toggle");
     b.title = b.ariaLabel = on ? "Expand menu" : "Collapse menu"; b.setAttribute("aria-expanded", String(!on)); };
   apply();
@@ -1186,7 +1188,7 @@ function renderStages() {
 function renderRun() {
   renderWorkflow(); renderReadiness(); renderStages();
   if (!S.run) { put("tiles"); put("matches", empty("No run yet", "Matched bank and ledger lines appear here after a run.")); return; }
-  const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN").length;
+  const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN" || e.status === "RETURNED").length;  // same rule as status and reports
   put("tiles",
     tile("Bank net movement", usd(r.bank_net_cents)), tile("Ledger net movement", usd(r.ledger_net_cents)),
     tile("Variance", usd(r.variance_cents), r.variance_cents ? "amb" : "good"),

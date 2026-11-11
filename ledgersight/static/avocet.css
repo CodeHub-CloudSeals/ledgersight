@@ -1905,3 +1905,34 @@ table tr:hover td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .sk-var .cj-var-plot{height:130px}
 @media (max-width:1100px){.tb-search{flex:0 0 46px;width:46px;padding:0;justify-content:center;margin-left:auto}.tb-search .tbs-t,.tb-search kbd{display:none}}
 .dropzone,.dz-connect{background:var(--sk-panel)}
+
+/* ---------- audit fixes: UI-1..UI-4 ---------- */
+/* UI-2: old bento spans must not leave holes in the 4-card KPI grid */
+#ov-kpis.kw-row>.kw:nth-child(n){grid-column:auto}
+/* UI-1: the top bar never lets the client/period group overlap the search */
+.tb-left{flex:0 0 auto}
+@media (max-width:1200px){.role-pill .lbl{display:none}.role-pill{padding-left:12px}}
+@media (min-width:821px) and (max-width:1100px){.ws-pill select{max-width:150px;text-overflow:ellipsis}}
+/* UI-3: short screens / zoom: every menu item stays visible */
+@media (min-width:821px) and (max-height:720px){
+  .sidebar{padding:12px 12px 10px}
+  .brandcard{padding-bottom:6px}.brandcard .bsub{display:none}.brandcard .logo{width:32px;height:32px}.bname{font-size:18px}
+  .tab{padding:5px 12px;font-size:14px;margin:1px 0}
+  .navlabel{margin:8px 14px 2px;font-size:10px}
+  .sidefoot{display:none}
+  .sidebar nav{scrollbar-width:thin}
+  .sidebar nav::-webkit-scrollbar{display:block;width:4px}.sidebar nav::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
+}
+/* UI-4: Approve / OK buttons readable in both themes (white on #117A4E is 5.4:1) */
+.ok,button.ok{background:#117A4E;border-color:#117A4E;color:#fff}
+.ok:hover,button.ok:hover{background:#0E6B44;filter:none}
+:root[data-theme="dark"] .ok,:root[data-theme="dark"] button.ok{background:#15803D;border-color:#15803D;color:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{background:#15803D;border-color:#15803D;color:#fff}}
+/* UI-3 (icon rail): compact on short screens; smaller badge so it never covers the icon */
+body.side-mini .sidebar:not(.peek) .tab .count{min-width:18px;height:18px;line-height:18px;font-size:10px;padding:0 4px;top:0;right:6px}
+@media (min-width:821px) and (max-height:760px){
+  body.side-mini .sidebar:not(.peek) .tab{padding:6px 0}
+  body.side-mini .sidebar:not(.peek) .navlabel{margin:6px 10px}
+  body.side-mini .sidebar:not(.peek) .brandcard{gap:8px;padding-bottom:4px}
+  body.side-mini .sidebar:not(.peek) .side-toggle{width:30px;height:30px}
+}

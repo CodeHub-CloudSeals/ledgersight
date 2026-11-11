@@ -13,3 +13,8 @@ __pycache__/
 *.pem
 .vscode/
 .DS_Store
+# any local data folder (database with password hashes, TOTP secrets, uploads)
+.ledgersight-data*/
+*.db
+*.db-wal
+*.db-shm

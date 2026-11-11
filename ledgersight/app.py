@@ -14,6 +14,10 @@ from pathlib import Path
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+import mimetypes
+
+mimetypes.add_type("font/woff2", ".woff2")
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
@@ -319,20 +323,20 @@ async def upload(wid: str, kind: str = Form("auto"), data_class: str = Form("syn
     """kind="auto" (default): the server works out what the file is from its content and refuses
     anything that is not a recognised finance record. `hint` (from the file name) only breaks ties."""
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.upload, u, wid, kind, file.filename or "upload", blob, data_class, hint=hint)
+    return await run_in_threadpool(handle, svc.upload, u, wid, kind, file.filename or "upload", blob, data_class, hint=hint)
 
 
 @app.post("/v1/workspaces/{wid}/held-files")
 async def hold_file(wid: str, data_class: str = Form("synthetic"), file: UploadFile = File(...), u=Depends(current_user)):
     """Any document type: stored unopened and marked for later conversion to JSON."""
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.hold_file, u, wid, file.filename or "upload", blob, data_class)
+    return await run_in_threadpool(handle, svc.hold_file, u, wid, file.filename or "upload", blob, data_class)
 
 
 @app.post("/v1/workspaces/{wid}/email")
 async def read_email(wid: str, file: UploadFile = File(...), u=Depends(current_user)):
     blob = await file.read(25 * 1024 * 1024 + 1)
-    return handle(svc.read_email, u, wid, blob)
+    return await run_in_threadpool(handle, svc.read_email, u, wid, blob)
 
 
 @app.get("/v1/integrations")
@@ -346,7 +350,7 @@ def integrations(u=Depends(current_user)):
 @app.post("/v1/workspaces/{wid}/documents")
 async def upload_pdf(wid: str, data_class: str = Form("synthetic"), file: UploadFile = File(...), u=Depends(current_user)):
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.upload_pdf, u, wid, file.filename or "document.pdf", blob, data_class)
+    return await run_in_threadpool(handle, svc.upload_pdf, u, wid, file.filename or "document.pdf", blob, data_class)
 
 
 @app.post("/v1/workspaces/{wid}/documents/{doc_id}/confirm")
@@ -376,9 +380,12 @@ def load_sample(wid: str, u=Depends(current_user)):
 def sample_file(wid: str, name: str, u=Depends(current_user)):
     _samples_on()
     handle(svc.gate, u, wid, "workspace.read")
-    if not name.startswith(wid + "_") or "/" in name or name.endswith(".json") or not (FIXTURES / name).is_file():
+    root = FIXTURES.resolve()
+    p = (FIXTURES / name).resolve()
+    if (not name.startswith(wid + "_") or "/" in name or "\\" in name or ".." in name or name.endswith(".json")
+            or p.parent != root or not p.is_file()):
         raise HTTPException(404, "not found")
-    return FileResponse(FIXTURES / name, filename=name)
+    return FileResponse(p, filename=name)
 
 
 def _run_view(r: dict) -> dict:
@@ -469,7 +476,10 @@ def audit_trail(wid: str, fmt: str, u=Depends(current_user)):
 
 @app.post("/v1/workspaces/{wid}/ask")
 def ask(wid: str, body: dict = Body(...), u=Depends(current_user)):
-    return handle(svc.ask, u, wid, body.get("question", ""))
+    q = body.get("question", "")
+    if not isinstance(q, str) or len(q) > 2000:
+        raise HTTPException(422, "question must be text of at most 2000 characters")
+    return handle(svc.ask, u, wid, q)
 
 
 @app.get("/v1/workspaces/{wid}/ask/suggestions")
