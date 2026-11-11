@@ -20,6 +20,7 @@ Invariants: one source line consumed at most once; nothing is ever "posted".
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field, asdict
 from datetime import date
 
@@ -38,7 +39,8 @@ APPROVED_FX = {(s["from"].upper(), s["to"].upper()) for s in (_M.get("fx") or {}
 CLIENT_STATUS = {"POSSIBLE_DUPLICATE": "DUPLICATE", "PARTIAL_RECEIPT": "PARTIAL", "MISSING_GL": "UNMATCHED",
                  "UNMATCHED_DEPOSIT": "UNMATCHED", "MISSING_BANK": "UNMATCHED", "TAX_REVIEW": "TAX_REVIEW",
                  "FX_REVIEW": "FX_REVIEW", "AMBIGUOUS": "APPROVAL_REQUIRED", "OVERPAYMENT": "APPROVAL_REQUIRED",
-                 "MISSING_RECEIPT": "APPROVAL_REQUIRED"}
+                 "MISSING_RECEIPT": "APPROVAL_REQUIRED", "CURRENCY_MISMATCH": "FX_REVIEW",
+                 "REJECTED_SOURCE_ROW": "INCOMPLETE_SOURCE"}
 # types whose amount is part of the bank-vs-ledger variance (TAX_REVIEW is on a matched line, so it is not)
 VARIANCE_TYPES = ("POSSIBLE_DUPLICATE", "MISSING_GL", "UNMATCHED_DEPOSIT", "FX_REVIEW")
 
@@ -83,6 +85,8 @@ class RunResult:
     matches: list[Match]
     exceptions: list[Exception_]
     unexplained_variance_cents: int
+    base_currency: str = "USD"
+    excluded_foreign: list[dict] = field(default_factory=list)
 
     def to_dict(self):
         return asdict(self)
@@ -97,6 +101,14 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
               bills: list[dict] | None = None) -> RunResult:
     invoices = invoices or []
     documents = documents or []
+    # One base currency (the ledger's). Rows in another currency are never added into the base totals or
+    # matched on amount; each is raised for FX review instead (no conversion without an approved rate).
+    _cur = Counter(r.get("currency") for r in ledger if r.get("currency"))
+    base = _cur.most_common(1)[0][0] if _cur else "USD"
+    foreign = [("bank", r) for r in bank if r.get("currency") and r["currency"] != base] + \
+              [("ledger", r) for r in ledger if r.get("currency") and r["currency"] != base]
+    bank = [r for r in bank if not r.get("currency") or r["currency"] == base]
+    ledger = [r for r in ledger if not r.get("currency") or r["currency"] == base]
     bill_by_ref = {x["ref_norm"]: x for x in (bills or [])}  # AP: open vendor bills
     used_b: set[str] = set()
     used_l: set[str] = set()
@@ -262,6 +274,14 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
 
     # case ids and client-facing status, derived from the data (never typed in)
     seq: dict[str, int] = {}
+    for side, r in foreign:
+        eid = f"EX-{len(excs) + 1:03d}"
+        excs.append(Exception_(eid, "CURRENCY_MISMATCH", r["id"] if side == "bank" else None, r["id"] if side == "ledger" else None,
+                               r["amount_cents"], "R0_BASE_CURRENCY",
+                               f"{side.title()} line {r['id']} is in {r['currency']}, not the book currency {base}. "
+                               f"It is kept out of the {base} totals and not matched until an approved FX rate is applied.",
+                               [r["id"]], suggestion="Confirm the approved FX rate and the base-currency amount; nothing is converted automatically.",
+                               reason_code="NON_BASE_CURRENCY", facts={"currency": r["currency"], "base_currency": base, "side": side}))
     for e in excs:
         if e.type == "TAX_REVIEW":
             key = f"{e.facts['ship_to_state']}-TAX"
@@ -281,4 +301,5 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
     explained = sum(e.amount_cents for e in excs if e.type in VARIANCE_TYPES) \
         - sum(e.amount_cents for e in excs if e.type == "MISSING_BANK")
     return RunResult(ENGINE_VERSION, workspace_id, bank_net, ledger_net, bank_net - ledger_net,
-                     matches, excs, (bank_net - ledger_net) - explained)
+                     matches, excs, (bank_net - ledger_net) - explained, base,
+                     [{"side": s, "id": r["id"], "currency": r["currency"], "amount_cents": r["amount_cents"]} for s, r in foreign])

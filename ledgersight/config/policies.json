@@ -40,7 +40,7 @@
      "applies_to": "exception.route",
      "rule": "An interstate sale with missing taxability, nexus, registration or date facts goes to a CPA reviewer as a potential tax/nexus review. LedgerSight asserts no tax liability and never computes, files or pays tax."},
     {"id": "POL-12", "name": "FX_RATE_APPROVAL", "version": "1.0", "effect": "ESCALATE",
-     "exception_types": ["FX_REVIEW"], "required_role": "owner_reviewer",
+     "exception_types": ["FX_REVIEW", "CURRENCY_MISMATCH"], "required_role": "owner_reviewer",
      "applies_to": "exception.route",
      "rule": "A payment in a different currency from its bill is never converted or auto-matched without an approved exchange-rate source. It goes to a CPA reviewer."}
   ],

@@ -73,6 +73,27 @@ def _foreign_names(q: str, allowed_terms: list[str]) -> list[str]:
     return out
 
 
+CLIENT_REF = re.compile(r"\bclient[\s_-]*(\d+|[a-z])\b", re.I)
+ORG_NAME = re.compile(r"\b((?:[A-Z][\w&.-]*\s+){0,4}(?:Co|Corp|Corporation|Inc|LLC|Ltd|Limited|PLC|GmbH|LLP|Company|Group|Holdings))\b\.?")
+
+
+def _client_like_refs(q: str, allowed_terms) -> list[str]:
+    """'Client 9', 'client-b', 'Acme Marine Co'... that is not this book. Configured and made-up names are
+    treated identically, so the refusal never reveals which other clients exist."""
+    allowed = [t.lower() for t in allowed_terms if t]
+    out = []
+    for m in CLIENT_REF.finditer(q):
+        ref = m.group(0).lower()
+        norm = re.sub(r"[\s_-]+", "", ref)
+        if not any(norm == re.sub(r"[\s_-]+", "", a) for a in allowed):
+            out.append(m.group(0))
+    for m in ORG_NAME.finditer(q):
+        name = m.group(1).strip().lower()
+        if not any(name in a or a in name for a in allowed if len(a) >= 3):
+            out.append(m.group(1))
+    return out
+
+
 def _names_other_client(q: str, other_terms) -> bool:
     """True if the question names another configured client book (e.g. "Client 2", "client-b")."""
     low = q.lower()
@@ -84,7 +105,7 @@ def classify(question: str, allowed_terms: list[str], other_terms=()) -> str:
     q = question or ""
     if SQL.search(q):
         return "sql"
-    if CROSS.search(q) or _names_other_client(q, other_terms) or _foreign_names(q, allowed_terms):
+    if CROSS.search(q) or _names_other_client(q, other_terms) or _foreign_names(q, allowed_terms) or _client_like_refs(q, allowed_terms):
         return "cross_client"
     if WRITE.search(q):
         return "write"

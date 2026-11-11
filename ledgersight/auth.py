@@ -21,6 +21,8 @@ SESSION_TTL = timedelta(hours=8)
 ACCOUNT_TTL = timedelta(days=14)
 INVITE_TTL = timedelta(days=3)
 MAX_FAILED = 5
+LOCK_FOR = timedelta(minutes=15)  # temporary lock after MAX_FAILED wrong attempts
+MAX_ACCOUNT_DAYS = 365
 # Authenticator-code step. On for any shared/hosted deployment; the local demo script turns it off.
 REQUIRE_MFA = os.environ.get("AVOCET_REQUIRE_MFA", "1") != "0"
 
@@ -76,6 +78,7 @@ class User:
     revoked: bool = False
     failed: int = 0
     terms_accepted_at: datetime | None = None
+    locked_until: datetime | None = None
 
     def public(self):
         return {"user_id": self.user_id, "display_name": self.display_name, "role": self.role,
@@ -103,6 +106,11 @@ class AuthStore:
                account_days: int = 14) -> Invite:
         if role not in ("owner_reviewer", "preparer", "support"):
             raise ValueError("unknown role")
+        if not 1 <= int(account_days) <= MAX_ACCOUNT_DAYS:
+            raise ValueError(f"account_days must be between 1 and {MAX_ACCOUNT_DAYS}")
+        for old in self.invites.values():  # a new invitation replaces any earlier one for the same person
+            if old.user_id == user_id:
+                old.used = True
         u = self.users.get(user_id)
         if u and u.active:
             raise ValueError("user already active")
@@ -134,17 +142,22 @@ class AuthStore:
     # sessions
     def login(self, user_id: str, password: str, code: str) -> str:
         u = self.users.get(user_id)
-        generic = PermissionError("invalid credentials")
-        if not u or not u.active or u.revoked or not u.pw_hash:
+        # One message for every failure, so a sign-in attempt never reveals whether an account exists,
+        # is locked, expired or revoked.
+        generic = PermissionError("Sign-in failed. Check your details and try again. After 5 failed attempts "
+                                  "sign-in pauses for 15 minutes.")
+        if not u or not u.active or u.revoked or not u.pw_hash or u.expires_at < now():
             raise generic
-        if u.expires_at < now():
-            raise PermissionError("account expired")
-        if u.failed >= MAX_FAILED:
-            raise PermissionError("account locked; contact support")
+        if u.locked_until and u.locked_until > now():
+            raise generic
+        if u.locked_until and u.locked_until <= now():  # lock expired: start counting again
+            u.locked_until, u.failed = None, 0
         if not (check_pw(password, u.pw_hash) and (not REQUIRE_MFA or totp_verify(u.totp, code))):
             u.failed += 1
+            if u.failed >= MAX_FAILED:
+                u.locked_until = now() + LOCK_FOR
             raise generic
-        u.failed = 0
+        u.failed, u.locked_until = 0, None
         tok = secrets.token_urlsafe(32)
         self.sessions[tok] = (user_id, now() + SESSION_TTL)
         return tok
@@ -164,6 +177,9 @@ class AuthStore:
         if not u:
             role = os.environ.get("AVOCET_GOOGLE_DEFAULT_ROLE", "preparer")
             role = role if role in self.GOOGLE_ROLES else "preparer"
+            reviewers = {e.strip().lower() for e in os.environ.get("AVOCET_GOOGLE_REVIEWERS", "").split(",") if e.strip()}
+            if reviewers:  # when an allow-list is set, only those people are CPA reviewers
+                role = "owner_reviewer" if uid in reviewers else "preparer"
             u = User(uid, display_name, role, set(workspaces), active=True,
                      expires_at=now() + timedelta(days=365), terms_accepted_at=now())
             self.users[uid] = u
@@ -171,6 +187,9 @@ class AuthStore:
             raise PermissionError("account expired")
         elif not u.active:
             u.active, u.terms_accepted_at = True, now()
+        for inv in self.invites.values():  # an invitation cannot later reset a Google-activated account
+            if inv.user_id == uid:
+                inv.used = True
         u.display_name = display_name or u.display_name
         tok = secrets.token_urlsafe(32)
         self.sessions[tok] = (uid, now() + SESSION_TTL)
@@ -189,6 +208,10 @@ class AuthStore:
     def logout(self, token: str):
         self.sessions.pop(token, None)
 
+    def unlock(self, user_id: str):
+        u = self.users[user_id]
+        u.failed, u.locked_until = 0, None
+
     def revoke(self, user_id: str):
         u = self.users[user_id]
         u.revoked = True
@@ -202,9 +225,14 @@ class AuthStore:
         pw = os.environ.get("AVOCET_BOOTSTRAP_PASSWORD")
         secret = os.environ.get("AVOCET_BOOTSTRAP_TOTP")
         if uid and pw and secret:
-            self.users[uid] = User(uid, os.environ.get("AVOCET_BOOTSTRAP_NAME", uid), "owner_reviewer",
-                                   set(workspaces), hash_pw(pw), secret, True,
-                                   expires_at=now() + timedelta(days=30), terms_accepted_at=now())
+            old = self.users.get(uid)
+            u = User(uid, os.environ.get("AVOCET_BOOTSTRAP_NAME", uid), "owner_reviewer",
+                     set(workspaces), hash_pw(pw), secret, True,
+                     expires_at=now() + timedelta(days=30), terms_accepted_at=now())
+            if old:  # keep a revocation (and an existing later expiry) across restarts
+                u.revoked = old.revoked
+                u.expires_at = max(u.expires_at, old.expires_at)
+            self.users[uid] = u
             return None
         # Local development: print a one-time invite link to stdout.
         inv = self.invite("presenter", "Demo presenter", "owner_reviewer", workspaces)

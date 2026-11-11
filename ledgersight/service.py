@@ -132,12 +132,15 @@ class Service:
         if path.exists():
             return serialization.load_pem_private_key(path.read_bytes(), None), "key file in the data directory"
         key = Ed25519PrivateKey.generate()
-        path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                           serialization.NoEncryption()))
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        if self.store and any(self.store.load_events(w) for w in WORKSPACES):
+            # History exists but its key is gone: a new key cannot verify it. Keep running so the data can be
+            # read and exported, but /readyz reports not ready (audit_chain_matches_key = false).
+            print("[ledgersight] WARNING: signing key missing but audit history exists; the existing chain will "
+                  "not verify. Restore signing-key.pem or AVOCET_SIGNING_KEY_PEM.", flush=True)
+        pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # created private, never world-readable
+        with os.fdopen(fd, "wb") as f:
+            f.write(pem)
         return key, "key file in the data directory"
 
     def save(self, wid: str | None = None) -> None:
@@ -164,9 +167,17 @@ class Service:
             self.store.append_events("_security", self._security_saved, list(new))
             self._security_saved += len(new)
 
+    def _chains_verify(self) -> bool:
+        """Every stored chain must verify with the key in use. A lost or swapped key makes the history
+        unverifiable; that must stop the service being 'ready' instead of passing silently."""
+        if getattr(self, "_chain_ok", None) is None:
+            pub = self.public_key_pem()
+            self._chain_ok = all(evidence.verify(w.log.events, pub)["state"] != "FAIL" for w in self.ws.values() if w.log.events)
+        return self._chain_ok
+
     def ready(self) -> dict:
         checks = {"signer": self._key is not None, "storage": (self.store.healthy() if self.store else None),
-                  "config": bool(policy.POLICIES) and bool(WORKSPACES)}
+                  "config": bool(policy.POLICIES) and bool(WORKSPACES), "audit_chain_matches_key": self._chains_verify()}
         return {"ready": all(v is not False for v in checks.values()), "checks": checks,
                 "persistence": "sqlite" if self.store else "memory only"}
 
@@ -544,6 +555,10 @@ class Service:
         trace = "TR-" + uuid.uuid4().hex[:12]
         steps: list[dict] = []
         ctx = {}
+        # rows that failed import (bad date, unreadable amount...) are not in the totals: carry them into the run
+        rejected = [(k, w.uploads[b[k]["upload_id"]]) for k in ("bank", "ledger")
+                    if b[k].get("upload_id") in w.uploads and (w.uploads[b[k]["upload_id"]].get("health") or {}).get("rejected")]
+        n_rejected = sum(len(u["health"]["rejected"]) for _, u in rejected)
         # where every row came from: "<file> row <n>", so each match/exception cites its source records
         src_of = {r["id"]: f"{v.get('filename') or k} row {r.get('source_row')}"
                   for k, v in b.items() for r in v.get("rows", []) if r.get("id")}
@@ -579,7 +594,9 @@ class Service:
                 raise ValueError("a stored source file no longer matches its fingerprint; re-import it")
             n = sum(len(x["rows"]) for x in b.values())
             return n, (f"{len(b)} sources present ({', '.join(f'{k} {len(v['rows'])}' for k, v in b.items())}); "
-                       f"{ok}/{checked} stored files re-hashed and unchanged"), {"sources": sorted(b)}
+                       f"{ok}/{checked} stored files re-hashed and unchanged" +
+                       (f"; {n_rejected} bank/ledger row(s) could not be imported and are raised as cases" if n_rejected else "")), \
+                {"sources": sorted(b), "rejected_rows": n_rejected}
         step("agent:intake", "upload.verify", "Verify sources and file fingerprints",
              sum(len(x["rows"]) for x in b.values()), intake, refs=sorted(b))
 
@@ -614,6 +631,29 @@ class Service:
         step("agent:recon", "run.compute", "Match bank to ledger", len(b["bank"]["rows"]) + len(b["ledger"]["rows"]),
              reconcile, rule=recon.ENGINE_VERSION)
         result = ctx["res"].to_dict()
+        for k, up in rejected:
+            for rj in up["health"]["rejected"]:
+                raw = rj.get("raw") or {}
+                amt = None
+                for f in ("amount", "debit", "credit"):
+                    try:
+                        if raw.get(f) not in (None, "", "None"):
+                            amt = ingest.to_cents(raw[f]) * (-1 if f == "credit" else 1)
+                            break
+                    except ValueError:
+                        continue
+                eid = f"EX-{len(result['exceptions']) + 1:03d}"
+                result["exceptions"].append({
+                    "id": eid, "type": "REJECTED_SOURCE_ROW", "bank_id": None, "ledger_id": None, "amount_cents": amt or 0,
+                    "rule_id": "R0_IMPORT_REJECTED",
+                    "why": f"Row {rj['row']} of {up['filename']} ({k}) could not be imported: {rj['reason']}. "
+                           f"It is NOT in the {k} total, so the variance above does not include it.",
+                    "evidence_refs": [], "suggestion": "Correct the row in the source file and upload it again, then re-run.",
+                    "alternatives": [], "residual_cents": None, "status": "OPEN", "case_id": f"{k.upper()}-ROW-{rj['row']}",
+                    "client_status": "INCOMPLETE_SOURCE", "reason_code": "ROW_NOT_IMPORTED", "missing_inputs": [],
+                    "facts": {"file": up["filename"], "row": rj["row"], "source": k, "reason": rj["reason"],
+                              "amount_as_written": next((str(raw[f]) for f in ("amount", "debit", "credit") if raw.get(f) not in (None, "", "None")), "")}})
+        result["rejected_source_rows"] = n_rejected
         # run linkage for every proposed match, kept beside the matches so the match records themselves stay
         # identical whatever file format the rows came from
         match_linkage = [{"bank_id": m["bank_id"], "ledger_id": m["ledger_id"], "client_status": "MATCHED",
@@ -651,7 +691,14 @@ class Service:
              lambda: (len(lines) + len(result["exceptions"]),
                       f"{len(lines)} source rows and {len(result['exceptions'])} exceptions available to read-only questions", None))
 
-        run = {"id": rid, "trace_id": trace, "batch_key": key, "created_by": user.user_id, "created_at": _ts(),
+        inputs = {k: {"sha256": v["sha256"], "rows": len(v["rows"]), "filename": v.get("filename"), "upload_id": v.get("upload_id"),
+                      "currency": sorted({r.get("currency") for r in v["rows"] if r.get("currency")}),
+                      "net_cents": (sum(r.get("amount_cents") or 0 for r in v["rows"] if r.get("currency") in (None, result.get("base_currency", "USD")))
+                                    if k in ("bank", "ledger") else
+                                    sum(r.get("open_cents") or 0 for r in v["rows"] if r.get("currency") == "USD")
+                                    if k in ("ar", "ap") else None)}
+                  for k, v in b.items()}
+        run = {"id": rid, "trace_id": trace, "batch_key": key, "created_by": user.user_id, "created_at": _ts(), "inputs": inputs,
                "engine_version": result["engine_version"], "result": result, "workflow": steps,
                "stages": self._stages(steps, result), "rulebook_version": policy.POLICY_VERSION,
                "match_linkage": match_linkage,
@@ -999,7 +1046,7 @@ class Service:
                 out.writerow([reports._safe(c) for c in cells])
         wr.writerow(["client", "run_id", "record", "type", "bank_line", "ledger_line", "amount_usd", "rule",
                      "reason", "status", "reviewer", "approval_id", "review_note", "source_sha256_bank"])
-        bank_sha = w.batches["bank"]["sha256"]
+        bank_sha = (run.get("inputs") or {}).get("bank", {}).get("sha256") or w.batches.get("bank", {}).get("sha256", "")
         for m in run["result"]["matches"]:
             wr.writerow([w.meta["name"], run_id, "MATCH", "MATCHED", m["bank_id"], m["ledger_id"],
                          f"{m['amount_cents']/100:.2f}", m["rule_id"], m["why"], "PROPOSED_MATCH", "", "", "", bank_sha])
@@ -1016,7 +1063,8 @@ class Service:
         w = self.gate(user, wid, "export.read", run_id=run_id)
         run = w.runs[run_id]
         return {"client": w.meta, "workspace_id": wid, "tenant_id": TENANT, "run": run["result"] | {"id": run_id},
-                "inputs": {k: {"sha256": v["sha256"], "rows": len(v["rows"])} for k, v in w.batches.items()},
+                "inputs": ({k: {"sha256": v["sha256"], "rows": v["rows"]} for k, v in run["inputs"].items()} if run.get("inputs") else
+                           {k: {"sha256": v["sha256"], "rows": len(v["rows"])} for k, v in w.batches.items()}),
                 "evidence": {"events": w.log.events, "public_key_pem": self.public_key_pem().decode(),
                              "verification": evidence.verify(w.log.events, self.public_key_pem()),
                              "verify_offline": "python -m ledgersight.verify_pack <this file>"},
@@ -1034,7 +1082,9 @@ class Service:
         self._agent_or_stop(user, w, "agent:report", "report.compose", run_id=run_id, trace_id=run.get("trace_id"),
                             refs=[f"{kind}.{fmt}"])
         common = {"client": w.meta, "run": run, "generated_by": user.user_id, "generated_at": _ts()}
-        if kind == "finance":
+        if kind == "finance" and run.get("inputs"):
+            rep = reports.finance_report(inputs={k: {kk: vv for kk, vv in v.items() if kk != "upload_id"} for k, v in run["inputs"].items()}, **common)
+        elif kind == "finance":
             inputs = {k: {"sha256": v["sha256"], "rows": len(v["rows"]), "filename": v.get("filename"),
                           "currency": sorted({r.get("currency") for r in v["rows"] if r.get("currency")}),
                           # bank/ledger: net movement; AR/AP: total still open (only same-currency USD rows are summed)
@@ -1244,6 +1294,13 @@ class Service:
         w = self.gate(user, wid, "upload.create", refs=[kind])
         if kind not in ingest.CANONICAL and kind != "pdf":
             raise ValueError("unknown source type")
+        decided = sum(1 for r in w.runs.values() for e in r["result"]["exceptions"]
+                      if e["status"] != "OPEN" or e.get("proposal_note"))
+        if decided and user.role != "owner_reviewer":
+            w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
+                         action=f"source.clear:{kind}", policy_decision="DENY:DECISIONS_EXIST", policy_id="POL-06",
+                         source_line_refs=[f"decided_or_proposed:{decided}"], workflow_pack="cpa-bank-reconciliation")
+            raise Denied("DECISIONS_EXIST", policy_id="POL-06")
         removed = [uid for uid, u in w.uploads.items() if u["kind"] == kind or (kind == "documents" and u["kind"] == "pdf")]
         old_sha = w.batches.get(kind, {}).get("sha256")
         w.batches.pop(kind, None)
@@ -1282,9 +1339,9 @@ class Service:
         return {"reset": wid, "files_deleted": True}
 
     # ---- trust view ----------------------------------------------------
-    def trust(self):
+    def trust(self, user=None):
         return {
-            "tenant": TENANT, "workspaces": list(WORKSPACES),
+            "tenant": TENANT, "workspaces": [w for w in WORKSPACES if user is None or w in user.workspaces],
             "region_declared": self.region,
             "region_note": "Declared by deployment configuration. Not an independently verified data-residency attestation.",
             "data_classes_allowed": sorted(policy.ALLOWED_DATA_CLASSES),

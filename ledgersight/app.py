@@ -227,11 +227,27 @@ def invite_accept(token: str, body: dict = Body(...)):
     return {"ok": True, "user_id": u.user_id}
 
 
+_LOGIN_FAILS: dict[str, list[float]] = {}
+LOGIN_LIMIT, LOGIN_WINDOW = 20, 600  # per client address: at most 20 failed sign-ins per 10 minutes
+
+
+def _recent_fails(ip: str) -> list[float]:
+    import time as _t
+    fails = [t for t in _LOGIN_FAILS.get(ip, []) if t > _t.time() - LOGIN_WINDOW]
+    _LOGIN_FAILS[ip] = fails
+    return fails
+
+
 @app.post("/v1/login")
-def login(body: dict = Body(...)):
+def login(request: Request, body: dict = Body(...)):
+    import time as _t
+    ip = request.client.host if request.client else "?"
+    if len(_recent_fails(ip)) >= LOGIN_LIMIT:
+        raise HTTPException(429, "Too many failed sign-in attempts from this address. Wait a few minutes and try again.")
     try:
         tok = auth.login(body.get("user_id", ""), body.get("password", ""), body.get("code", ""))
     except PermissionError as e:
+        _LOGIN_FAILS.setdefault(ip, []).append(_t.time())
         raise HTTPException(401, str(e))
     resp = JSONResponse({"ok": True})
     resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
@@ -287,20 +303,41 @@ def create_invite(request: Request, body: dict = Body(...), u=Depends(current_us
     ws = set(body.get("workspaces") or [])
     if not ws <= u.workspaces:
         raise HTTPException(403, {"decision": "DENY", "reason_code": "WORKSPACE_SCOPE"})
+    prior = auth.users.get(str(body.get("user_id", "")))
+    if prior and not prior.workspaces <= u.workspaces:  # never take over someone else's invitation
+        raise HTTPException(403, {"decision": "DENY", "reason_code": "WORKSPACE_SCOPE"})
     try:
         inv = auth.invite(body["user_id"], body.get("display_name", body["user_id"]), body.get("role", "preparer"),
                           ws, int(body.get("account_days", 14)))
     except (KeyError, ValueError) as e:
         raise HTTPException(422, str(e))
-    return {"invite_url": f"{request.base_url}invite?token={inv.token}", "expires_at": inv.expires_at.isoformat()}
+    base = os.environ.get("AVOCET_PUBLIC_URL", "").rstrip("/") + "/" if os.environ.get("AVOCET_PUBLIC_URL") else str(request.base_url)
+    return {"invite_url": f"{base}invite?token={inv.token}", "expires_at": inv.expires_at.isoformat()}
+
+
+def _managed_user(u, user_id):
+    """An owner may manage only people inside their own client scope; anyone else looks like an unknown id."""
+    if u.role != "owner_reviewer":
+        raise HTTPException(403, {"decision": "DENY", "reason_code": "ROLE_NOT_AUTHORISED"})
+    t = auth.users.get(user_id)
+    if not t or user_id == u.user_id or not t.workspaces or not t.workspaces <= u.workspaces:
+        raise HTTPException(404, "not found")
+    return t
 
 
 @app.post("/v1/users/{user_id}/revoke")
 def revoke(user_id: str, u=Depends(current_user)):
-    if u.role != "owner_reviewer" or user_id not in auth.users or user_id == u.user_id:
-        raise HTTPException(403, {"decision": "DENY", "reason_code": "ROLE_NOT_AUTHORISED"})
+    _managed_user(u, user_id)
     auth.revoke(user_id)
+    save_users()
     return {"revoked": user_id}
+
+
+@app.post("/v1/users/{user_id}/unlock")
+def unlock(user_id: str, u=Depends(current_user)):
+    _managed_user(u, user_id)
+    auth.unlock(user_id)
+    return {"unlocked": user_id}
 
 
 # ---- workspaces ------------------------------------------------------------
@@ -562,4 +599,4 @@ def reset(wid: str, u=Depends(current_user)):
 
 @app.get("/v1/trust")
 def trust(u=Depends(current_user)):
-    return svc.trust()
+    return svc.trust(u)

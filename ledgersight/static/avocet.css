@@ -1936,3 +1936,4 @@ body.side-mini .sidebar:not(.peek) .tab .count{min-width:18px;height:18px;line-h
   body.side-mini .sidebar:not(.peek) .brandcard{gap:8px;padding-bottom:4px}
   body.side-mini .sidebar:not(.peek) .side-toggle{width:30px;height:30px}
 }
+.row-actions{display:flex;gap:6px;flex-wrap:wrap}

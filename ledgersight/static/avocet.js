@@ -272,9 +272,11 @@ function sparkline(values, cls) {
     sv("path", { d, class: "sp-line", pathLength: "1" }),
     sv("circle", { cx: pts[pts.length - 1][0], cy: pts[pts.length - 1][1], r: 2.6, class: "sp-dot" }));
 }
+// Bank/ledger lines in the book currency (foreign-currency lines are kept out of the totals and raised for FX review).
+const inBase = (run, l) => !l.currency || l.currency === ((run.result && run.result.base_currency) || "USD");
 // Running (bank minus ledger) by date, but only if it adds up to the run's own variance; otherwise no sparkline.
 function varianceSeries(run) {
-  const r = run.result, lines = Object.values(run.lines);
+  const r = run.result, lines = Object.values(run.lines).filter((l) => inBase(run, l));
   const sum = (k) => lines.filter((l) => l.kind === k).reduce((s, l) => s + l.amount_cents, 0);
   if (sum("bank") !== r.bank_net_cents || sum("ledger") !== r.ledger_net_cents) return null;
   const byDate = {};
@@ -287,7 +289,7 @@ function varianceSeries(run) {
 
 // Cash movement: money in and money out on the bank statement, per day (from the imported bank lines).
 function cashFlowChart(run) {
-  const bank = Object.values(run.lines).filter((l) => l.kind === "bank");
+  const bank = Object.values(run.lines).filter((l) => l.kind === "bank" && inBase(run, l));
   if (!bank.length) return empty("No bank transactions in this run", "");
   const days = {};
   bank.forEach((l) => { const d = days[l.date] = days[l.date] || { in: 0, out: 0, n: 0 }; if (l.amount_cents >= 0) d.in += l.amount_cents; else d.out += -l.amount_cents; d.n++; });
@@ -342,7 +344,7 @@ function cashFlowChart(run) {
 // Match coverage: bank transactions matched, raised for review, or neither; plus bank vs ledger totals.
 function coverageChart(run) {
   const r = run.result;
-  const bankIds = Object.values(run.lines).filter((l) => l.kind === "bank").map((l) => l.id);
+  const bankIds = Object.values(run.lines).filter((l) => l.kind === "bank" && inBase(run, l)).map((l) => l.id);
   if (!bankIds.length) return empty("No bank transactions in this run", "");
   const matchedIds = new Set(r.matches.map((m) => m.bank_id));
   const matched = r.matches.length;
@@ -396,7 +398,7 @@ async function renderOverview() {
     : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
   const done = st.runs && !st.open_exceptions;
   const r = S.run && S.run.result;
-  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
+  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank" && inBase(S.run, l)).length : 0;
   const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
   // Page header (replaces the big hero: match %, counts and period already live in the KPIs, top bar and progress line).
   put("ov-hero",
@@ -444,7 +446,7 @@ async function renderOverview() {
   await loadAgents();
 }
 // Exceptions grouped by what the client sees. Every case is a link to its detail in the review queue.
-const CASE_ORDER = ["UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
+const CASE_ORDER = ["INCOMPLETE_SOURCE", "UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
 function renderCaseCards(r) {
   const box = $("ov-cases");
   if (!r || !r.exceptions.length) { box.classList.add("hidden"); return; }
@@ -467,7 +469,7 @@ function renderCaseCards(r) {
             el("span", { class: "cr-links" }, xs.map((x) => caseLink(x.id, x.case_id || x.id))))));
     })));
 }
-const CASE_ICON = { UNMATCHED: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 4 8M8 12h3M2 2l20 20", DUPLICATE: "M8 8h12v12H8zM4 16V4h12",
+const CASE_ICON = { INCOMPLETE_SOURCE: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M12 12v4M12 18.5v.5", UNMATCHED: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 4 8M8 12h3M2 2l20 20", DUPLICATE: "M8 8h12v12H8zM4 16V4h12",
   PARTIAL: "M21 12A9 9 0 1 1 12 3v9z", TAX_REVIEW: "M4 2v20l3-2 3 2 3-2 3 2 3-2 1 1V2l-1 1-3-2-3 2-3-2-3 2-3-2zM8 8h8M8 12h8M8 16h5",
   FX_REVIEW: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20", APPROVAL_REQUIRED: "M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6zM8.5 12l2.5 2.5 4.5-5" };
 function caseIcon(k) { return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: CASE_ICON[k] || CASE_ICON.APPROVAL_REQUIRED })); }
@@ -1204,9 +1206,11 @@ const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el(
 // ---------------- exceptions ----------------
 const TYPE_LABEL = { POSSIBLE_DUPLICATE: "Possible duplicate charge", PARTIAL_RECEIPT: "Partial payment received", MISSING_GL: "Bank debit not in ledger",
   MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment",
-  TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing" };
+  TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing",
+  CURRENCY_MISMATCH: "Line not in the book currency", REJECTED_SOURCE_ROW: "Row could not be imported" };
 // Client-facing case status (an open case is never shown as completed)
-const CASE_STATUS = { DUPLICATE: "Duplicate", PARTIAL: "Partial", UNMATCHED: "Unmatched", TAX_REVIEW: "Tax review", FX_REVIEW: "FX review", APPROVAL_REQUIRED: "Approval required" };
+const CASE_STATUS = { DUPLICATE: "Duplicate", PARTIAL: "Partial", UNMATCHED: "Unmatched", TAX_REVIEW: "Tax review", FX_REVIEW: "FX review", APPROVAL_REQUIRED: "Approval required",
+  INCOMPLETE_SOURCE: "Row not imported" };
 const caseStatus = (x) => x.status === "ACCEPTED" || x.status === "REJECTED" ? `${nice(x.status)} by ${x.reviewer}` : (CASE_STATUS[x.client_status] || nice(x.client_status || x.type));
 const FACT_LABEL = { invoice: "Invoice", customer: "Customer", ship_from_state: "Ships from", ship_to_state: "Ships to", invoice_date: "Invoice date",
   invoice_amount: "Invoice amount", currency: "Currency", bill_currency: "Bill currency", bill_amount: "Bill amount", paid_currency: "Paid in",
@@ -1793,7 +1797,11 @@ async function renderTeam() {
   put("users", el("table", {}, el("tr", {}, ["User", "Role", "Clients", "Expires", "Status", ""].map((h) => el("th", {}, h))),
     us.map((u) => el("tr", {}, el("td", {}, u.user_id), el("td", {}, u.role), el("td", { class: "small" }, u.workspaces.join(", ")), el("td", { class: "small" }, new Date(u.expires_at).toLocaleDateString()),
       el("td", {}, el("span", { class: "badge " + (u.revoked ? "DENY" : u.active ? "ALLOW" : "OPEN") }, u.revoked ? "revoked" : u.active ? "active" : "invited")),
-      el("td", {}, u.user_id !== S.me.user_id && !u.revoked ? el("button", { class: "no", onclick: async () => { await api(`/v1/users/${encodeURIComponent(u.user_id)}/revoke`, { method: "POST" }); renderTeam(); } }, "Revoke") : null)))));
+      el("td", { class: "row-actions" }, u.user_id !== S.me.user_id && !u.revoked ? [
+        el("button", { class: "secondary", title: "Lift a sign-in pause after failed attempts", onclick: async (e) => {
+          try { await api(`/v1/users/${encodeURIComponent(u.user_id)}/unlock`, { method: "POST" }); toast(`${u.display_name} can sign in again.`, "good"); }
+          catch (err) { toast(err.message, "bad"); } } }, "Unlock"),
+        el("button", { class: "no", onclick: async () => { await api(`/v1/users/${encodeURIComponent(u.user_id)}/revoke`, { method: "POST" }); renderTeam(); } }, "Revoke")] : null)))));
 }
 $("inv-btn").onclick = async () => {
   const ws = [...document.querySelectorAll("#inv-ws input:checked")].map((i) => i.value);
