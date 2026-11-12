@@ -188,8 +188,10 @@ def reconcile(workspace_id: str, bank: list[dict], ledger: list[dict],
                          and x["ref_norm"] == b["ref_norm"] and x["description"] == b["description"]
                          and _days(x["date"], b["date"]) <= DUPLICATE_WINDOW_DAYS and x["id"] in used_b), None)
             if twin:
+                booked = any(m.bank_id == twin["id"] for m in matches)  # the twin may itself be unbooked (MISSING_GL)
                 add_exc("POSSIBLE_DUPLICATE", b=b, rule="R4_DUP",
-                        why=f"same amount, payee and reference as {twin['id']} within {DUPLICATE_WINDOW_DAYS} days; ledger has only one entry",
+                        why=f"same amount, payee and reference as {twin['id']} within {DUPLICATE_WINDOW_DAYS} days; "
+                            + ("ledger has only one entry" if booked else "neither payment is in the ledger"),
                         evidence_refs=[b["id"], twin["id"]],
                         suggestion="Confirm with bank/vendor whether charged twice; request refund if so. Do not book.")
             else:

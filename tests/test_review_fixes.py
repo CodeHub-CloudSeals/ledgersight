@@ -199,3 +199,19 @@ def test_r06_pillow_pinned_to_the_installed_version():
     req = (FIXTURES.parent.parent / "requirements.txt").read_text()
     pin = re.search(r"^Pillow==(\S+)$", req, re.M)
     assert pin and pin.group(1) == PIL.__version__
+
+
+# ---- #12 duplicate wording: two unbooked identical debits must not claim the ledger has "one entry" ----
+def test_r12_duplicate_wording_matches_what_the_ledger_holds(cpa):
+    from datetime import date
+    from ledgersight.core import recon
+    mk = lambda i, d: {"id": i, "date": d, "description": "ACH DEBIT VENDOR", "reference": "INV-9", "ref_norm": "INV9",
+                       "amount_cents": -25000, "currency": "USD"}
+    led = [{"id": "L0", "date": date(2026, 10, 1), "account": "x", "description": "other", "reference": "Z", "ref_norm": "Z",
+            "amount_cents": -100, "currency": "USD"}]
+    r = recon.reconcile("client-a", [mk("B1", date(2026, 10, 5)), mk("B2", date(2026, 10, 7))], led)
+    dup = next(e for e in r.exceptions if e.type == "POSSIBLE_DUPLICATE")
+    assert "neither payment is in the ledger" in dup.why and "only one entry" not in dup.why
+    # the golden case (HB004: its twin is booked) keeps the original wording
+    hb004 = next(x for x in golden_run(cpa)["result"]["exceptions"] if x["bank_id"] == "HB004")
+    assert hb004["type"] == "POSSIBLE_DUPLICATE" and "ledger has only one entry" in hb004["why"]
