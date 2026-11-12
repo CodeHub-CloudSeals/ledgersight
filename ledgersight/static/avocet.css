@@ -1916,10 +1916,10 @@ table tr:hover td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
   .sidebar nav::-webkit-scrollbar{display:block;width:4px}.sidebar nav::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
 }
 /* UI-4: Approve / OK buttons readable in both themes (white on #117A4E is 5.4:1) */
-.ok,button.ok{background:#117A4E;border-color:#117A4E;color:#fff}
-.ok:hover,button.ok:hover{background:#0E6B44;filter:none}
-:root[data-theme="dark"] .ok,:root[data-theme="dark"] button.ok{background:#15803D;border-color:#15803D;color:#fff}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{background:#15803D;border-color:#15803D;color:#fff}}
+:is(button,a,input).ok{background:#117A4E;border-color:#117A4E;color:#fff}
+:is(button,a,input).ok:hover{background:#0E6B44;filter:none}
+:root[data-theme="dark"] :is(button,a,input).ok{background:#15803D;border-color:#15803D;color:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) :is(button,a,input).ok{background:#15803D;border-color:#15803D;color:#fff}}
 /* UI-3 (icon rail): compact on short screens; smaller badge so it never covers the icon */
 body.side-mini .sidebar:not(.peek) .tab .count{min-width:18px;height:18px;line-height:18px;font-size:10px;padding:0 4px;top:0;right:6px}
 @media (min-width:821px) and (max-height:760px){
@@ -1985,13 +1985,65 @@ html,html *{scrollbar-width:none!important}
 html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
 /* One button family: Approve / Reject / Clear share the pill shape, size, weight and 1.5px border of Propose and Return;
    colour carries the meaning (green = approve, red = reject, blue gradient = propose, ink outline = return). */
-.ok,.no,.danger{border-radius:999px;font-weight:650;letter-spacing:.005em;font-size:13.5px}
-.ok,button.ok{background:linear-gradient(135deg,#0E6B44 0%,#117A4E 55%,#15803D 100%);border:0;color:#fff;padding:11px 22px;
+:is(button,a,input).ok,:is(button,a,input).no,:is(button,a,input).danger{border-radius:999px;font-weight:650;letter-spacing:.005em;font-size:13.5px}
+:is(button,a,input).ok{background:linear-gradient(135deg,#0E6B44 0%,#117A4E 55%,#15803D 100%);border:0;color:#fff;padding:11px 22px;
   box-shadow:0 12px 24px -14px rgba(17,122,78,.75);transition:filter .2s,box-shadow .2s,transform .15s}
-.ok:hover,button.ok:hover{background:linear-gradient(135deg,#0E6B44 0%,#117A4E 55%,#15803D 100%);filter:brightness(1.08);box-shadow:0 14px 28px -14px rgba(17,122,78,.85)}
-:root[data-theme="dark"] .ok,:root[data-theme="dark"] button.ok{background:linear-gradient(135deg,#117A4E 0%,#15803D 100%);border:0}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{background:linear-gradient(135deg,#117A4E 0%,#15803D 100%);border:0}}
-.no,.danger{background:transparent;border:1.5px solid var(--bad);color:var(--bad);padding:10px 20px}
-.no:hover,.danger:hover{background:var(--bad-solid);border-color:var(--bad-solid);color:#fff}
-.danger.solid{background:var(--bad-solid);border-color:var(--bad-solid);color:#fff}
-.ok:disabled,.no:disabled,.danger:disabled{filter:grayscale(.4) opacity(.55);box-shadow:none;cursor:not-allowed}
+:is(button,a,input).ok:hover{background:linear-gradient(135deg,#0E6B44 0%,#117A4E 55%,#15803D 100%);filter:brightness(1.08);box-shadow:0 14px 28px -14px rgba(17,122,78,.85)}
+:root[data-theme="dark"] :is(button,a,input).ok{background:linear-gradient(135deg,#117A4E 0%,#15803D 100%);border:0}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) :is(button,a,input).ok{background:linear-gradient(135deg,#117A4E 0%,#15803D 100%);border:0}}
+:is(button,a,input).no,:is(button,a,input).danger{background:transparent;border:1.5px solid var(--bad);color:var(--bad);padding:10px 20px}
+:is(button,a,input).no:hover,:is(button,a,input).danger:hover{background:var(--bad-solid);border-color:var(--bad-solid);color:#fff}
+:is(button,a,input).danger.solid{background:var(--bad-solid);border-color:var(--bad-solid);color:#fff}
+:is(button,a,input).ok:disabled,:is(button,a,input).no:disabled,:is(button,a,input).danger:disabled{filter:grayscale(.4) opacity(.55);box-shadow:none;cursor:not-allowed}
+
+/* =====================================================================================
+   DESIGN RULES (v7) - one system for every page. Applied last so older layers cannot win.
+   1 Card: white, no border, soft shadow, 24px.            2 Inset (box inside a card): tint, no border, 16px.
+   3 Status = badge or round icon, never a coloured edge stripe.
+   4 Buttons: pill; 42px default, 34px compact; icon buttons round.
+   5 Fields: 42px, 12px corners; search/ask fields are pills.   6 Badges/chips/status icons: pill or circle.
+   7 Tables: no outer frame, hairlines between rows only.   See DESIGN_RULES.md.
+   ===================================================================================== */
+:root{--ds-inset:var(--sk-panel);--ds-r-card:24px;--ds-r-inset:16px;--ds-h:42px;--ds-h-sm:34px}
+
+/* 1 + 3: top-level list cards (review queue) are cards; status lives in the OPEN/DECIDED badge */
+.exc{border:0;border-radius:var(--ds-r-card);background:var(--sk-card);box-shadow:var(--sk-shadow)}
+.exc.ACCEPTED,.exc.REJECTED,.exc.RETURNED{border:0}
+.exc.flash{box-shadow:var(--sk-shadow),0 0 0 2px var(--accent)}
+
+/* 2 + 3: boxes inside a card */
+.xr,.xfacts,.gv-ev,.pf-sum,.sugg,.proof,.dz-connect,.card pre,.pfc,.pbody{border:0;border-radius:var(--ds-r-inset);background:var(--ds-inset);box-shadow:none}
+.xs{border:0;border-radius:var(--ds-r-inset);background:var(--accent-soft);padding:12px 16px}
+.xs.prop{background:var(--ds-inset)}
+.proof,.proof.ALLOW,.proof.ESCALATE,.proof.DENY,.proof.ok{border:0}
+.pfc{border-radius:20px}
+.pfc::before{content:none}
+.pfc.pending{background:transparent;outline:1.5px dashed var(--line-2);outline-offset:-1.5px}
+.ag-stats{background:none;border:0;border-radius:0;gap:8px;overflow:visible}
+.ag-stat{background:var(--ds-inset);border-radius:14px;padding:10px 12px}
+.pbody::before{content:none}
+.pnode.s-working .pbody::before{content:""}
+.pnode.s-blocked .pbody{box-shadow:inset 0 0 0 1.5px var(--bad-line)}
+.pnode.s-working .pbody{box-shadow:inset 0 0 0 1.5px var(--accent-line)}
+.dropzone{border-radius:20px}
+
+/* 4: buttons */
+.ov-head .primary{border-radius:999px}
+.side-toggle{border-radius:50%}
+.ghost{border-radius:999px;border:1.5px solid var(--sk-ink);background:transparent;color:var(--sk-ink);font-weight:650;height:var(--ds-h-sm);padding:0 16px}
+.ghost:hover{background:var(--sk-ink);color:var(--sk-card);border-color:var(--sk-ink)}
+
+/* 5: fields */
+.card input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]),.card select,.dialog input,.dialog select{min-height:var(--ds-h)}
+.ask-row input,#ask-q{border-radius:999px;padding:0 18px;min-height:var(--ds-h)}
+
+/* 6: small status shapes */
+.pstate,.kt-n{border-radius:999px}
+.pico{border-radius:50%}
+.pnode.s-working .pico::before{border-radius:50%}
+
+/* 7: tables */
+.tablewrap,.card>table,.card>div>table{border:0;border-radius:0}
+/* status icons and proof boxes share the .ok/.no names with buttons; they never take button padding */
+.cr-ico{padding:0}.cr-ico svg{flex:none}
+.tj .proof,.tj .proof.ok{border:0;border-radius:14px}

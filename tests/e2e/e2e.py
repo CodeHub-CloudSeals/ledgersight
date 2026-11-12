@@ -215,6 +215,19 @@ with sync_playwright() as pw:
         return f"{len(st)} decision buttons, one height ({st[0][1]}px), all pill-shaped: " + ", ".join(t for t, _, _ in st)
     check("Decision buttons share one style", "Review queue: compare height and corner radius", t_decision_buttons)
 
+    def t_design_rules():
+        # DESIGN_RULES.md: pill buttons, no edge stripes, borderless insets/cards, 42px fields, frameless tables
+        js = "\n".join(l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "design_rules.js"), encoding="utf-8").read().splitlines()
+                       if not l.lstrip().startswith("//"))
+        bad, pages = [], ("home", "import", "recon", "exceptions", "parties", "trace", "reports", "agents", "rules", "controls", "evidence", "trust")
+        for t in pages:
+            tab(p, t)
+            if t == "exceptions": p.evaluate("document.querySelectorAll('#exc-list details').forEach(d => d.open = true)")
+            bad += [f"{t}: {x}" for x in p.evaluate(js)]
+        assert not bad, bad[:12]
+        return f"all {len(pages)} pages follow DESIGN_RULES.md (buttons, cards, inner boxes, fields, tables, status)"
+    check("Design rules hold on every page", "tests/e2e/design_rules.js on each page", t_design_rules)
+
 
     # ---------- review queue: maker-checker ----------
     def exc(id_):
