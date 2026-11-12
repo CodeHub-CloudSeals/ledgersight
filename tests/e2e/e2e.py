@@ -548,8 +548,12 @@ with sync_playwright() as pw:
         side = p.evaluate("getComputedStyle(document.querySelector('.sidebar')).backgroundColor")
         dz = p.evaluate("getComputedStyle(document.querySelector('.dropzone')).backgroundColor")
         conn = p.evaluate("getComputedStyle(document.querySelector('.dz-connect')).backgroundColor")
-        assert side == dz == conn, (side, dz, conn)
-        return f"sidebar, drop zone and connect row all {side}"
+        # 2026-11-12 powder-blue palette: the sidebar is a white surface like the cards; the drop zone and the
+        # connect row (boxes inside the upload card) share the light powder-blue inset; the main area is powder blue.
+        card = p.evaluate("getComputedStyle(document.querySelector('#p-import .card')).backgroundColor")
+        main = p.evaluate("getComputedStyle(document.querySelector('.content>main')).backgroundColor")
+        assert side == card == "rgb(255, 255, 255)" and dz == conn == "rgb(238, 244, 250)" and main == "rgb(223, 235, 246)", (side, card, dz, conn, main)
+        return f"sidebar and cards {side}; drop zone and connect row {dz}; main area {main} (powder blue)"
     check("Consistent menu / upload background", "compare computed colours", t_colors)
 
     # ---------- theme, profile, responsive ----------

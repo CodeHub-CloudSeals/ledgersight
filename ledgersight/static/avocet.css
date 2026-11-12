@@ -2257,3 +2257,17 @@ body:not(.side-mini) .rail-tip{display:none}
 .pf-note{font-size:13px;color:var(--text-2);margin-top:2px}
 .xtrail li.t-proof::before{background:var(--accent-2,var(--accent))}
 .k-ATTACHED .np-ico{background:var(--accent-soft);color:var(--accent)}
+
+/* Powder-blue background (2026-11-12). Light mode only; dark mode keeps its own colours.
+   60 / 30 / 10: soft powder blue behind everything, white cards / sidebar / pills on top, navy for actions.
+   Boxes inside white cards use a lighter powder blue. Grey text darkened one step so it stays >= 4.5:1. */
+:root{--sk-page:#EEF4FA;--sk-panel:#DFEBF6;--sk-side:#FFFFFF;--ds-inset:#EEF4FA;--muted:#56647C}
+:root[data-theme="dark"]{--sk-side:var(--sk-panel);--ds-inset:var(--sk-panel);--muted:#A9B4C6}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--sk-side:var(--sk-panel);--ds-inset:var(--sk-panel);--muted:#A9B4C6}}
+.sidebar{background:var(--sk-side)}
+table th,.case-row:hover,.case-row:focus-visible,.dropzone,.dz-connect{background:var(--ds-inset)}
+/* white sidebar: the active page's highlight is powder blue so it still reads (light mode) */
+:root{--sk-navpill:#DFEBF6}
+:root[data-theme="dark"]{--sk-navpill:var(--sk-card)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--sk-navpill:var(--sk-card)}}
+.nav-pill{background:var(--sk-navpill);box-shadow:none}
