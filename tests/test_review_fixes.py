@@ -190,3 +190,12 @@ def test_r05_ar_open_balance_uses_the_books_base_currency(cpa):
     rep = cpa.get(f"{WS}/runs/{run['id']}/reports/finance.json").json()
     totals = next(s for s in rep["sections"] if s["title"] == "Source totals")["rows"]
     assert next(r for r in totals if r[0] == "ar")[-1] == "300.00"
+
+
+# ---- #6 Pillow is a direct runtime dependency (PDF report logo), pinned to the tested version ----
+def test_r06_pillow_pinned_to_the_installed_version():
+    import re
+    import PIL
+    req = (FIXTURES.parent.parent / "requirements.txt").read_text()
+    pin = re.search(r"^Pillow==(\S+)$", req, re.M)
+    assert pin and pin.group(1) == PIL.__version__
