@@ -403,6 +403,28 @@ with sync_playwright() as pw:
         return f"Enter on focused tab opens it; focus outline: {outline}"
     check("Keyboard navigation", "focus a tab, press Enter", t_keyboard)
 
+    def t_pill_after_peek():
+        # Regression (2026-11-12): clicking a tab while the collapsed rail peeked open left the sliding highlight
+        # on the expanded layout's coordinates (one item too low, wider than the rail) after it closed.
+        p.set_viewport_size({"width": 1440, "height": 900}); tab(p, "home")
+        was_mini = p.evaluate("document.body.classList.contains('side-mini')")
+        if not was_mini: p.click("#side-toggle"); p.mouse.move(900, 500)
+        p.wait_for_timeout(500)
+        if not p.locator(".nav-pill").count(): return "no sliding highlight (motion library absent); nothing to check"
+        seen = []
+        for t in ("reports", "agents", "evidence", "home"):
+            el = p.locator(f'.sidebar nav .tab[data-tab="{t}"]'); el.hover(); p.wait_for_timeout(450)
+            el.click(); p.mouse.move(900, 500); p.wait_for_timeout(1200)
+            d = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(),
+                A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect(),
+                S = document.querySelector('.sidebar').getBoundingClientRect();
+                return [Math.max(Math.abs(P.left-A.left), Math.abs(P.top-A.top), Math.abs(P.width-A.width), Math.abs(P.height-A.height)), P.right <= S.right]; }""")
+            assert d[0] <= 1 and d[1], (t, d); seen.append(t)
+        if not was_mini: p.click("#side-toggle"); p.mouse.move(900, 500); p.wait_for_timeout(500)
+        p.set_viewport_size({"width": 1280, "height": 900})
+        return f"collapsed rail: hover-peek + click {', '.join(seen)} → highlight sits exactly on the active item inside the rail"
+    check("Sidebar highlight after hover-peek click", "collapse rail, hover, click tab, move away, compare boxes", t_pill_after_peek)
+
     def t_back():
         tab(p, "home"); tab(p, "reports"); tab(p, "rules")
         p.go_back(); p.wait_for_timeout(400)

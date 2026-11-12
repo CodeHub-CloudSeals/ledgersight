@@ -23,7 +23,11 @@
 
   /* ---------- 1. sliding active pill in the sidebar (Framer "layoutId" style) ---------- */
   const nav = document.querySelector(".sidebar nav");
-  let pill = null;
+  let pill = null, pillAnim = null;
+  const side = nav && nav.closest(".sidebar");
+  // While the collapsed rail is peeking open (or animating shut) the menu has a different geometry; a spring
+  // started then would finish on stale coordinates, so the pill only slides when the rail is settled.
+  const railMoving = () => !!(side && (side.classList.contains("peek") || side.dataset.railMoving));
   function placePill(instant) {
     if (!pill) return;
     const a = nav.querySelector(".tab.active");
@@ -31,11 +35,13 @@
     pill.style.opacity = "1";
     const box = { x: a.offsetLeft, y: a.offsetTop, width: a.offsetWidth, height: a.offsetHeight };
     pill.style.setProperty("--pl", `${a.offsetLeft}px`);
-    if (!motionOn || instant) {
+    if (!motionOn || instant || railMoving()) {
+      if (pillAnim) { try { pillAnim.stop(); } catch (_) {} pillAnim = null; }
       pill.style.transform = `translate(${box.x}px, ${box.y}px)`; pill.style.width = `${box.width}px`; pill.style.height = `${box.height}px`;
       return;
     }
-    M.animate(pill, { x: box.x, y: box.y, width: box.width, height: box.height }, spring(0.42, 0.22));
+    if (pillAnim) { try { pillAnim.stop(); } catch (_) {} }
+    pillAnim = M.animate(pill, { x: box.x, y: box.y, width: box.width, height: box.height }, spring(0.42, 0.22));
   }
   if (nav) {
     pill = document.createElement("span");
@@ -45,6 +51,17 @@
     let raf = 0;
     if (window.ResizeObserver) new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => placePill(true)); }).observe(nav);
     new MutationObserver(() => placePill(false)).observe(nav, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    // Rail opens/closes (hover peek, collapse toggle): snap the pill to the new layout, again once the width transition ends.
+    if (side) {
+      let settleT = 0;
+      const snap = () => { side.dataset.railMoving = "1"; placePill(true); clearTimeout(settleT);
+        settleT = setTimeout(() => { delete side.dataset.railMoving; placePill(true); }, 320); };
+      new MutationObserver(snap).observe(side, { attributes: true, attributeFilter: ["class"] });
+      let mini = document.body.classList.contains("side-mini");
+      new MutationObserver(() => { const m = document.body.classList.contains("side-mini"); if (m !== mini) { mini = m; snap(); } })
+        .observe(document.body, { attributes: true, attributeFilter: ["class"] });
+      side.addEventListener("transitionend", (e) => { if (e.target === side) placePill(true); });
+    }
     window.addEventListener("load", () => placePill(true));
   }
 
