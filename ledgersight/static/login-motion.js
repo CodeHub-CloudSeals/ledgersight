@@ -105,6 +105,30 @@
     root.addEventListener("pointerleave", () => { if (spot) spot.style.opacity = "0"; layers.forEach((l) => { l.style.translate = "0 0"; }); });
   }
 
+  // Headline: the last word changes every 2.6 s (explainable. / audit-ready. / governed. / on time.). The old word
+  // blurs up and out, the new one rises in, and the line's width glides to fit. Fixed word under reduced motion;
+  // paused while the login screen is hidden. Screen readers get one full sentence (.sr-only) instead.
+  const rot = document.getElementById("lg-rot");
+  if (rot && !reduce) {
+    const words = rot.dataset.words.split("|");
+    let wi = 0;
+    const measure = (w) => { const m = document.createElement("span"); m.className = "lg-rw"; m.style.cssText = "position:absolute;visibility:hidden";
+      m.textContent = w; rot.appendChild(m); const x = m.getBoundingClientRect().width; m.remove(); return x; };
+    setInterval(() => {
+      if (root.classList.contains("hidden") || document.hidden) return;
+      const old = rot.querySelector(".lg-rw:not(.out)"); wi = (wi + 1) % words.length;
+      const nw = document.createElement("span"); nw.className = "lg-rw"; nw.textContent = words[wi];
+      const from = rot.getBoundingClientRect().width, to = measure(words[wi]);
+      rot.animate([{ width: from + "px" }, { width: to + "px" }], { duration: 650, easing: "cubic-bezier(.22,1,.36,1)" });
+      if (old) { old.classList.add("out");
+        old.animate([{ opacity: 1, transform: "none", filter: "blur(0)" }, { opacity: 0, transform: "translateY(-55%)", filter: "blur(6px)" }],
+          { duration: 380, easing: "cubic-bezier(.55,0,.75,.2)", fill: "forwards" }).finished.then(() => old.remove()).catch(() => old.remove()); }
+      rot.appendChild(nw);
+      nw.animate([{ opacity: 0, transform: "translateY(55%)", filter: "blur(6px)" }, { opacity: 1, transform: "none", filter: "blur(0)" }],
+        { duration: 700, delay: 230, easing: SPRING, fill: "backwards" });
+    }, 2600);
+  }
+
   // The login screen is revealed by avocet.js removing "hidden"; start the show the moment it appears.
   if (!root.classList.contains("hidden")) enter();
   new MutationObserver(() => { if (!root.classList.contains("hidden")) enter(); })

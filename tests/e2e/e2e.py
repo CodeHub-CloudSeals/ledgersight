@@ -712,7 +712,10 @@ with sync_playwright() as pw:
         lk = r.evaluate("""() => { const cs = (s) => getComputedStyle(document.querySelector(s));
             return [cs('#login .lg-art').backgroundColor, cs('#lg-card').backgroundColor, document.querySelectorAll('#login .lg-steps li').length,
                     cs('#login .lg-art').backgroundImage, document.querySelectorAll('#login .lg-bg, #login .lg-sparks').length]; }""")
-        assert r.inner_text('#login .login-copy h2').split() == ['Close', 'faster.', 'Prove', 'everything.'], r.inner_text('#login .login-copy h2')
+        assert "Reconciliation that's" in r.inner_text('#login .login-copy h2'), r.inner_text('#login .login-copy h2')
+        w1 = r.evaluate("[...document.querySelectorAll('#lg-rot .lg-rw:not(.out)')].pop().textContent"); r.wait_for_timeout(3000); w2 = r.evaluate("[...document.querySelectorAll('#lg-rot .lg-rw:not(.out)')].pop().textContent")
+        assert w1 != w2 and w2.strip() in ("audit-ready.", "governed.", "on time.", "explainable."), (w1, w2)  # last word rotates
+        assert r.evaluate("getComputedStyle(document.querySelector('#login .lg-rotline'), '::after').content") in ("none", "normal")
         assert lk[0] == "rgb(223, 235, 246)" and lk[1] == "rgb(255, 255, 255)" and lk[2] == 3 and lk[3] == "none" and lk[4] == 0, lk
         r.hover("#lg-card"); r.mouse.move(700, 300); r.mouse.move(720, 320); assert r.evaluate("document.querySelector('#lg-card').style.transform") == "", "card tilts"
         r.fill("#lg-user", "presenter"); r.fill("#lg-pw", "wrong-password"); r.click("#lg-btn"); r.wait_for_timeout(700)
