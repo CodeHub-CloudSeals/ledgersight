@@ -1127,7 +1127,14 @@ class Service:
         self._verify_cache[wid] = (key, res)
         return res
 
+    def require_governance(self, user, wid):
+        """Governance views (signed audit trail, TrustOps proof, guardrail tests, data & security) are for the
+        CPA reviewer. A staff preparer is refused by POL-02 and the refusal is signed; an allowed check is not
+        logged on its own (the view itself is recorded as before)."""
+        return self.gate(user, wid, "governance.read", record=False)
+
     def evidence(self, user, wid, limit: int | None = None):
+        self.require_governance(user, wid)
         w = self.gate(user, wid, "export.read")
         events = list(w.log.events)
         counts: dict[str, int] = {}
@@ -1142,6 +1149,7 @@ class Service:
 
     def tamper_check(self, user, wid):
         """Demonstrates detection on a COPY of the chain; the real chain is never altered."""
+        self.require_governance(user, wid)
         w = self.gate(user, wid, "export.read")
         import copy
         events = copy.deepcopy(w.log.events)
@@ -1227,6 +1235,7 @@ class Service:
         """The client's full signed audit trail as a downloadable report. Exporting is itself recorded."""
         if fmt not in reports.FORMATS:
             raise ValueError("format must be json, csv, xlsx or pdf")
+        self.require_governance(user, wid)
         w = self.gate(user, wid, "export.read", refs=[f"audit.{fmt}"])
         events = list(w.log.events)
         run = list(w.runs.values())[-1] if w.runs else None
@@ -1299,7 +1308,7 @@ class Service:
     ]
 
     def trustops_proof(self, user, wid, role_of=lambda uid: None):
-        w = self.gate(user, wid, "workspace.read", record=False)
+        w = self.require_governance(user, wid)
         evs = [dict(e, seq=i, log="client") for i, e in enumerate(w.log.events)]
         mine_sec = [dict(e, seq=i, log="security") for i, e in enumerate(self.security_log.events)
                     if e.get("actor_id") == user.user_id or e.get("delegated_by") == user.user_id]
@@ -1363,6 +1372,7 @@ class Service:
                                      policy_decision="DENY:WORKSPACE_SCOPE", policy_id="POL-01",
                                      policy_version=policy.POLICY_VERSION, workflow_pack="cpa-bank-reconciliation")
             raise Denied("WORKSPACE_SCOPE", conceal=True, policy_id="POL-01")
+        self.require_governance(user, wid)  # guardrail tests are run by a CPA reviewer
         d = self.agent_gate(user, self.ws[wid], agent["actor_id"], action, **extra)
         return {"decision": d.decision, "reason_code": d.reason_code, "policy_id": d.policy_id, "policy_name": d.policy_name,
                 "actor": f"{agent['code']} {agent['name']}", "executed": False}
@@ -1468,6 +1478,12 @@ class Service:
 
     # ---- trust view ----------------------------------------------------
     def trust(self, user=None):
+        if user is not None and "governance.read" not in policy.ROLE_ACTIONS.get(user.role, set()):
+            self.security_log.append(tenant_id=TENANT, workspace_id=None, actor_type="human", actor_id=user.user_id,
+                                     workflow_pack="cpa-bank-reconciliation", action="governance.read:trust",
+                                     policy_decision="DENY:ROLE_NOT_AUTHORISED", policy_id="POL-02",
+                                     policy_version=policy.POLICY_VERSION)
+            raise Denied("ROLE_NOT_AUTHORISED", policy_id="POL-02")
         return {
             "tenant": TENANT, "workspaces": [w for w in WORKSPACES if user is None or w in user.workspaces],
             "region_declared": self.region,

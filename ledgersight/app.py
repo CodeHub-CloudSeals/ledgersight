@@ -524,6 +524,7 @@ def attempt(wid: str, body: dict = Body(...), u=Depends(current_user)):
     action = body.get("action", "")
     kw = {"data_class": body.get("data_class", "synthetic"), "model_route": body.get("model_route", "deterministic")}
     try:
+        svc.require_governance(u, wid)  # Guardrails is a CPA reviewer page
         if body.get("as_agent"):
             r = svc.agent_attempt(u, wid, body["as_agent"], action, **kw)
             return JSONResponse(status_code=403 if r["decision"] == "DENY" else 200, content=r)
@@ -654,4 +655,4 @@ def reset(wid: str, u=Depends(current_user)):
 
 @app.get("/v1/trust")
 def trust(u=Depends(current_user)):
-    return svc.trust(u)
+    return handle(svc.trust, u)
