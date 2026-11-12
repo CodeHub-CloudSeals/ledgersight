@@ -13,6 +13,7 @@ import hmac
 import os
 import secrets
 import struct
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -105,13 +106,30 @@ class Invite:
     used: bool = False
 
 
+def _locked(fn):
+    """Requests run on a thread pool, so every change to users, invitations and sessions holds one lock."""
+    def wrapper(self, *a, **k):
+        with self._lock:
+            return fn(self, *a, **k)
+    wrapper.__name__, wrapper.__doc__ = fn.__name__, fn.__doc__
+    return wrapper
+
+
 class AuthStore:
     def __init__(self):
         self.users: dict[str, User] = {}
         self.invites: dict[str, Invite] = {}
         self.sessions: dict[str, tuple[str, datetime]] = {}
+        self._lock = threading.RLock()
+
+    def _prune_sessions(self):
+        """Drop expired sessions (otherwise a session is only removed when its own token comes back)."""
+        t = now()
+        for tok in [k for k, (_, exp) in self.sessions.items() if exp < t]:
+            del self.sessions[tok]
 
     # invitations
+    @_locked
     def invite(self, user_id: str, display_name: str, role: str, workspaces: set[str],
                account_days: int = 14) -> Invite:
         if role not in ("owner_reviewer", "preparer", "support"):
@@ -136,6 +154,7 @@ class AuthStore:
             raise PermissionError("invitation invalid or expired")
         return inv
 
+    @_locked
     def accept(self, token: str, password: str, code: str, terms: bool) -> User:
         inv = self.get_invite(token)
         if not terms:
@@ -156,25 +175,32 @@ class AuthStore:
         # is locked, expired or revoked.
         generic = PermissionError("Sign-in failed. Check your details and try again. After 5 failed attempts "
                                   "sign-in pauses for 15 minutes.")
-        if not u or not u.active or u.revoked or not u.pw_hash or u.expires_at < now():
-            raise generic
-        if u.locked_until and u.locked_until > now():
-            raise generic
-        if u.locked_until and u.locked_until <= now():  # lock expired: start counting again
-            u.locked_until, u.failed = None, 0
-        step = totp_step(u.totp, code) if REQUIRE_MFA else None
-        mfa_ok = not REQUIRE_MFA or (step is not None and step > u.last_totp_step)
-        if not (check_pw(password, u.pw_hash) and mfa_ok):
-            u.failed += 1
-            if u.failed >= MAX_FAILED:
-                u.locked_until = now() + LOCK_FOR
-            raise generic
-        u.failed, u.locked_until = 0, None
-        if step is not None:
-            u.last_totp_step = step
-        tok = secrets.token_urlsafe(32)
-        self.sessions[tok] = (user_id, now() + SESSION_TTL)
-        return tok
+        with self._lock:
+            if not u or not u.active or u.revoked or not u.pw_hash or u.expires_at < now():
+                raise generic
+            if u.locked_until and u.locked_until > now():
+                raise generic
+            if u.locked_until and u.locked_until <= now():  # lock expired: start counting again
+                u.locked_until, u.failed = None, 0
+            pw_hash, secret = u.pw_hash, u.totp
+        # The slow password hash runs outside the lock, so one sign-in never stalls every other request.
+        pw_ok = check_pw(password, pw_hash)
+        step = totp_step(secret, code) if REQUIRE_MFA else None
+        with self._lock:
+            # checked again under the lock: two simultaneous sign-ins cannot both spend the same authenticator code
+            mfa_ok = not REQUIRE_MFA or (step is not None and step > u.last_totp_step)
+            if not (pw_ok and mfa_ok):
+                u.failed += 1
+                if u.failed >= MAX_FAILED:
+                    u.locked_until = now() + LOCK_FOR
+                raise generic
+            u.failed, u.locked_until = 0, None
+            if step is not None:
+                u.last_totp_step = step
+            self._prune_sessions()
+            tok = secrets.token_urlsafe(32)
+            self.sessions[tok] = (user_id, now() + SESSION_TTL)
+            return tok
 
     # Google sign-in: any verified account on the allowed domain (checked by the caller) is let in.
     # A never-seen email is auto-provisioned with AVOCET_GOOGLE_DEFAULT_ROLE (default: preparer, least
@@ -183,6 +209,7 @@ class AuthStore:
     # keeps whatever role it was given there.
     GOOGLE_ROLES = ("preparer", "owner_reviewer")
 
+    @_locked
     def google_login(self, email: str, display_name: str, workspaces: set[str]) -> str:
         uid = email.lower()
         u = self.users.get(uid)
@@ -205,10 +232,12 @@ class AuthStore:
             if inv.user_id == uid:
                 inv.used = True
         u.display_name = display_name or u.display_name
+        self._prune_sessions()
         tok = secrets.token_urlsafe(32)
         self.sessions[tok] = (uid, now() + SESSION_TTL)
         return tok
 
+    @_locked
     def resolve(self, token: str | None) -> User | None:
         if not token or token not in self.sessions:
             return None
@@ -219,13 +248,16 @@ class AuthStore:
             return None
         return u
 
+    @_locked
     def logout(self, token: str):
         self.sessions.pop(token, None)
 
+    @_locked
     def unlock(self, user_id: str):
         u = self.users[user_id]
         u.failed, u.locked_until = 0, None
 
+    @_locked
     def revoke(self, user_id: str):
         u = self.users[user_id]
         u.revoked = True
@@ -234,6 +266,7 @@ class AuthStore:
                 del self.sessions[t]
 
     # bootstrap from secret store / env
+    @_locked
     def bootstrap(self, workspaces: set[str]):
         uid = os.environ.get("AVOCET_BOOTSTRAP_USER")
         pw = os.environ.get("AVOCET_BOOTSTRAP_PASSWORD")

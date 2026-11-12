@@ -52,7 +52,8 @@ def load_users():
     for d in svc.store.get("users", []):
         auth.users[d["user_id"]] = User(d["user_id"], d["display_name"], d["role"], set(d["workspaces"]), d.get("pw_hash"),
                                         d.get("totp"), d.get("active", False), _dt(d["expires_at"]), d.get("revoked", False),
-                                        d.get("failed", 0), _dt(d.get("terms_accepted_at")))
+                                        d.get("failed", 0), _dt(d.get("terms_accepted_at")),
+                                        locked_until=_dt(d.get("locked_until")), last_totp_step=d.get("last_totp_step", 0))
     for d in svc.store.get("invites", []):
         auth.invites[d["token"]] = Invite(d["token"], d["user_id"], _dt(d["expires_at"]), d["totp"], d.get("used", False))
 
@@ -60,13 +61,18 @@ def load_users():
 def save_users():
     if not svc.store:
         return
-    svc.store.put("users", [{**{k: getattr(u, k) for k in ("user_id", "display_name", "role", "pw_hash", "totp", "active",
-                                                            "revoked", "failed")},
-                             "workspaces": sorted(u.workspaces), "expires_at": u.expires_at.isoformat(),
-                             "terms_accepted_at": u.terms_accepted_at.isoformat() if u.terms_accepted_at else None}
-                            for u in auth.users.values()])
-    svc.store.put("invites", [{"token": i.token, "user_id": i.user_id, "expires_at": i.expires_at.isoformat(), "totp": i.totp,
-                               "used": i.used} for i in auth.invites.values()])
+    # A lockout and the last-used authenticator step survive a restart, so neither can be reset by redeploying.
+    with auth._lock:
+        users = [{**{k: getattr(u, k) for k in ("user_id", "display_name", "role", "pw_hash", "totp", "active",
+                                                 "revoked", "failed", "last_totp_step")},
+                  "workspaces": sorted(u.workspaces), "expires_at": u.expires_at.isoformat(),
+                  "locked_until": u.locked_until.isoformat() if u.locked_until else None,
+                  "terms_accepted_at": u.terms_accepted_at.isoformat() if u.terms_accepted_at else None}
+                 for u in auth.users.values()]
+        invites = [{"token": i.token, "user_id": i.user_id, "expires_at": i.expires_at.isoformat(), "totp": i.totp,
+                    "used": i.used} for i in auth.invites.values()]
+    svc.store.put("users", users)
+    svc.store.put("invites", invites)
 
 
 load_users()
@@ -258,22 +264,43 @@ LOGIN_LIMIT, LOGIN_WINDOW = 20, 600  # per client address: at most 20 failed sig
 
 def _recent_fails(ip: str) -> list[float]:
     import time as _t
-    fails = [t for t in _LOGIN_FAILS.get(ip, []) if t > _t.time() - LOGIN_WINDOW]
+    cutoff = _t.time() - LOGIN_WINDOW
+    if len(_LOGIN_FAILS) > 5000:  # forget addresses with no recent failures, so the table cannot grow without bound
+        for k in [k for k, v in _LOGIN_FAILS.items() if not v or v[-1] < cutoff]:
+            del _LOGIN_FAILS[k]
+    fails = [t for t in _LOGIN_FAILS.get(ip, []) if t > cutoff]
     _LOGIN_FAILS[ip] = fails
     return fails
+
+
+TRUST_PROXY = os.environ.get("AVOCET_TRUST_PROXY") == "1"  # set by deploy/cloudrun.sh; off locally
+
+
+def client_ip(request: Request) -> str:
+    """The address to rate-limit. Behind Cloud Run every request reaches the app from Google's front end, so the
+    socket address is the same for everyone; there the front end appends the real client address as the LAST entry
+    of X-Forwarded-For (earlier entries are whatever the client sent and are not trusted). Only honoured when
+    AVOCET_TRUST_PROXY=1, because without a trusted proxy anyone could send that header."""
+    if TRUST_PROXY:
+        hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+        if hops:
+            return hops[-1]
+    return request.client.host if request.client else "?"
 
 
 @app.post("/v1/login")
 def login(request: Request, body: dict = Body(...)):
     import time as _t
-    ip = request.client.host if request.client else "?"
+    ip = client_ip(request)
     if len(_recent_fails(ip)) >= LOGIN_LIMIT:
         raise HTTPException(429, "Too many failed sign-in attempts from this address. Wait a few minutes and try again.")
     try:
         tok = auth.login(body.get("user_id", ""), body.get("password", ""), body.get("code", ""))
     except PermissionError as e:
         _LOGIN_FAILS.setdefault(ip, []).append(_t.time())
+        save_users()  # the failed-attempt count and any lockout are durable
         raise HTTPException(401, str(e))
+    save_users()  # the spent authenticator step is durable
     resp = JSONResponse({"ok": True})
     resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
     return resp

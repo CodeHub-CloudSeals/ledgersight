@@ -74,7 +74,7 @@ gcloud run deploy "$SERVICE" \
   --timeout 120 \
   --startup-probe "httpGet.path=/readyz,initialDelaySeconds=2,periodSeconds=5,failureThreshold=24,timeoutSeconds=3" \
   --liveness-probe "httpGet.path=/healthz,periodSeconds=30,failureThreshold=3,timeoutSeconds=3" \
-  --set-env-vars "^@^AVOCET_REQUIRE_MFA=1@AVOCET_SECURE_COOKIE=1@AVOCET_NO_LOGIN=0@AVOCET_SHOW_SAMPLES=0@AVOCET_DATA_DIR=/data@AVOCET_BOOTSTRAP_USER=presenter@AVOCET_BOOTSTRAP_NAME=CloudSeals Presenter@AVOCET_REGION_DECLARED=Google Cloud ${REGION} (Cloud Run; app, data and logs in this region)" \
+  --set-env-vars "^@^AVOCET_REQUIRE_MFA=1@AVOCET_SECURE_COOKIE=1@AVOCET_TRUST_PROXY=1@AVOCET_NO_LOGIN=0@AVOCET_SHOW_SAMPLES=0@AVOCET_DATA_DIR=/data@AVOCET_BOOTSTRAP_USER=presenter@AVOCET_BOOTSTRAP_NAME=CloudSeals Presenter@AVOCET_REGION_DECLARED=Google Cloud ${REGION} (Cloud Run; app, data and logs in this region)" \
   --set-secrets "^@^AVOCET_BOOTSTRAP_PASSWORD=ledgersight-admin-password:latest@AVOCET_BOOTSTRAP_TOTP=ledgersight-admin-totp:latest@AVOCET_SIGNING_KEY_PEM=ledgersight-signing-key:latest"
 
 URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
