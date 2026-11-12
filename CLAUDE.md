@@ -48,7 +48,8 @@ and match_linkage. Sources show a source envelope. GET /trustops/proof reads ALL
 trail. Ask: other configured client names are refused; "1–31 October 2026" ranges; case ids queryable. Finance pack:
 totals by status, source totals, tax/FX items, CPA next steps. UI: Overview case cards -> review queue, run stages,
 source envelope, proof panel on Guardrails, demo/synthetic label.
-Diana review 06/11: Ask LedgerSight is a floating button bottom-right; GET /audit-trail.{pdf,csv,xlsx,json} exports the
+Diana review 06/11 made Ask LedgerSight a floating button bottom-right; on 2026-11-12 (user request) it moved to the
+bottom of the left sidebar (always visible, icon-only when collapsed; Ctrl+K). GET /audit-trail.{pdf,csv,xlsx,json} exports the
 whole signed audit trail (button on the Audit trail tab). NOT built here (infra/ops): C10 HTTPS domain + DNS, tenant
 URLs, sandbox pipeline, production URL, email access.
 

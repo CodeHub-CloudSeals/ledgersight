@@ -271,11 +271,12 @@ def test_recon_page_shows_agent_workflow_before_run_stages():
     assert recon.index('id="rc-pipe"') < recon.index('id="stages-card"')
 
 
-def test_ask_launcher_is_a_floating_button():
+def test_ask_launcher_is_in_the_sidebar():
+    # Diana review 06/11 put Ask in a floating corner button; 2026-11-12 (user request) it moved to the bottom of
+    # the left sidebar, always visible (icon only when the sidebar is collapsed). Ctrl+K still opens it.
     html = (appmod.BASE / "static" / "index.html").read_text(encoding="utf-8")
-    assert 'id="ask-open" class="ask-fab"' in html and 'class="askbtn"' not in html
-    css = (appmod.BASE / "static" / "avocet.css").read_text(encoding="utf-8")
-    assert ".ask-fab{position:fixed;right:24px;bottom:24px" in css
+    foot = html[html.index('<div class="sidefoot">'):html.index("</aside>")]
+    assert 'id="ask-open" class="side-ask"' in foot and 'class="ask-fab"' not in html and 'class="askbtn"' not in html
 
 
 def test_rulebook_lists_new_review_policies(cpa):

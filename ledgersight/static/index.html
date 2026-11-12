@@ -67,15 +67,15 @@
       <button class="tab" data-tab="controls"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span><span class="lbl-t">Guardrails</span></button>
       <button class="tab" data-tab="evidence"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span><span class="lbl-t">Audit trail</span></button>
       <div class="navlabel">Admin</div>
-      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span><span class="lbl-t">People</span></button>
+      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span><span class="lbl-t">Users</span></button>
       <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span><span class="lbl-t">Data &amp; security</span></button>
     </nav>
     <div class="sidefoot">
-      <div class="side-promo">
-        <div class="sp-t">Ask LedgerSight</div>
-        <div class="sp-s">Questions about this client, answered with sources. Read-only.</div>
-        <button type="button" id="side-ask" class="sp-btn">Ask a question</button>
-      </div>
+      <button type="button" id="ask-open" class="side-ask" aria-expanded="false" aria-controls="ask-drawer" aria-label="Ask LedgerSight (read-only)" title="Ask LedgerSight · Ctrl K">
+        <span class="sa-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.4a7.6 7.6 0 0 1-11.3 6.6L4 19.6l1.6-4.4A7.6 7.6 0 1 1 20 11.4z"/><path class="sa-spark" d="M12.2 7.6l.85 2.15 2.15.85-2.15.85-.85 2.15-.85-2.15-2.15-.85 2.15-.85z" fill="currentColor" stroke="none"/></svg></span>
+        <span class="sa-t"><b>Ask LedgerSight</b><span>Answers with sources · read-only</span></span>
+        <kbd class="sa-k">Ctrl K</kbd>
+      </button>
       <div id="app-version" class="small">LedgerSight</div>
     </div>
   </aside>
@@ -307,31 +307,34 @@
 
     <!-- ================= People ================= -->
     <section class="panel" id="p-team">
-      <div class="page-head"><div><h2>People</h2>
-        <p class="sub">Invitation-only, per-client membership, 14-day access expiry, instant revocation.</p></div></div>
-      <div class="grid two">
+      <div class="page-head"><div><h2>Users</h2>
+        <p class="sub">Add the people who work on your clients. Each person gets a single-use link to set a password and an authenticator code. Access is per client, expires, and can be revoked at once.</p></div></div>
+      <div id="users-demo-note"></div>
+      <div class="grid two users-grid">
         <div class="card">
-          <div class="card-title">Invite someone</div>
-          <label class="ctl2">User ID (email)<input id="inv-user"></label>
-          <label class="ctl2">Name<input id="inv-name"></label>
-          <label class="ctl2">Role
-            <select id="inv-role"><option value="preparer">Staff preparer</option><option value="owner_reviewer">CPA reviewer</option></select>
+          <div class="card-title">Add a user</div>
+          <label class="ctl2">Full name<input id="inv-name" autocomplete="off" placeholder="e.g. Staff Preparer 2"></label>
+          <label class="ctl2">Email (used to sign in)<input id="inv-user" type="email" autocomplete="off" placeholder="name@yourfirm.com"></label>
+          <div class="ctl2"><span>Role</span>
+            <div class="role-pick" role="radiogroup" aria-label="Role">
+              <label class="rp"><input type="radio" name="inv-role" value="preparer" checked><span><b>Staff preparer</b><small>Uploads files, runs reconciliation, proposes resolutions, attaches proof.</small></span></label>
+              <label class="rp"><input type="radio" name="inv-role" value="owner_reviewer"><span><b>CPA reviewer</b><small>Everything a preparer does, plus approve / reject / return, governance pages and users.</small></span></label>
+            </div>
+          </div>
+          <div class="ctl2"><span>Client access</span><div id="inv-ws" class="ws-pick"></div></div>
+          <label class="ctl2">Access expires after
+            <select id="inv-days"><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select>
           </label>
-          <div class="ctl2"><span>Client access</span><div id="inv-ws" class="row wrap"></div></div>
-          <button id="inv-btn" class="primary">Create invitation link</button>
+          <button id="inv-btn" class="primary">Create user</button>
           <div id="inv-out" class="msg"></div>
         </div>
-        <div class="card"><div class="card-title">Users</div><div id="users"></div></div>
+        <div class="card"><div class="card-title">People with access <span class="muted small" id="users-count"></span></div><div id="users"></div></div>
       </div>
     </section>
   </main>
   </div>
   </div>
 </div>
-<!-- Ask LedgerSight: floating launcher, bottom right (Diana review 06/11) -->
-<button id="ask-open" class="ask-fab" aria-expanded="false" aria-controls="ask-drawer" aria-label="Ask LedgerSight (read-only)" title="Ask LedgerSight (read-only)">
-  <span class="ask-orb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3.5c.5 4.4 2.6 6.5 7 7-4.4.5-6.5 2.6-7 7-.5-4.4-2.6-6.5-7-7 4.4-.5 6.5-2.6 7-7z"/><path d="M18.5 14.5c.2 1.6.9 2.3 2.5 2.5-1.6.2-2.3.9-2.5 2.5-.2-1.6-.9-2.3-2.5-2.5 1.6-.2 2.3-.9 2.5-2.5z" opacity=".75"/></svg></span>
-  <span class="ask-fab-tip">Ask LedgerSight</span></button>
 <aside id="ask-drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="ask-title" aria-hidden="true">
   <div class="drawer-head">
     <div class="drawer-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></div>

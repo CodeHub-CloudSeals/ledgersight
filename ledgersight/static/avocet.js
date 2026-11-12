@@ -139,7 +139,7 @@ async function boot() {
   S.wsList = await api("/v1/workspaces");
   put("ws-select", S.wsList.map((w) => el("option", { value: w.id }, proper(w.name))));
   S.ws = S.wsList[0] && S.wsList[0].id;
-  document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer" || !!S.noLogin);
+  document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer");   // Users: the CPA reviewer (admin), in every mode
   applyRole();
   await switchWs();
   const fromHash = location.hash.slice(1);
@@ -187,7 +187,7 @@ async function switchWs() {
   if (w.runs.length) S.run = await api(W(`/runs/${w.runs[w.runs.length - 1].id}`));
   renderRun(); renderExceptions(); renderControls(); await renderEvidence(); await renderTrust();
   S.asks = S.asks.filter((x) => x.ws === S.ws); renderAskLog(); if (S.askOpen) renderAsk(); if (isActive("reports")) renderReports();
-  if (S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
+  if (S.me.role === "owner_reviewer") renderTeam();
   fillProfile(w);
   await progress();
   S.notif = null; closeNotif(); await loadNotifications(true);   // a new client or person: start from that book's list
@@ -729,6 +729,7 @@ function recCard(id, kind) {
     const set = document.documentElement.dataset.theme;
     const dark = set ? set === "dark" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "light" : "dark";
+    const b = $("theme"); b.classList.remove("spin"); void b.offsetWidth; b.classList.add("spin");
     try { localStorage.setItem("ls-theme-v2", document.documentElement.dataset.theme); } catch (_) {}
   };
 })();
@@ -2099,7 +2100,7 @@ function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() =>
 function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
 $("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
 // (the top-bar search box was removed on request; Ask opens from the floating button, the sidebar card and Ctrl+K)
-$("side-ask").onclick = () => openAsk();
+// (Ask LedgerSight now lives at the bottom of the sidebar: #ask-open; the floating corner button was removed)
 document.addEventListener("keydown", (e) => {   // Ctrl/Cmd+K opens Ask LedgerSight (only inside the app, not on the sign-in screen)
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k" && !$("app").classList.contains("hidden")) { e.preventDefault(); S.askOpen ? $("ask-q").focus() : openAsk(); }
 });
@@ -2131,22 +2132,47 @@ async function renderRules() {
 
 // ---------------- team ----------------
 async function renderTeam() {
-  put("inv-ws", S.wsList.map((w) => el("label", { class: "small" }, el("input", { type: "checkbox", value: w.id, checked: w.id === S.ws }), " " + proper(w.name))));
-  const us = await api("/v1/users");
-  put("users", el("table", {}, el("tr", {}, ["User", "Role", "Clients", "Expires", "Status", ""].map((h) => el("th", {}, h))),
-    us.map((u) => el("tr", {}, el("td", {}, u.user_id), el("td", {}, u.role), el("td", { class: "small" }, u.workspaces.join(", ")), el("td", { class: "small" }, new Date(u.expires_at).toLocaleDateString()),
-      el("td", {}, el("span", { class: "badge " + (u.revoked ? "DENY" : u.active ? "ALLOW" : "OPEN") }, u.revoked ? "revoked" : u.active ? "active" : "invited")),
-      el("td", { class: "row-actions" }, u.user_id !== S.me.user_id && !u.revoked ? [
-        el("button", { class: "secondary", title: "Lift a sign-in pause after failed attempts", onclick: async (e) => {
+  put("users-demo-note", S.noLogin ? el("div", { class: "callout users-note" }, el("b", {}, "Local demo: "),
+    "this copy has no sign-in screen (switch people with “Acting as”). Users you add here sign in on the hosted version, with their password and authenticator code.") : null);
+  put("inv-ws", S.wsList.map((w) => el("label", { class: "ws-chip" }, el("input", { type: "checkbox", value: w.id, checked: w.id === S.ws }), el("span", {}, proper(w.name)))));
+  let us; try { us = await api("/v1/users"); } catch (e) { return put("users", el("div", { class: "msg err" }, e.message)); }
+  const wsName = (id) => proper((S.wsList.find((w) => w.id === id) || {}).name || id);
+  $("users-count").textContent = `· ${us.length}`;
+  put("users", us.length ? el("ul", { class: "user-list" }, us.map((u) => {
+    const st = u.revoked ? ["DENY", "Revoked"] : u.active ? ["ALLOW", "Active"] : ["OPEN", "Invited"];
+    const initials = String(u.display_name || u.user_id).split(/[\s@.()]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("");
+    return el("li", { class: "user-row" + (u.revoked ? " revoked" : "") },
+      el("span", { class: "u-av" }, initials),
+      el("div", { class: "u-main" }, el("div", { class: "u-name" }, u.display_name || u.user_id, u.user_id === S.me.user_id ? el("span", { class: "muted small" }, " · you") : null),
+        el("div", { class: "u-meta" }, [u.user_id, ROLE_NAME[u.role] || u.role, (u.workspaces || []).map(wsName).join(", "),
+          `expires ${new Date(u.expires_at).toLocaleDateString()}`].filter(Boolean).join(" · "))),
+      el("span", { class: "badge " + st[0] }, st[1]),
+      // the local demo's built-in people (used by "Acting as") are not revoked from here
+      el("div", { class: "row-actions" }, u.user_id !== S.me.user_id && !u.revoked && !(S.demoPeople || []).some((d) => d.user_id === u.user_id) ? [
+        el("button", { class: "ghost", title: "Lift a sign-in pause after failed attempts", onclick: async () => {
           try { await api(`/v1/users/${encodeURIComponent(u.user_id)}/unlock`, { method: "POST" }); toast(`${u.display_name} can sign in again.`, "good"); }
           catch (err) { toast(err.message, "bad"); } } }, "Unlock"),
-        el("button", { class: "no", onclick: async () => { await api(`/v1/users/${encodeURIComponent(u.user_id)}/revoke`, { method: "POST" }); renderTeam(); } }, "Revoke")] : null)))));
+        el("button", { class: "no", onclick: async (ev) => {
+          if (!(await confirmDialog(`Remove ${u.display_name}'s access?`, "They are signed out at once and cannot sign in again. This is recorded.", "Revoke access", true))) return;
+          await withBusy(ev.currentTarget, async () => { await api(`/v1/users/${encodeURIComponent(u.user_id)}/revoke`, { method: "POST" }); toast(`${u.display_name}'s access was revoked.`, "good"); renderTeam(); }, "Revoking…"); } }, "Revoke")] : null));
+  })) : empty("No one yet", "Add a user on the left."));
 }
-$("inv-btn").onclick = async () => {
+$("inv-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   const ws = [...document.querySelectorAll("#inv-ws input:checked")].map((i) => i.value);
-  try { const r = await api("/v1/invites", { method: "POST", json: { user_id: $("inv-user").value.trim(), display_name: $("inv-name").value.trim(), role: $("inv-role").value, workspaces: ws } });
-    put("inv-out", el("div", { class: "msg good" }, "Invitation link (single use, expires " + new Date(r.expires_at).toLocaleString() + "):"), el("div", { class: "mono" }, r.invite_url)); renderTeam(); }
-  catch (e) { msg("inv-out", e.message, "err"); }
-};
+  const role = (document.querySelector('input[name="inv-role"]:checked') || {}).value || "preparer";
+  const email = $("inv-user").value.trim(), name = $("inv-name").value.trim();
+  if (!email || !name) return msg("inv-out", "Enter the person's full name and email.", "err");
+  if (!ws.length) return msg("inv-out", "Choose at least one client this person can work on.", "err");
+  try {
+    const r = await api("/v1/invites", { method: "POST", json: { user_id: email, display_name: name, role, workspaces: ws, account_days: +$("inv-days").value } });
+    const copy = el("button", { class: "secondary", onclick: async (e) => {
+      try { await navigator.clipboard.writeText(r.invite_url); e.currentTarget.textContent = "Copied ✓"; } catch (_) { toast("Select the link and copy it.", "err"); } } }, "Copy link");
+    put("inv-out", el("div", { class: "invite-card" },
+      el("div", { class: "ic-h" }, el("b", {}, `${name} added as ${ROLE_NAME[role]}.`), el("span", { class: "muted small" }, ` Send them this link (single use, expires ${new Date(r.expires_at).toLocaleString()}):`)),
+      el("div", { class: "ic-row" }, el("code", { class: "mono ic-link" }, r.invite_url), copy)));
+    $("inv-user").value = ""; $("inv-name").value = "";
+    renderTeam();
+  } catch (e) { msg("inv-out", e.message, "err"); }
+}, "Creating…");
 
 boot();

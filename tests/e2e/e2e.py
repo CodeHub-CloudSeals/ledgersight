@@ -95,10 +95,11 @@ with sync_playwright() as pw:
         assert p.inner_text("#app-version").strip() == "LedgerSight v1.0.0", p.inner_text("#app-version")
         assert "Governed By TrustOps" in p.inner_text(".bsub")
         top = p.eval_on_selector("#notif-btn", "e => e.closest('.topbar') !== null")
-        fab = p.eval_on_selector("#ask-open", "e => { const r = e.getBoundingClientRect(); return [innerWidth - r.right, innerHeight - r.bottom]; }")
-        assert top and fab[0] < 80 and fab[1] < 80, (top, fab)  # bell in the top bar; Ask: floating button bottom-right + Ctrl+K
+        # 2026-11-12: Ask LedgerSight lives at the bottom of the sidebar (the floating corner button was removed)
+        fab = p.eval_on_selector("#ask-open", "e => [!!e.closest('.sidebar .sidefoot'), Math.round(e.getBoundingClientRect().left)]")
+        assert top and fab[0] and fab[1] < 300 and p.locator(".ask-fab").count() == 0, (top, fab)
         p.keyboard.press("Control+k"); p.wait_for_timeout(400); assert p.evaluate("S.askOpen"); p.keyboard.press("Escape"); p.wait_for_timeout(300)
-        return f"WorkSpace/Outputs/Governance/Admin, {len(tabs)} tabs, Ask bottom-right and Ctrl+K, bell in the top bar, LedgerSight v1.0.0, Governed By TrustOps"
+        return f"WorkSpace/Outputs/Governance/Admin, {len(tabs)} tabs, Ask at the bottom of the sidebar and Ctrl+K, bell in the top bar, LedgerSight v1.0.0, Governed By TrustOps"
     check("App shell: grouped sidebar + top bar", "DOM check", t_shell)
 
     def t_empty_overview():
@@ -270,7 +271,7 @@ with sync_playwright() as pw:
         # DESIGN_RULES.md: pill buttons, no edge stripes, borderless insets/cards, 42px fields, frameless tables
         js = "\n".join(l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "design_rules.js"), encoding="utf-8").read().splitlines()
                        if not l.lstrip().startswith("//"))
-        bad, pages = [], ("home", "import", "recon", "exceptions", "parties", "trace", "reports", "agents", "rules", "controls", "evidence", "trust")
+        bad, pages = [], ("home", "import", "recon", "exceptions", "parties", "trace", "reports", "agents", "rules", "controls", "evidence", "trust", "team")
         for t in pages:
             tab(p, t)
             if t == "exceptions": p.evaluate("document.querySelectorAll('#exc-list details').forEach(d => d.open = true)")
@@ -697,7 +698,9 @@ with sync_playwright() as pw:
         r.click('.tab[data-tab="team"]'); r.wait_for_timeout(500)
         r.fill("#inv-user", "staff@example.test"); r.fill("#inv-name", "Test Staff"); r.click("#inv-btn"); r.wait_for_timeout(700)
         assert "/invite" in r.inner_text("#inv-out"), r.inner_text("#inv-out")
-        r.get_by_role("button", name="Revoke").first.click(); r.wait_for_timeout(700)
+        assert "added as Staff preparer" in r.inner_text("#inv-out") and r.locator("#inv-out button", has_text="Copy link").count() == 1
+        r.get_by_role("button", name="Revoke").first.click(); r.wait_for_timeout(300)
+        r.click(".dialog button.danger"); r.wait_for_timeout(900)   # revoking asks for confirmation first
         assert "revoked" in r.inner_text("#users").lower(); shot(r, "17-people")
         r.click("#logout"); r.wait_for_selector("#login:not(.hidden)")
         return "invite link created, user revoked, sign out returns to login"
