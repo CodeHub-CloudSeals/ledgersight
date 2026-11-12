@@ -319,6 +319,11 @@ with sync_playwright() as pw:
         tab(p, "home"); p.wait_for_timeout(900)
         kpis = p.inner_text("#ov-kpis")
         assert "To propose" in kpis and "Returned to me" in kpis and "Waiting for a CPA reviewer" in kpis and "Matched automatically" not in kpis, kpis
+        # nothing the preparer may not use is on screen, not even greyed out (2026-11-12)
+        tab(p, "import"); p.wait_for_timeout(500)
+        assert p.is_hidden("#clear-all") and p.is_hidden("#ov-profile") and p.is_hidden("#reset-btn") and p.is_hidden("#pf-save")
+        p.evaluate("document.querySelector('[data-tab=trust]').click()"); p.wait_for_timeout(300)
+        assert p.evaluate("document.querySelector('.sidebar nav .tab.active').dataset.tab") == "home"
         tab(p, "reports"); p.wait_for_timeout(700)
         assert "Draft." in p.inner_text("#rep-draft") and p.locator("#rep-cards a[href*='audit-trail']").count() == 0
         p.remove_listener("response", on_resp)

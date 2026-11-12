@@ -223,6 +223,7 @@ async function progress() {
   // Nothing to clear -> the clear buttons are off (they come back as soon as a file is imported or a run exists).
   const hasData = st.uploads > 0 || st.runs > 0;
   $("clear-all").disabled = !hasData; $("clear-all").title = hasData ? "" : "Nothing imported yet";
+  $("clear-all").classList.toggle("hidden", !isCPA());   // clearing the whole client is the CPA reviewer's (per-file Clear stays)
   $("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData; $("reset-btn").title = hasData ? "" : "Nothing to clear yet";
   $("page-sub").textContent = proper(w.period || "");  // top bar: client + period only
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = proper(w.name);
@@ -542,6 +543,7 @@ function fillProfile(w) {
   const reviewer = S.me.role === "owner_reviewer";
   [["pf-name", w.name], ["pf-period", w.period], ["pf-industry", w.industry || ""]].forEach(([id, v]) => { $(id).value = v; $(id).disabled = !reviewer; });
   $("pf-save").disabled = !reviewer; $("reset-btn").disabled = !reviewer;
+  $("ov-profile").classList.toggle("hidden", !reviewer);
   msg("pf-msg", reviewer ? "" : "Only a CPA reviewer can rename the client or clear its data.");
 }
 $("pf-save").onclick = (ev) => withBusy(ev.currentTarget, async () => {
@@ -730,6 +732,7 @@ function recCard(id, kind) {
 
 // ---------------- tabs (each page has its own address, e.g. #reports) ----------------
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+  if (!canOpen(t.dataset.tab)) return go(t.dataset.tab);   // a staff preparer is sent to Overview instead
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "p-" + t.dataset.tab));
   if (location.hash.slice(1) !== t.dataset.tab) history.pushState(null, "", "#" + t.dataset.tab);
