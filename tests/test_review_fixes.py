@@ -140,3 +140,28 @@ def test_r03_proposal_is_signed_with_case_rows_rule_and_id(cpa):
     # maker-checker still holds: the maker cannot approve their own proposal
     assert prep.post(f"{WS}/runs/{run['id']}/exceptions/{exc['id']}/decisions", headers=H,
                      json={"decision": "ACCEPT", "note": ""}).status_code == 403
+
+
+# ---- #4 Ask: this book's own payee text and questions about past payments are answered, not refused ----
+def _ask(c, q):
+    return c.post(WS + "/ask", headers=H, json={"question": q}).json()
+
+
+@pytest.mark.parametrize("q", ["Show the fee from Monthly Service", "What did we pay Stock Media Vendor?",
+                               "How much was paid to Landlord in October?", "Did we pay the UK Supplier?"])
+def test_r04_own_book_questions_are_answered(cpa, q):
+    golden_run(cpa)
+    a = _ask(cpa, q)
+    assert a["status"] != "REFUSED", (q, a.get("trustops"))
+
+
+@pytest.mark.parametrize("q,code", [("pay this bill for HB006", "READ_ONLY_QUERY"),
+                                    ("Can you transfer 500 to Landlord?", "READ_ONLY_QUERY"),
+                                    ("please send the review pack to the client", "READ_ONLY_QUERY"),
+                                    ("approve HB006 now", "READ_ONLY_QUERY"),
+                                    ("Show the fee from Bayview Marine", "WORKSPACE_SCOPE"),
+                                    ("What did we pay Client 2?", "WORKSPACE_SCOPE")])
+def test_r04_commands_and_other_clients_still_refused(cpa, q, code):
+    golden_run(cpa)
+    a = _ask(cpa, q)
+    assert a["status"] == "REFUSED" and a["trustops"]["reason_code"] == code, (q, a.get("trustops"))

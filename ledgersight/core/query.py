@@ -107,9 +107,23 @@ def classify(question: str, allowed_terms: list[str], other_terms=()) -> str:
         return "sql"
     if CROSS.search(q) or _names_other_client(q, other_terms) or _foreign_names(q, allowed_terms) or _client_like_refs(q, allowed_terms):
         return "cross_client"
-    if WRITE.search(q):
+    if WRITE.search(q) and not _fact_question(q):
         return "write"
     return "read"
+
+
+# "What did we pay Stock Media Vendor?", "How much was transferred to Landlord?", "Have we sent the reminder?"
+# ask about something that already happened; they are reads. A command ("pay this bill", "approve HB006 now",
+# "can you post the journal") is still a write. Ask never changes anything either way: this only decides between
+# answering and refusing.
+FACT_Q = re.compile(r"^\s*(?:what|which|when|how\s+much|how\s+many|did|do|does|have|has|had|was|were|is|are)\b", re.I)
+FACT_VERB = re.compile(r"\b(?:did|do|does|have|has|had|was|were)\s+(?:we|i|they|you|it|the\s+client|\w+)\s+(?:\w+\s+)?"
+                       r"(?:pay|paid|transfer(?:red)?|sen[dt]|email(?:ed)?|post(?:ed)?|book(?:ed)?|return(?:ed)?)\b"
+                       r"|\bhow\s+much\b.*\b(?:pay|paid|transfer(?:red)?)\b", re.I)
+
+
+def _fact_question(q: str) -> bool:
+    return bool(FACT_Q.search(q) and FACT_VERB.search(q))
 
 
 def refusal(code: str) -> dict:

@@ -1216,9 +1216,14 @@ class Service:
         w = self.gate(user, wid, "query.ask")
         run = list(w.runs.values())[-1] if w.runs else None
         parties = w.batches.get("parties", {}).get("rows", [])
+        # Names this book itself contains are never "another client": parties, invoice/bill/document payees, and the
+        # payee text on its own bank and ledger lines (e.g. "MONTHLY SERVICE FEE"). Other configured clients are
+        # still refused by _other_client_terms, whatever this book's text says.
         allowed = [w.meta["name"], wid] + [p["name"] for p in parties] + [a for p in parties for a in p["aliases"]] + \
                   [r.get(f) for k in ("ar", "ap", "documents") for r in w.batches.get(k, {}).get("rows", [])
-                   for f in ("customer_alias", "vendor_alias") if r.get(f)]
+                   for f in ("customer_alias", "vendor_alias") if r.get(f)] + \
+                  [r.get("description") for k in ("bank", "ledger") for r in w.batches.get(k, {}).get("rows", [])
+                   if r.get("description")]
         cls = query.classify(question, allowed, self._other_client_terms(wid))
         d = self.agent_gate(user, w, "agent:query", "query.answer", run_id=run["id"] if run else None,
                             trace_id=run.get("trace_id") if run else None, query_class=cls)
