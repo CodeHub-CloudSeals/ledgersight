@@ -85,8 +85,14 @@ class Store:
 
     def archive_events(self, log: str) -> str:
         """Keep a cleared book's chain under an archive name; it is never deleted."""
-        name = f"{log}@archived-{_now()}"
         with self._lock:
+            # Two clears close together can read the same clock value (Windows ticks about every 15 ms) and the
+            # second archive then collided (UNIQUE events.log/seq, a 503). Add a counter when the name is taken.
+            base, n = f"{log}@archived-{_now()}", 1
+            name = base
+            while self._db.execute("SELECT 1 FROM events WHERE log=? LIMIT 1", (name,)).fetchone():
+                n += 1
+                name = f"{base}-{n}"
             self._db.execute("UPDATE events SET log=? WHERE log=?", (name, log))
         return name
 

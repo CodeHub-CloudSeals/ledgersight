@@ -653,6 +653,20 @@ def reset(wid: str, u=Depends(current_user)):
     return handle(svc.reset, u, wid)
 
 
+@app.get("/v1/workspaces/{wid}/notifications")
+def notifications(wid: str, u=Depends(current_user)):
+    n = handle(svc.notifications, u, wid)
+    for it in n["items"]:  # the person's display name, for the bell list
+        x = auth.users.get(it["by"])
+        it["by_name"] = x.display_name if x else it["by"]
+    return n
+
+
+@app.post("/v1/workspaces/{wid}/notifications/seen")
+def notifications_seen(wid: str, body: dict = Body(...), u=Depends(current_user)):
+    return handle(svc.notifications_seen, u, wid, body.get("upto"))
+
+
 @app.get("/v1/trust")
 def trust(u=Depends(current_user)):
     return handle(svc.trust, u)

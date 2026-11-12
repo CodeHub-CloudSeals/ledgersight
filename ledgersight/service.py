@@ -67,13 +67,15 @@ class Workspace:
         self.log = evidence.EvidenceLog(key, "ledgersight-ed25519-1")
         self.started_at = _ts()
         self.saved_events = 0  # how many evidence events are already in durable storage
+        self.notif_seen: dict[str, int] = {}  # user_id -> newest evidence seq that person has seen in Notifications
 
     # ---- durable state (everything except file bytes, which live on disk) ----
     def to_state(self) -> dict:
         return {"meta": self.meta, "uploads": self.uploads, "batches": self.batches,
                 "digests": [[k, s, uid] for (k, s), uid in self.digests.items()],
                 "tables": {k: [list(h), [list(r) for r in rows]] for k, (h, rows) in self.tables.items()},
-                "party_reviews": self.party_reviews, "runs": self.runs, "held": self.held, "started_at": self.started_at}
+                "party_reviews": self.party_reviews, "runs": self.runs, "held": self.held, "started_at": self.started_at,
+                "notif_seen": self.notif_seen}
 
     @classmethod
     def from_state(cls, wid: str, key, state: dict, events: list[dict], files_dir: Path) -> "Workspace":
@@ -94,6 +96,7 @@ class Workspace:
         for r in w.runs.values():
             r["batch_key"] = tuple(r.get("batch_key") or ())
         w.started_at = state.get("started_at", w.started_at)
+        w.notif_seen = {k: int(v) for k, v in (state.get("notif_seen") or {}).items()}
         for uid in w.uploads:
             f = next(iter(files_dir.glob(f"{uid}.*")), None) if files_dir.exists() else None
             if f:
@@ -888,6 +891,49 @@ class Service:
                      approval_id=pid, source_line_refs=exc["evidence_refs"], matching_rule_id=exc["rule_id"],
                      workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return exc
+
+    # ---- notifications: who needs to know about a proposal or a decision ----------
+    # Read from the signed evidence log, so the preparer and the CPA reviewer see the same facts in every browser.
+    # A CPA reviewer is told when someone proposes a resolution; a staff preparer is told when a reviewer approves,
+    # rejects or returns an item. Your own actions never notify you. Only "seen" is stored (per person, per book).
+    NOTIFY_ACTIONS = {"exception.proposed": "PROPOSED", "exception.accept": "APPROVED",
+                      "exception.reject": "REJECTED", "exception.return": "RETURNED"}
+
+    def notifications(self, user, wid, limit: int = 30):
+        w = self.gate(user, wid, "workspace.read", record=False)
+        decides = "exception.decide" in policy.ROLE_ACTIONS.get(user.role, set())
+        want = {"exception.proposed"} if decides else {"exception.accept", "exception.reject", "exception.return"}
+        by_id = {}
+        for run in w.runs.values():
+            for x in run.get("result", {}).get("exceptions", []):
+                for p in x.get("proposals") or []:
+                    by_id[p.get("proposal_id")] = (x, p.get("note"))
+                for h in x.get("history") or []:
+                    by_id[h.get("approval_id")] = (x, h.get("note"))
+        items = []
+        for seq, e in enumerate(w.log.events):
+            if e.get("action") not in want or e.get("actor_id") == user.user_id                     or not str(e.get("policy_decision") or "").startswith("ALLOW"):
+                continue
+            x, note = by_id.get(e.get("approval_id"), ({}, None))
+            items.append({"seq": seq, "kind": self.NOTIFY_ACTIONS[e["action"]], "by": e.get("actor_id"),
+                          "at": e.get("timestamp_utc"), "run_id": e.get("run_id"), "ref": e.get("approval_id"),
+                          "exception_id": x.get("id"), "case_id": x.get("case_id"), "type": x.get("type"),
+                          "note": note or "", "lines": e.get("source_line_refs") or []})
+        seen = w.notif_seen.get(user.user_id, -1)
+        for it in items:
+            it["unread"] = it["seq"] > seen
+        return {"unread": sum(1 for it in items if it["unread"]), "items": list(reversed(items))[:limit],
+                "for": "reviewer" if decides else "preparer"}
+
+    def notifications_seen(self, user, wid, upto):
+        w = self.gate(user, wid, "workspace.read", record=False)
+        try:
+            upto = int(upto)
+        except (TypeError, ValueError):
+            raise ValueError("upto must be an event number")
+        upto = max(-1, min(upto, len(w.log.events) - 1))
+        w.notif_seen[user.user_id] = max(w.notif_seen.get(user.user_id, -1), upto)
+        return {"seen": w.notif_seen[user.user_id]}
 
     # ---- evidence + export --------------------------------------------
     # ---- counterparties: who is each transaction with? ---------------------
