@@ -233,6 +233,22 @@ with sync_playwright() as pw:
         return f"{mid[0]} words rising in sequence, sidebar highlight {mid[2]}px tall mid-glide; settles exactly, wrappers removed"
     check("Page entrance + sidebar glide", "switch Overview → Reports, sample mid-animation and after", t_page_motion)
 
+    def t_workflow_stepper():
+        # 2026-11-12: Agent workflow is one stepper: no per-step boxes, no "Done" badge next to the tick,
+        # and the step that sent work to a person opens the review queue.
+        tab(p, "agents"); p.wait_for_timeout(1500)
+        st = p.evaluate("""() => { const t = document.querySelector('#ag-pipeline, #ag-pipe');
+            const done = [...t.querySelectorAll('.pnode.s-done')], esc = t.querySelector('.pnode[data-go-review]');
+            return [done.length, done.filter(n => n.querySelector('.pstate').offsetParent).length,
+                    [...t.querySelectorAll('.pbody')].filter(b => parseFloat(getComputedStyle(b).borderTopWidth) > 0 || getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)').length,
+                    esc ? esc.querySelector('.pstate').textContent : null]; }""")
+        assert st[0] >= 1 and st[1] == 0 and st[2] == 0, st
+        if st[3]:
+            p.click("#ag-pipe .pnode[data-go-review]"); p.wait_for_timeout(700)
+            assert p.evaluate("document.querySelector('#p-exceptions').classList.contains('active')"), "escalated step did not open the review queue"
+        return f"{st[0]} finished steps show only the tick (no badge, no box); '{st[3]}' opens the review queue"
+    check("Agent workflow stepper", "Agents page: status badges, step boxes, escalated link", t_workflow_stepper)
+
     def t_design_rules():
         # DESIGN_RULES.md: pill buttons, no edge stripes, borderless insets/cards, 42px fields, frameless tables
         js = "\n".join(l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "design_rules.js"), encoding="utf-8").read().splitlines()

@@ -15,7 +15,7 @@
     if ((L >= 3 && R < 1) || (T >= 3 && parseFloat(c.borderBottomWidth) < 1 && e.getBoundingClientRect().height > 30)) bad.push("R3 edge stripe: " + name(e));
   }
   // R2 boxes inside cards have no border
-  for (const e of document.querySelectorAll(".xr, .xfacts, .gv-ev, .pf-sum, .sugg, .proof, .dz-connect, .card pre, .pfc:not(.pending), .pbody, .xs, .ag-stat")) {
+  for (const e of document.querySelectorAll(".xr, .xfacts, .gv-ev, .pf-sum, .sugg, .proof, .dz-connect, .card pre, .pfc:not(.pending), .xs, .ag-stat")) {
     if (!vis(e)) continue; const c = getComputedStyle(e);
     if (parseFloat(c.borderTopWidth) > 0 && c.borderTopStyle !== "none") bad.push("R2 inset has border: " + name(e));
     if (parseFloat(c.borderTopLeftRadius) < 14) bad.push("R2 inset radius " + c.borderTopLeftRadius + ": " + name(e));

@@ -2066,3 +2066,39 @@ body:not(.side-mini) .rail-tip{display:none}
 .ls-w{display:inline-block;overflow:clip;overflow-clip-margin:.25em;vertical-align:baseline}
 .ls-wi{display:inline-block}
 .ls-wrun{display:inline}
+
+/* Agent workflow as one stepper (DESIGN_RULES): the circles and line are the progress track; under each circle
+   only the agent id, name and one result line. No per-step boxes, no "Done" badge repeating the tick; the one step
+   that needs a person gets an amber call-out that opens the review queue. Live states (working/queued/blocked)
+   keep their state line. */
+.pipe-track{gap:18px}
+.prail{height:40px;margin-bottom:14px}
+.pico{width:40px;height:40px;flex:0 0 40px}
+.pico svg{width:18px;height:18px}
+.prail::after{left:52px;right:-6px;height:3px;border-radius:3px}
+.pbody,.pnode.s-blocked .pbody,.pnode.s-working .pbody{background:none;border:0;border-radius:0;padding:0 4px 0 0;box-shadow:none;overflow:visible}
+.pnode.s-working .pbody::before{content:none}
+.pnode:hover .pbody{transform:none;box-shadow:none}
+.pcode{font-family:var(--font);font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.pname{font-size:15px;font-weight:650;letter-spacing:-.01em;color:var(--sk-ink);line-height:1.3;margin:3px 0 6px;min-height:0}
+.pline{margin:0;padding:0;border:0;font-size:13.5px;line-height:1.45;color:var(--muted)}
+.pnote{font-size:13px;color:var(--muted)}
+/* status: the circle says it. Only states that need words keep a short coloured line (no pill). */
+.pnode.s-done .pstate{display:none}
+.pstate,.pnode .pstate{background:none!important;border:0!important;padding:0;border-radius:0;font-size:13px;font-weight:650;gap:6px;margin:0 0 4px;align-items:center}
+.pstate i{margin-top:0}
+.pnode.s-escalated .pstate{color:var(--warn)}
+.pnode.s-blocked .pstate{color:var(--bad)}
+.pnode.s-working .pstate,.pnode.s-queued .pstate{color:var(--accent)}
+.pnode.s-idle .pstate,.pnode.s-stopped .pstate{color:var(--muted)}
+.pnode[data-go-review]{cursor:pointer;border-radius:16px}
+.pnode[data-go-review] .pstate::after{content:"→";margin-left:2px;transition:transform .2s}
+.pnode[data-go-review]:hover .pstate::after,.pnode[data-go-review]:focus-visible .pstate::after{transform:translateX(3px)}
+.pnode[data-go-review]:hover .pname{color:var(--warn)}
+.pnode[data-go-review]:focus-visible{outline:2px solid var(--accent);outline-offset:6px}
+@container (max-width:520px){
+  .prail{height:auto;margin:0}
+  .prail::after{left:19px;right:auto;top:48px;bottom:-16px;width:3px;height:auto}
+  .pnode{grid-template-columns:40px minmax(0,1fr);gap:14px}
+}
+@container (max-width:520px){.pipe-track .pnode:last-child .prail::after{display:none}}

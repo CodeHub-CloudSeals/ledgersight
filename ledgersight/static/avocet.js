@@ -1618,7 +1618,9 @@ function nodeFor(a, i) {
   else data = el("div", { class: "pnote" }, "No requests yet");
   const ico = ICON[state] ? icon(ICON[state]) : el("span", {}, String(i + 1));
   const cls = `pnode s-${state}` + (live ? " live" : "") + (an && an.fresh === a.code && forced !== "working" ? " fresh" : "");
-  return { live, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
+  // A step that sent work to a person links to the review queue (see the delegated handler after renderPipelines).
+  const go = state === "escalated" && !forced ? { role: "link", tabindex: "0", "data-go-review": "1" } : {};
+  return { live, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}`, ...go },
     el("div", { class: "prail" }, el("span", { class: "pico" }, ico)),
     el("div", { class: "pbody" },
       el("div", { class: "pcode" }, a.code),
@@ -1648,6 +1650,9 @@ function renderPipelines() {
   });
   document.querySelectorAll(".pipe").forEach((p) => p.classList.toggle("running", !!(an && an.mode === "running")));
 }
+// The workflow track is cloned into two pages, so clicks are handled here once rather than on each copy.
+document.addEventListener("click", (e) => { if (e.target.closest(".pnode[data-go-review]")) openReview(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.closest && e.target.closest(".pnode[data-go-review]")) openReview(); });
 // Show agents as busy while a real request is in flight; afterwards the server's own record takes over.
 async function agentsBusy(states, note, promise) {
   if (S.anim) return promise;
