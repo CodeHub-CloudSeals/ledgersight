@@ -2392,8 +2392,7 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .wf .pipe-track::before,.wf .pipe-track::after{content:"";position:absolute;z-index:0;top:calc(var(--wf-c) / 2 - 1.5px);height:3px;border-radius:3px;pointer-events:none;
   left:calc(var(--wf-c) / 2);right:calc((100% - 5 * var(--wf-g)) / 6 - var(--wf-c) / 2)}
 .wf .pipe-track::before{background:var(--line-2)}
-.wf .pipe-track::after{background:var(--accent);transform-origin:left center;transform:scaleX(var(--p,0));animation:wfFill .8s cubic-bezier(.22,1,.36,1)}
-@keyframes wfFill{from{transform:scaleX(var(--p0,0))}}
+.wf .pipe-track::after{background:var(--accent);transform-origin:left center;transform:scaleX(var(--p,0));transition:transform .8s cubic-bezier(.22,1,.36,1)}
 .wf.running .pipe-track::after{transform:none;background:linear-gradient(90deg,transparent,var(--accent),transparent) no-repeat;background-size:30% 100%;animation:progSweep 1.2s ease-in-out infinite}
 /* steps */
 .wf .pnode,.wf .pnode.s-stopped{position:relative;z-index:1;display:flex;flex-direction:column;opacity:1;border:0;padding:0;margin:0;background:none}

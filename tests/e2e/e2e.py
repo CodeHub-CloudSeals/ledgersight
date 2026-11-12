@@ -161,7 +161,12 @@ with sync_playwright() as pw:
         assert not p.is_disabled("#run-btn")
         p.click("#run-btn")
         p.wait_for_function("S.anim && S.anim.mode === 'replay' && document.querySelector('#rc-pipeline .s-working')", timeout=10000)
+        # 2026-11-12: the workflow is updated in place while it animates. If its elements were rebuilt each step,
+        # the browser would close a right-click menu opened on the card (the element under it disappears).
+        p.evaluate("window.__keep = [...document.querySelectorAll('#rc-pipeline .pnode, #rc-pipeline .pname, #rc-pipeline .pipe-foot')]")
         p.wait_for_timeout(700); shot(p, "03-recon-animating")
+        kept = p.evaluate("[window.__keep.length, window.__keep.filter(n => n.isConnected).length]")
+        assert kept[0] == 13 and kept[1] == 13, f"workflow elements were replaced during the run: {kept}"
         wait_idle(p)
         s = seen(p)
         for c in ["AG-01", "AG-02", "AG-03", "AG-04", "AG-05", "AG-06"]:
@@ -171,7 +176,7 @@ with sync_playwright() as pw:
         e = p.locator("#rc-pipeline .pnode.s-escalated"); n = e.inner_text()
         assert "AG-04" in n and "6 sent to a person" in e.get_attribute("aria-label") and e.locator(".pnum").inner_text() == "6"             and "sent to a CPA reviewer" in n and "Review now" in n, n.replace(chr(10), " / ")
         shot(p, "04-recon-done")
-        return "each of 6 agents went queued→working→done/escalated; variance $196.00, unexplained $0.00; AG-04 '6 sent to a person'"
+        return "each of 6 agents went queued→working→done/escalated (elements kept in place, so right-click works); variance $196.00, unexplained $0.00; AG-04 '6 sent to a person'"
     check("Run reconciliation + live pipeline replay", "click Run, watch pipeline states", t_run)
 
     def t_numbers():

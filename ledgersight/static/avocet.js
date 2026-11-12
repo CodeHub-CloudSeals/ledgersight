@@ -14,6 +14,23 @@ function el(tag, attrs, ...kids) {
   return e;
 }
 const put = (id, ...kids) => { const n = typeof id === "string" ? $(id) : id; n.replaceChildren(...kids.flat().filter((k) => k != null)); };
+// Like put, but updates the existing nodes in place (text, attributes, children) and only replaces what changed type.
+// Used for parts that re-render several times a second (the agent workflow during a run): the browser closes an open
+// right-click menu when the element under it is removed, so those parts must keep their elements.
+function morph(from, to) {
+  if (from.nodeType !== to.nodeType || from.nodeName !== to.nodeName) { from.replaceWith(to); return; }
+  if (from.nodeType === 3) { if (from.data !== to.data) from.data = to.data; return; }
+  if (from.nodeType !== 1) return;
+  for (const a of [...from.attributes]) if (!to.hasAttribute(a.name)) from.removeAttribute(a.name);
+  for (const a of to.attributes) if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+  morphKids(from, ...to.childNodes);
+}
+function morphKids(parent, ...kids) {
+  const next = kids.flat().filter((k) => k != null).map((k) => (typeof k === "string" ? document.createTextNode(k) : k));
+  const cur = [...parent.childNodes];
+  next.forEach((n, i) => (cur[i] ? morph(cur[i], n) : parent.append(n)));
+  cur.slice(next.length).forEach((n) => n.remove());
+}
 const usd = (c) => (c < 0 ? "-" : "") + "$" + (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
 // Readable names on screen. Display only: the technical codes stay unchanged in config, the audit trail and exports.
 const ACRONYM = new Set(["GL", "AR", "AP", "CPA", "CSV", "JSON", "PDF", "OK", "ID", "AI", "LLM", "SHA", "URL", "MFA", "KYC", "OCR",
@@ -1912,10 +1929,10 @@ function renderPipelines() {
     const nodes = d.agents.map(nodeFor);
     active = an ? Object.values(an.states).filter((s) => s === "working").length : nodes.filter((n) => n.live).length;
     track = el("ol", { class: "pipe-track", "aria-live": "polite" }, nodes.map((n) => n.el));
-    // One timeline runs through every circle; its blue fill reaches the last finished (or working) step and glides there.
+    // One timeline runs through every circle; its blue fill reaches the last finished (or working) step and glides there (CSS transition; the element is kept by morphKids).
     let last = -1; nodes.forEach((n, i) => { if (FINISHED.has(n.state) || n.state === "working") last = i; });
     const p = nodes.length > 1 && last > 0 ? last / (nodes.length - 1) : 0;
-    track.style.setProperty("--p", p.toFixed(3)); track.style.setProperty("--p0", (S.wfP == null ? p : S.wfP).toFixed(3)); S.wfP = p;
+    track.style.setProperty("--p", p.toFixed(3));
   }
   let foot;
   if (an && an.mode === "running") foot = "Run in progress on the server…";
@@ -1924,12 +1941,12 @@ function renderPipelines() {
   else if (d && d.run_id) foot = "Every step was checked by TrustOps and signed into the audit trail.";
   else foot = "No run yet. Upload a bank statement and a ledger, then run reconciliation.";
   const shield = icon("M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z M9 12l2 2 4-4");
-  for (const id of PIPE_IDS) { const n = $(id); if (n) put(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, shield.cloneNode(true), el("span", {}, foot))); }
+  for (const id of PIPE_IDS) { const n = $(id); if (n) morphKids(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, shield.cloneNode(true), el("span", {}, foot))); }
   if (an && an.fresh && !reducedMotion()) document.querySelectorAll(PIPE_IDS.map((i) => `#${i} .pnode.fresh .pnum`).join(",")).forEach(countUp);
   pipeHeader(d, an);
   document.querySelectorAll('[data-pipe="count"]').forEach((c) => {
     c.classList.toggle("on", active > 0 || !!(an && an.mode === "running"));
-    c.replaceChildren(el("i"), an && an.mode === "running" ? "Run in progress" : `${active} of ${total} agents active`);
+    morphKids(c, el("i"), an && an.mode === "running" ? "Run in progress" : `${active} of ${total} agents active`);
   });
   document.querySelectorAll(".pipe").forEach((p) => p.classList.toggle("running", !!(an && an.mode === "running")));
 }
@@ -1960,7 +1977,7 @@ function pipeHeader(d, an) {
   for (const id of PIPE_IDS) {
     const card = $(id) && $(id).closest(".pipe"); if (!card) continue;
     const meta = card.querySelector(".pipe-meta");
-    if (meta) put(meta, el("span", { class: "pipe-chip " + chip[0] }, el("i"), chip[1]));
+    if (meta) morphKids(meta, el("span", { class: "pipe-chip " + chip[0] }, el("i"), chip[1]));
   }
 }
 // The workflow track is cloned into two pages, so clicks are handled here once rather than on each copy.
