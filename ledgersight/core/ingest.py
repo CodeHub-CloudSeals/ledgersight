@@ -131,6 +131,32 @@ def date_order(values) -> str:
     return "MDY"
 
 
+def describe_dates(values) -> dict | None:
+    """What the mapping step shows a person about a file's dates, so the day/month order is confirmed, never assumed.
+    order: ISO | DMY | MDY.  certain: the file itself proves the order (a part above 12, or ISO dates).
+    reason: one plain sentence. None when the column has no dates at all."""
+    vals = [str(v or "").strip() for v in values if str(v or "").strip()]
+    if not vals:
+        return None
+    slash = [m for m in (_SLASH_DATE.fullmatch(v[:10]) for v in vals) if m]
+    if not slash:
+        return {"order": "ISO", "certain": True, "reason": "Dates are in year-month-day form, so there is no day/month doubt.",
+                "example": vals[0][:10]}
+    day_first = next((m[0] for m in slash if int(m[1]) > 12), None)
+    month_first = next((m[0] for m in slash if int(m[2]) > 12), None)
+    if day_first and not month_first:
+        return {"order": "DMY", "certain": True, "reason": f"{day_first} can only be day/month, so dates are read as DD/MM/YYYY.",
+                "example": day_first}
+    if month_first and not day_first:
+        return {"order": "MDY", "certain": True, "reason": f"{month_first} can only be month/day, so dates are read as MM/DD/YYYY.",
+                "example": month_first}
+    if day_first and month_first:
+        return {"order": "MDY", "certain": False, "reason": "This file mixes day/month and month/day dates; check the format "
+                "before importing.", "example": slash[0][0]}
+    return {"order": "MDY", "certain": False, "reason": f"Every date (e.g. {slash[0][0]}) could be either way round. They will be "
+            "read as MM/DD/YYYY (US) unless you choose DD/MM/YYYY.", "example": slash[0][0]}
+
+
 def parse_date(raw, order: str = "MDY") -> date:
     if isinstance(raw, datetime):
         return raw.date()
@@ -328,8 +354,11 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
 
 
 def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str | None],
-                 table: tuple[list[str], list[list]] | None = None) -> ImportResult:
-    """`table` is an already-extracted (header, rows), e.g. from a PDF statement read in the isolated parser."""
+                 table: tuple[list[str], list[list]] | None = None, confirmed_order: str | None = None) -> ImportResult:
+    """`table` is an already-extracted (header, rows), e.g. from a PDF statement read in the isolated parser.
+    `confirmed_order` ("DMY" / "MDY") is the order a person confirmed in the mapping step; otherwise it is detected."""
+    if confirmed_order not in (None, "DMY", "MDY"):
+        raise IngestError("date order must be DMY or MDY")
     missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
     if missing:
         raise IngestError(f"mapping incomplete: {missing}")
@@ -338,7 +367,7 @@ def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str |
     res = ImportResult(kind=kind, source_sha256=hashlib.sha256(blob).hexdigest(), rows_received=len(rows))
     seen_ids = set()
     dcol = idx.get("date", idx.get("posted_date"))
-    order = date_order(r[dcol] for r in rows if dcol < len(r)) if dcol is not None else "MDY"
+    order = confirmed_order or (date_order(r[dcol] for r in rows if dcol < len(r)) if dcol is not None else "MDY")
     for n, r in enumerate(rows, start=2):
         raw = {f: (r[i] if i < len(r) else None) for f, i in idx.items()}
         try:

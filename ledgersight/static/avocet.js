@@ -1038,9 +1038,18 @@ function renderMapping() {
   const u = S.upload, box = $("mapping");
   const fields = Object.keys(u.proposed_mapping);
   const selects = {};
+  const required = new Set(u.required || []);
+  // Dates: say how they will be read. When the file cannot prove the day/month order, the person chooses it here.
+  const d = u.dates, askOrder = d && d.order !== "ISO" && !d.certain;
+  const orderSel = askOrder ? el("select", { "aria-label": "Date format", class: "map-order" },
+    el("option", { value: "MDY", selected: d.order === "MDY" }, "MM/DD/YYYY (US)"),
+    el("option", { value: "DMY", selected: d.order === "DMY" }, "DD/MM/YYYY (UK and most of the world)")) : null;
+  const dateLine = d ? el("div", { class: "map-dates" + (askOrder ? " ask" : "") },
+    el("div", {}, el("b", {}, "Dates"), el("span", { class: "muted" }, ` · ${d.reason}`)), orderSel) : null;
   const confirm = (label) => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
     const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
-    try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
+    const body = { mapping }; if (orderSel) body.date_order = orderSel.value;
+    try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: body }); box.classList.add("hidden"); msg("up-msg", "");
       toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
       await refreshWs(); nextInQueue(); }
     catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
@@ -1054,7 +1063,9 @@ function renderMapping() {
     el("div", { class: "muted small gap" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
     el("table", {}, el("tr", {}, el("th", {}, "LedgerSight field"), el("th", {}, "Your column")),
       fields.map((f) => { const s = el("select", {}, el("option", { value: "" }, "— not mapped —"), u.header.map((h) => el("option", { value: h, selected: h === u.proposed_mapping[f] }, h))); selects[f] = s;
-        return el("tr", {}, el("td", {}, nice(f)), el("td", {}, s)); })),
+        return el("tr", {}, el("td", {}, nice(f), " ", el("span", { class: required.has(f) ? "map-req" : "ss-opt" }, required.has(f) ? "Required" : "Optional")),
+          el("td", {}, s)); })),
+    dateLine,
     el("details", { class: "gap map-prev" }, el("summary", {}, `Preview first ${u.preview.length} rows`),
       el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))))),
     el("div", { class: "row gap" }, confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")));

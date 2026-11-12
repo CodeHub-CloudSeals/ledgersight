@@ -39,3 +39,50 @@ def test_r07_audit_trail_downloads_in_every_format(cpa):
     for f, t in (("pdf", "application/pdf"), ("xlsx", "spreadsheet"), ("csv", "text/csv"), ("json", "application/json")):
         r = cpa.get(f"{WS}/audit-trail.{f}")
         assert r.status_code == 200 and t in r.headers["content-type"], (f, r.headers.get("content-type"))
+
+
+# ---- #8 mapping step: required fields marked; the day/month order is shown and confirmed, never silently assumed ----
+def _upload(c, kind, name, text):
+    r = c.post(WS + "/uploads", headers=H, data={"kind": kind}, files={"file": (name, text.encode())})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+BANK_HEAD = "line_id,date,description,reference,amount,currency\n"
+
+
+def test_r08_ambiguous_dates_are_confirmed_by_a_person(cpa):
+    assert cpa.post(WS + "/reset", headers=H).status_code == 200
+    up = _upload(cpa, "bank", "uk_bank.csv", BANK_HEAD + "U1,05/10/2026,FPS CREDIT CUSTOMER 01,INV-1,100.00,GBP\n"
+                                                         "U2,07/10/2026,CARD PRINT SUPPLIER,PS-1,-20.00,GBP\n")
+    assert up["required"] == ["line_id", "date", "amount", "currency"]
+    assert up["dates"]["order"] == "MDY" and up["dates"]["certain"] is False and "either way" in up["dates"]["reason"]
+    n = len(appmod.svc.ws["client-a"].log.events)
+    r = cpa.post(f"{WS}/uploads/{up['id']}/mapping", headers=H, json={"mapping": up["proposed_mapping"], "date_order": "DMY"})
+    assert r.status_code == 200 and r.json()["date_order"] == "DMY"
+    rows = appmod.svc.ws["client-a"].batches["bank"]["rows"]
+    assert str(rows[0]["date"]) == "2026-10-05"                                  # 5 October, as the person confirmed
+    ev = next(e for e in appmod.svc.ws["client-a"].log.events[n:] if e["action"] == "mapping.confirmed")
+    assert ev["source_line_refs"] == ["dates:DMY"]                               # the choice is on the signed record
+
+
+def test_r08_without_a_choice_ambiguous_dates_keep_the_us_default(cpa):
+    assert cpa.post(WS + "/reset", headers=H).status_code == 200
+    up = _upload(cpa, "bank", "us_bank.csv", BANK_HEAD + "A1,05/10/2026,X,R1,10.00,USD\n")
+    assert cpa.post(f"{WS}/uploads/{up['id']}/mapping", headers=H, json={"mapping": up["proposed_mapping"]}).status_code == 200
+    assert str(appmod.svc.ws["client-a"].batches["bank"]["rows"][0]["date"]) == "2026-05-10"
+
+
+@pytest.mark.parametrize("dates,order,certain", [(["25/10/2026", "05/10/2026"], "DMY", True),
+                                                 (["10/25/2026", "10/05/2026"], "MDY", True),
+                                                 (["2026-10-05", "2026-10-07"], "ISO", True)])
+def test_r08_dates_the_file_proves_need_no_choice(cpa, dates, order, certain):
+    body = "".join(f"D{i},{d},X,R{i},10.00,USD\n" for i, d in enumerate(dates))
+    up = _upload(cpa, "bank", f"b_{order}.csv", BANK_HEAD + body)
+    assert up["dates"]["order"] == order and up["dates"]["certain"] is certain
+
+
+def test_r08_unknown_date_order_is_refused(cpa):
+    up = _upload(cpa, "bank", "bad_order.csv", BANK_HEAD + "Z1,05/10/2026,X,R1,10.00,USD\n")
+    r = cpa.post(f"{WS}/uploads/{up['id']}/mapping", headers=H, json={"mapping": up["proposed_mapping"], "date_order": "YMD"})
+    assert r.status_code == 422

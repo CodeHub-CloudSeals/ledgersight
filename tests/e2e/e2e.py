@@ -60,6 +60,8 @@ def wire(page):
 def upload_and_map(p, fname):
     p.set_input_files("#up-file", str(M1 / fname))
     p.wait_for_selector("#mapping:not(.hidden) button.primary", timeout=15000)
+    # 2026-11-12: every field says whether it is required; dates say how they will be read
+    assert p.locator("#mapping .map-req").count() >= 1, "required fields not marked in the mapping step"
     p.click("#mapping button.primary")
     p.wait_for_selector("#mapping.hidden", state="attached", timeout=15000)
     p.wait_for_timeout(300)

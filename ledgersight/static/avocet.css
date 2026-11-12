@@ -2105,3 +2105,10 @@ body:not(.side-mini) .rail-tip{display:none}
 /* Reports: the other downloads for the same run, as a quiet line of text links inside each report card */
 .rep-also{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
 .rep-also .muted{flex-basis:100%}
+/* Mapping step: required fields marked; how dates will be read (and a choice when the file cannot prove it) */
+.map-req{display:inline-flex;align-items:center;border-radius:999px;padding:1px 8px;font-size:11px;font-weight:650;letter-spacing:.02em;color:var(--accent);background:var(--accent-soft)}
+.map-dates{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:14px;padding:12px 16px;border-radius:16px;background:var(--ds-inset);font-size:13.5px}
+.map-dates>div{flex:1 1 320px;min-width:0}
+.map-dates.ask{background:var(--warn-bg)}
+.map-dates .map-order{flex:0 0 auto;width:auto;min-width:240px}
+#mapping table td{vertical-align:middle}

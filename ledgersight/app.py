@@ -449,7 +449,7 @@ def confirm_pdf(wid: str, doc_id: str, body: dict = Body(...), u=Depends(current
 
 @app.post("/v1/workspaces/{wid}/uploads/{upload_id}/mapping")
 def commit_mapping(wid: str, upload_id: str, body: dict = Body(...), u=Depends(current_user)):
-    return handle(svc.commit_mapping, u, wid, upload_id, body.get("mapping") or {})
+    return handle(svc.commit_mapping, u, wid, upload_id, body.get("mapping") or {}, body.get("date_order"))
 
 
 def _samples_on():

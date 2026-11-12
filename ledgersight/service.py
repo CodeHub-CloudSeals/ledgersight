@@ -359,7 +359,11 @@ class Service:
         prefix.mkdir(parents=True, exist_ok=True)
         (prefix / f"{uid}.{filename.rsplit('.', 1)[-1].lower()}").write_bytes(blob)
         mapping = ingest.propose_mapping(kind, header)
+        # shown in the mapping step: which fields must be mapped, and how the dates will be read (a person confirms)
+        dcol = mapping.get("date") or mapping.get("posted_date")
+        dates = ingest.describe_dates(r[header.index(dcol)] for r in rows if dcol in header and header.index(dcol) < len(r))             if dcol and kind in ("bank", "ledger") else None
         rec = {"id": uid, "kind": kind, "filename": filename, "sha256": sha, "size": len(blob),
+               "required": ingest.REQUIRED[kind], "dates": dates,
                "header": header, "preview": [[str(c) if c is not None else "" for c in r] for r in rows[:6]],
                "rows": len(rows), "proposed_mapping": mapping, "state": "MAPPED_PENDING_CONFIRMATION",
                "uploaded_by": user.user_id, "uploaded_at": _ts(),
@@ -398,7 +402,8 @@ class Service:
         w.held[hid] = rec
         return rec
 
-    def commit_mapping(self, user, wid, upload_id, mapping):
+    def commit_mapping(self, user, wid, upload_id, mapping, date_order=None):
+        """date_order: "DMY" or "MDY" when the person confirmed the day/month order in the mapping step."""
         w = self.gate(user, wid, "mapping.commit")
         up = w.uploads.get(upload_id)
         if not up:
@@ -412,8 +417,10 @@ class Service:
                             "no rows added twice"}
             return up
         res = ingest.import_table(up["kind"], up["filename"], w.blobs[upload_id], mapping,
-                                  table=w.tables.get(f"sha:{up['sha256']}"))
+                                  table=w.tables.get(f"sha:{up['sha256']}"), confirmed_order=date_order)
         up.update(state="VALIDATED", committed_mapping=mapping, committed_by=user.user_id)
+        if date_order:
+            up["date_order"] = date_order
         up["health"] = {"received": res.rows_received, "accepted": len(res.accepted), "rejected": res.rejected,
                         "debit_cents": res.debit_cents, "credit_cents": res.credit_cents, "net_cents": res.net_cents,
                         "control_total_ok": res.rows_received == len(res.accepted) + len(res.rejected)}
@@ -432,6 +439,7 @@ class Service:
         w.digests[(up["kind"], up["sha256"])] = upload_id
         w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                      action="mapping.confirmed", policy_decision="ALLOW:OK", source_batch_sha256=up["sha256"],
+                     source_line_refs=[f"dates:{date_order}"] if date_order else [],
                      workflow_pack="cpa-bank-reconciliation", canonical_version="canon-1")
         return up
 
