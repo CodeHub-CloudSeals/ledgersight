@@ -168,8 +168,8 @@ with sync_playwright() as pw:
             assert "s-working" in s.get(c, []), f"{c} never animated: {s}"
         tiles = p.inner_text("#tiles")
         assert "$196.00" in tiles and "$0.00" in tiles, tiles
-        n = p.locator("#rc-pipeline .pnode.s-escalated").inner_text()
-        assert "AG-04" in n and "6 sent to a person" in n, n.replace(chr(10), " / ")
+        e = p.locator("#rc-pipeline .pnode.s-escalated"); n = e.inner_text()
+        assert "AG-04" in n and "6 sent to a person" in e.get_attribute("aria-label") and e.locator(".pnum").inner_text() == "6"             and "sent to a CPA reviewer" in n and "Review now" in n, n.replace(chr(10), " / ")
         shot(p, "04-recon-done")
         return "each of 6 agents went queued→working→done/escalated; variance $196.00, unexplained $0.00; AG-04 '6 sent to a person'"
     check("Run reconciliation + live pipeline replay", "click Run, watch pipeline states", t_run)
@@ -181,8 +181,10 @@ with sync_playwright() as pw:
         for a, i, o, ms in run:
             assert f"{i} → {o} rows" in tips and f"{ms} ms" in tips, (a, i, o, ms)
         r = p.evaluate("[S.run.result.matches.length, S.run.result.exceptions.length]")
-        assert f"{r[0]} matched · {r[1]} for review" in txt and "files checked" in txt and "reports ready" in txt, txt
-        return f"cards show business outcomes ({r[0]} matched · {r[1]} for review); rows, ms, policy in tooltip = run response"
+        ag3 = p.locator("#rc-pipeline .pnode", has_text="AG-03")
+        assert ag3.locator(".pnum").inner_text() == str(r[0]) and f"matched · {r[1]} for review" in ag3.inner_text(), ag3.inner_text()
+        assert "files checked" in txt and "reports ready" in txt, txt
+        return f"each step shows one number + label (AG-03: {r[0]} matched · {r[1]} for review); rows, ms, policy in tooltip = run response"
     check("Pipeline numbers = server data (no invented values)", "compare DOM text with S.run.workflow", t_numbers)
 
     def t_matches():
@@ -247,7 +249,7 @@ with sync_playwright() as pw:
         tab(p, "agents"); p.wait_for_timeout(1500)
         st = p.evaluate("""() => { const t = document.querySelector('#ag-pipeline, #ag-pipe');
             const done = [...t.querySelectorAll('.pnode.s-done')], esc = t.querySelector('.pnode[data-go-review]');
-            return [done.length, done.filter(n => n.querySelector('.pstate').offsetParent).length,
+            return [done.length, done.filter(n => n.querySelector('.pstate')?.offsetParent).length,
                     [...t.querySelectorAll('.pbody')].filter(b => parseFloat(getComputedStyle(b).borderTopWidth) > 0 || getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)').length,
                     esc ? esc.querySelector('.pstate').textContent : null]; }""")
         assert st[0] >= 1 and st[1] == 0 and st[2] == 0, st
@@ -261,14 +263,17 @@ with sync_playwright() as pw:
         # 2026-11-12: header status chip + progress line (the Replay button was removed on request).
         tab(p, "recon"); p.wait_for_timeout(800)
         chip = p.inner_text("#rc-pipe .pipe-chip")
-        prog = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-prog')).getPropertyValue('--p').trim()")
-        assert chip.startswith("Complete") and prog == "1", (chip, prog)
-        assert p.locator(".pipe-replay").count() == 0
-        # 2026-11-12 redesign: each agent is an orb with its own glyph; finished steps carry a status badge
-        orbs, badges = p.locator("#rc-pipe .pnode .porb svg").count(), p.locator("#rc-pipe .pnode .pbadge").count()
+        prog = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-track')).getPropertyValue('--p').trim()")
+        assert chip.startswith("Complete") and prog == "1.000", (chip, prog)
+        assert p.locator(".pipe-replay").count() == 0 and p.locator("#rc-pipe .pipe-prog").count() == 0
+        # 2026-11-12 redesign (v3): white card like every page; one timeline through six round agent icons.
+        # Only steps that need attention carry a round badge (AG-04 sent to a person; a blocked agent).
+        icons, badges = p.locator("#rc-pipe .pnode .porb svg").count(), p.locator("#rc-pipe .pnode .pbadge").count()
+        need = p.locator("#rc-pipe .pnode.s-escalated, #rc-pipe .pnode.s-blocked").count()
         bg = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe')).backgroundImage")
-        assert orbs == 6 and badges == 6 and "radial-gradient" in bg, (orbs, badges, bg[:80])
-        return f"chip '{chip}', progress line full; 6 agent orbs with status badges on the dark panel; no Replay button"
+        line = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-track'), '::after').transform")
+        assert icons == 6 and badges == need >= 1 and bg == "none" and line.startswith("matrix(1,"), (icons, badges, need, bg[:60], line)
+        return f"chip '{chip}', timeline filled; 6 agent icons, {badges} attention badge(s) only; white card; no Replay button"
     check("Agent workflow header", "Reconciliation: status chip and progress line", t_workflow_header)
 
     def t_design_rules():
@@ -581,6 +586,9 @@ with sync_playwright() as pw:
             for t in ("home", "import", "recon", "agents", "exceptions", "parties", "trace", "reports", "rules", "controls", "evidence", "trust"):
                 tab(p, t); no_hscroll(p)
             tab(p, "home"); shot(p, f"15-overview-{w}")
+            if w == 390:  # phone top bar: Ask is a round icon button, the page menu keeps its width
+                ask, nav = p.evaluate("[document.querySelector('#ask-open').getBoundingClientRect().width, document.querySelector('.sidebar nav').getBoundingClientRect().width]")
+                assert ask <= 48 and nav >= 150, (ask, nav)
         p.set_viewport_size({"width": 1280, "height": 900}); return "no horizontal page scroll at 1280px and 390px on all 12 visible tabs"
     check("Responsive layout (1280px + phone)", "resize viewport, measure scrollWidth", t_responsive)
 

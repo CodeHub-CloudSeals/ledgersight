@@ -2370,92 +2370,97 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
   .sa-t span{display:none}.side-ask{grid-template-columns:34px minmax(0,1fr) auto;padding:6px 12px 6px 6px}.sa-ico{width:34px;height:34px}
 }
 @media (min-width:821px) and (max-height:720px){.sidefoot{display:flex}.sa-k{display:none}}
+/* Phones: the sidebar is the sticky top bar (logo, page menu, Ask). Ask is a round icon button there so the page menu
+   keeps its width; the version line is hidden. */
+@media (max-width:820px){
+  .sidefoot{flex:none;margin:0 0 0 auto;padding:0;border:0;gap:0;align-self:center}
+  #app-version,.sa-t,.sa-k{display:none}
+  .side-ask{grid-template-columns:44px;width:44px;height:44px;padding:0;border-radius:50%;justify-content:center}
+  .sa-ico{width:44px;height:44px;background:none}
+}
 
-/* ============ Agent workflow, futuristic (2026-11-12) ============
-   A dark "mission control" panel in both themes: navy glass with a faint grid and a soft glow. Each agent is an orb
-   with its own glyph; the state is the orb's ring colour + a small corner badge (tick / ! / x). Finished links carry
-   small data packets that keep flowing; the working link has a bright comet. Text stays high contrast on navy. */
-.card.pipe{position:relative;overflow:hidden;color:#E6EEFB;
-  background:radial-gradient(120% 160% at 0% 0%,#24489A 0%,#152C5E 42%,#0C1A38 100%);
-  box-shadow:0 24px 48px -28px rgba(12,26,56,.85),0 2px 6px rgba(12,26,56,.25)}
-.card.pipe::before{content:"";position:absolute;inset:0;pointer-events:none;
-  background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);
-  background-size:30px 30px;-webkit-mask-image:radial-gradient(ellipse 80% 90% at 20% 0%,#000 25%,transparent 75%);mask-image:radial-gradient(ellipse 80% 90% at 20% 0%,#000 25%,transparent 75%)}
-.card.pipe::after{content:"";position:absolute;right:-120px;top:-140px;width:420px;height:420px;border-radius:50%;pointer-events:none;
-  background:radial-gradient(circle,rgba(56,189,248,.22),transparent 65%);animation:pipeGlow 9s ease-in-out infinite}
-@keyframes pipeGlow{0%,100%{transform:translate(0,0)}50%{transform:translate(-40px,30px)}}
-.card.pipe>*{position:relative;z-index:1}
-.pipe .card-title{color:#fff;letter-spacing:-.01em}
-.pipe .pipe-meta,.pipe .pipe-meta .muted{color:rgba(230,238,251,.65)}
-.pipe .pipe-chip{background:rgba(255,255,255,.08);color:#E6EEFB;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);backdrop-filter:blur(6px)}
-.pipe .pipe-chip.ok{background:rgba(52,211,153,.14);color:#86EFAC;box-shadow:inset 0 0 0 1px rgba(52,211,153,.4)}
-.pipe .pipe-chip.ok i{background:#34D399;box-shadow:0 0 10px #34D399}
-.pipe .pipe-chip.bad{background:rgba(248,113,113,.14);color:#FCA5A5;box-shadow:inset 0 0 0 1px rgba(248,113,113,.4)}
-.pipe .pipe-chip.bad i{background:#F87171;box-shadow:0 0 10px #F87171}
-.pipe .pipe-chip.run{background:rgba(56,189,248,.14);color:#7DD3FC;box-shadow:inset 0 0 0 1px rgba(56,189,248,.4)}
-.pipe .pipe-chip.run i{background:#38BDF8}
-.pipe .pipe-prog{height:3px;background:rgba(255,255,255,.08);margin-bottom:30px}
-.pipe .pipe-prog>span{background:linear-gradient(90deg,#38BDF8,#34D399);box-shadow:0 0 12px rgba(52,211,153,.7)}
-.pipe .pipe-prog.warn>span{background:linear-gradient(90deg,#38BDF8,#34D399 60%,#FBBF24)}
-.pipe .pipe-foot{display:block;color:rgba(230,238,251,.6);font-family:var(--mono);font-size:11.5px;letter-spacing:.02em}
-.pipe .pipe-foot::before{content:"›";color:#7DD3FC;margin-right:2px}
-/* orbs */
-.pipe .prail{height:58px;margin-bottom:16px}
-.pipe .pnode .pico,.pipe .pnode.s-done .pico,.pipe .pnode.s-escalated .pico,.pipe .pnode.s-blocked .pico,.pipe .pnode.s-working .pico,
-.pipe .pnode.s-queued .pico,.pipe .pnode.s-idle .pico,.pipe .pnode.s-stopped .pico{
-  --c:rgba(255,255,255,.28);position:relative;width:58px;height:58px;flex:0 0 58px;border-radius:50%;border:0;color:#DCE8FF;
-  background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.22),rgba(255,255,255,.05) 55%,rgba(255,255,255,.02));
-  box-shadow:inset 0 0 0 1.5px var(--c),0 0 0 6px color-mix(in srgb,var(--c) 14%,transparent),0 0 26px -4px var(--c)}
-.pipe .pnode.s-done .pico{--c:#34D399}
-.pipe .pnode.s-escalated .pico{--c:#FBBF24}
-.pipe .pnode.s-blocked .pico{--c:#F87171}
-.pipe .pnode.s-working .pico{--c:#38BDF8;color:#fff}
-.pipe .pnode.s-queued .pico{--c:rgba(125,211,252,.45);border:0}
-.pipe .pnode.s-stopped .pico{--c:rgba(255,255,255,.18)}
-.pipe .porb{display:grid;place-items:center}
-.pipe .porb svg{width:24px;height:24px;stroke-width:1.7}
-.pipe .pbadge{position:absolute;right:-3px;bottom:-3px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
-  background:var(--c);color:#0C1A38;box-shadow:0 0 0 3px #13285A,0 0 12px var(--c)}
-.pipe .pbadge svg{width:12px;height:12px;stroke-width:3.2}
-.pipe .pnode.s-escalated .pico{animation:orbBreath 2.8s ease-in-out infinite}
-@keyframes orbBreath{0%,100%{box-shadow:inset 0 0 0 1.5px var(--c),0 0 0 6px color-mix(in srgb,var(--c) 14%,transparent),0 0 26px -4px var(--c)}
-  50%{box-shadow:inset 0 0 0 1.5px var(--c),0 0 0 11px color-mix(in srgb,var(--c) 8%,transparent),0 0 34px 0 var(--c)}}
-.pipe .pnode.s-working .pico::before{inset:-6px;border-radius:50%;padding:2px;background:conic-gradient(from 0deg,#38BDF8,transparent 60%)}
-.pipe .pnode.fresh .pico::after{border-color:var(--c)}
-/* links between agents */
-.pipe .prail::after,.pipe .pnode.s-done .prail::after,.pipe .pnode.s-escalated .prail::after,.pipe .pnode.s-blocked .prail::after,
-.pipe .pnode.s-stopped .prail::after{left:72px;right:-4px;height:2px;border-radius:2px;background:rgba(255,255,255,.12)}
-.pipe .pnode.s-done .prail::after{background:linear-gradient(90deg,rgba(52,211,153,.9),rgba(52,211,153,.25))}
-.pipe .pnode.s-escalated .prail::after{background:linear-gradient(90deg,rgba(251,191,36,.9),rgba(52,211,153,.25))}
-.pipe .pnode.s-working .prail::after{left:72px;right:-4px;height:2px;background:linear-gradient(90deg,#38BDF8 0 35%,rgba(255,255,255,.12) 35% 100%);background-size:220% 100%}
-.pipe .pnode.s-done .prail::before,.pipe .pnode.s-escalated .prail::before{content:"";position:absolute;z-index:2;top:50%;left:72px;width:6px;height:6px;margin-top:-3px;
-  border-radius:50%;background:#A7F3D0;box-shadow:0 0 8px 2px rgba(52,211,153,.8);animation:packet 2.6s linear infinite;opacity:0}
-.pipe .pnode.s-escalated .prail::before{background:#FDE68A;box-shadow:0 0 8px 2px rgba(251,191,36,.8)}
-.pipe-track .pnode:nth-child(2) .prail::before{animation-delay:.45s}.pipe-track .pnode:nth-child(3) .prail::before{animation-delay:.9s}
-.pipe-track .pnode:nth-child(4) .prail::before{animation-delay:1.35s}.pipe-track .pnode:nth-child(5) .prail::before{animation-delay:1.8s}
-@keyframes packet{0%{left:72px;opacity:0}12%{opacity:1}88%{opacity:1}100%{left:calc(100% - 6px);opacity:0}}
-.pipe .pnode.s-working .prail::before{left:72px;background:#7DD3FC;box-shadow:0 0 0 4px rgba(56,189,248,.25),0 0 16px 3px rgba(56,189,248,.8);animation-name:comet72}
-@keyframes comet72{0%{left:72px;opacity:0}15%{opacity:1}85%{opacity:1}100%{left:calc(100% - 4px);opacity:0}}
-.pipe .pipe-track .pnode:last-child .prail::before,.pipe .pipe-track .pnode:last-child .prail::after{display:none}
+/* ============ Agent workflow v3 (2026-11-12) ============
+   Same white card as every other page. One timeline runs through six round agent icons; its blue fill glides to the
+   last finished step. Finished steps are quiet (pale blue icon); only the steps that need attention get colour and a
+   small round badge (amber: sent to a person, red: blocked). Under each icon: id, name, one big number and a label.
+   Motion: the timeline fills, the working icon spins, numbers count up, icons lift on hover. Off under reduced motion. */
+.wf{--wf-c:44px;--wf-g:20px}
+.wf .pipe-head{margin-bottom:26px}
+.wf .pipe-prog{display:none}
+.wf .pipe-chip.bad{background:var(--bad-bg);color:var(--bad)}.wf .pipe-chip.bad i{background:var(--bad-solid)}
+.wf .pipe-track{position:relative;gap:var(--wf-g);grid-template-columns:repeat(6,minmax(0,1fr))}
+.wf .pipe-track::before,.wf .pipe-track::after{content:"";position:absolute;z-index:0;top:calc(var(--wf-c) / 2 - 1.5px);height:3px;border-radius:3px;pointer-events:none;
+  left:calc(var(--wf-c) / 2);right:calc((100% - 5 * var(--wf-g)) / 6 - var(--wf-c) / 2)}
+.wf .pipe-track::before{background:var(--line-2)}
+.wf .pipe-track::after{background:var(--accent);transform-origin:left center;transform:scaleX(var(--p,0));animation:wfFill .8s cubic-bezier(.22,1,.36,1)}
+@keyframes wfFill{from{transform:scaleX(var(--p0,0))}}
+.wf.running .pipe-track::after{transform:none;background:linear-gradient(90deg,transparent,var(--accent),transparent) no-repeat;background-size:30% 100%;animation:progSweep 1.2s ease-in-out infinite}
+/* steps */
+.wf .pnode,.wf .pnode.s-stopped{position:relative;z-index:1;display:flex;flex-direction:column;opacity:1;border:0;padding:0;margin:0;background:none}
+.wf .pnode.s-stopped .pbody,.wf .pnode.s-idle .pbody{opacity:.7}
+.wf .prail{height:var(--wf-c);margin:0 0 14px;display:flex;align-items:center}
+.wf .prail::before,.wf .prail::after{content:none!important}
+.wf .pnode .pico{position:relative;width:var(--wf-c);height:var(--wf-c);flex:0 0 var(--wf-c);border:0;border-radius:50%;display:grid;place-items:center;
+  background:var(--sk-card);color:var(--muted);box-shadow:inset 0 0 0 1.5px var(--line-2),0 0 0 6px var(--sk-card);
+  transition:transform .35s cubic-bezier(.34,1.56,.64,1),background .3s,color .3s,box-shadow .3s}
+.wf .pnode .pico svg{width:20px;height:20px;stroke-width:1.9}
+.wf .porb{display:grid;place-items:center}
+.wf .pnode.s-done .pico{background:var(--accent-soft);color:var(--accent);box-shadow:0 0 0 6px var(--sk-card)}
+.wf .pnode.s-escalated .pico{background:var(--warn-bg);color:var(--warn);box-shadow:inset 0 0 0 1.5px var(--warn-line),0 0 0 6px var(--sk-card);animation:none}
+.wf .pnode.s-blocked .pico{background:var(--bad-bg);color:var(--bad);box-shadow:inset 0 0 0 1.5px var(--bad-line),0 0 0 6px var(--sk-card)}
+.wf .pnode.s-working .pico{background:var(--accent);color:var(--accent-ink);box-shadow:0 0 0 6px var(--sk-card);animation:wfHalo 1.4s ease-out infinite}
+@keyframes wfHalo{0%{box-shadow:0 0 0 6px var(--sk-card),0 0 0 6px color-mix(in srgb,var(--accent) 35%,transparent)}100%{box-shadow:0 0 0 6px var(--sk-card),0 0 0 14px transparent}}
+.wf .pnode.s-working .pico::before{inset:-4px;border-radius:50%}
+.wf .pnode.s-queued .pico{background:var(--sk-card);color:var(--accent);box-shadow:inset 0 0 0 1.5px var(--accent-line),0 0 0 6px var(--sk-card);animation:wfWait 1.6s ease-in-out infinite}
+@keyframes wfWait{0%,100%{opacity:.45}50%{opacity:1}}
+.wf .pnode.fresh .pico{animation:wfPop .5s cubic-bezier(.34,1.56,.64,1)}
+@keyframes wfPop{0%{transform:scale(.7)}100%{transform:scale(1)}}
+.wf .pnode .pico::after{border-radius:50%}
+.wf .pnode:hover .pico{transform:translateY(-3px)}
+/* round status badge (only for steps that need attention) */
+.wf .pbadge{position:absolute;right:-3px;bottom:-3px;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;color:#fff;box-shadow:0 0 0 2.5px var(--sk-card)}
+.wf .pbadge svg{width:10px!important;height:10px!important;stroke-width:3.4!important}
+.wf .pnode.s-escalated .pbadge{background:var(--warn-solid);animation:wfBadge 2.4s ease-out infinite}
+.wf .pnode.s-blocked .pbadge{background:var(--bad-solid)}
+@keyframes wfBadge{0%{box-shadow:0 0 0 2.5px var(--sk-card),0 0 0 2.5px color-mix(in srgb,var(--warn-solid) 60%,transparent)}70%,100%{box-shadow:0 0 0 2.5px var(--sk-card),0 0 0 9px transparent}}
 /* text */
-.pipe .pcode{font-family:var(--mono);color:#7DD3FC;font-size:11px;letter-spacing:.14em}
-.pipe .pname{color:#fff;font-size:15.5px}
-.pipe .pline,.pipe .pnote{color:rgba(230,238,251,.72)}
-.pipe .pline b{color:#fff}
-.pipe .pnode.s-escalated .pstate{color:#FCD34D}
-.pipe .pnode.s-blocked .pstate{color:#FCA5A5}
-.pipe .pnode.s-working .pstate,.pipe .pnode.s-queued .pstate{color:#7DD3FC}
-.pipe .pnode.s-idle .pstate,.pipe .pnode.s-stopped .pstate{color:rgba(230,238,251,.55)}
-.pipe .pnode.s-working .pname{color:#7DD3FC}
-.pipe .pnode[data-go-review]:hover .pname{color:#FCD34D}
-.pipe .pnode[data-go-review]:focus-visible{outline-color:#7DD3FC}
-.pipe .pnode:hover .pico{transform:translateY(-2px);transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
-.pipe .skel{background:rgba(255,255,255,.1)}
-/* tablet / phone: the same orbs, vertical links */
+.wf .pbody,.wf .pnode.s-blocked .pbody,.wf .pnode.s-working .pbody{padding:0;background:none!important;box-shadow:none!important;border:0}
+.wf .pbody::before{content:none!important}
+.wf .pcode{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:none;color:var(--muted)}
+.wf .pname{font-size:15px;font-weight:700;letter-spacing:-.01em;line-height:1.3;color:var(--sk-ink);margin:3px 0 12px;min-height:0}
+.wf .pnode.s-working .pname{color:var(--accent)}
+.wf .pmetric{display:flex;flex-direction:column;gap:4px}
+.wf .pnum{font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em;color:var(--sk-ink);font-variant-numeric:tabular-nums}
+.wf .pnum.word{font-size:22px;line-height:30px}
+.wf .pnode.s-escalated .pnum{color:var(--warn)}
+.wf .pline,.wf .pnote{margin:0;padding:0;border:0;min-height:0;font-size:13px;line-height:1.45;color:var(--muted)}
+.wf .pnote{margin-top:8px}
+.wf .pstate+.pline{margin-top:8px}
+/* status pill (Working / Queued / Review now / Blocked); finished steps have none */
+.wf .pstate{display:inline-flex;align-self:flex-start;align-items:center;gap:6px;height:26px;padding:0 11px;margin:0;border-radius:999px;
+  font-size:12.5px;font-weight:650;white-space:nowrap;background:var(--ds-inset)!important;color:var(--muted)}
+.wf .pmetric+.pstate{margin-top:12px}
+.wf .pstate i{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:currentColor;transform:none}
+.wf .pnode.s-escalated .pstate{background:var(--warn-bg)!important;color:var(--warn)}
+.wf .pnode.s-blocked .pstate{background:var(--bad-bg)!important;color:var(--bad)}
+.wf .pnode.s-working .pstate,.wf .pnode.s-queued .pstate{background:var(--accent-soft)!important;color:var(--accent)}
+.wf .pnode.s-working .pstate i{animation:pulse 1s infinite}
+.wf .pnode[data-go-review]{cursor:pointer;border-radius:16px}
+.wf .pnode[data-go-review]:hover .pname{color:var(--warn)}
+.wf .pnode[data-go-review]:hover .pstate{background:var(--warn-line)!important}
+/* footer */
+.wf .pipe-foot{display:flex;flex-wrap:nowrap;align-items:flex-start;gap:8px;line-height:1.45;margin-top:26px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+.wf .pipe-foot svg{width:16px;height:16px;flex:0 0 16px;margin-top:2px;color:var(--ok-solid);stroke-width:2}
+/* narrower cards: three per row without the timeline; phones: a vertical list with a line between icons */
+@container (max-width:740px){
+  .wf .pipe-track{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:28px}
+  .wf .pipe-track::before,.wf .pipe-track::after{display:none}
+}
 @container (max-width:520px){
-  .pipe .prail{height:auto}
-  .pipe .pnode{grid-template-columns:58px minmax(0,1fr);gap:16px}
-  .pipe .prail::after,.pipe .pnode.s-done .prail::after,.pipe .pnode.s-escalated .prail::after,.pipe .pnode.s-blocked .prail::after,
-  .pipe .pnode.s-stopped .prail::after,.pipe .pnode.s-working .prail::after{left:28px;right:auto;top:66px;bottom:-18px;width:2px;height:auto}
-  .pipe .prail::before{display:none!important}
+  .wf .pipe-track{grid-template-columns:1fr;row-gap:22px}
+  .wf .pnode,.wf .pnode.s-stopped{display:grid;grid-template-columns:var(--wf-c) minmax(0,1fr);gap:16px;align-items:start}
+  .wf .prail{margin:0}
+  .wf .pnode:not(:last-child)::after{content:"";position:absolute;z-index:-1;left:calc(var(--wf-c) / 2 - 1px);top:var(--wf-c);bottom:-22px;width:2px;background:var(--line-2)}
+  .wf .pnode.s-done:not(:last-child)::after,.wf .pnode.s-escalated:not(:last-child)::after{background:var(--accent)}
+  .wf .pnum{font-size:26px}
 }

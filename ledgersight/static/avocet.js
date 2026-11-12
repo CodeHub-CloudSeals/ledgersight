@@ -1841,8 +1841,9 @@ function icon(d) {
   s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "2.6"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round");
   const p = document.createElementNS(SVGNS, "path"); p.setAttribute("d", d); p.setAttribute("pathLength", "1"); s.append(p); return s;
 }
-const ICON = { done: "M5 12.5l4.5 4.5L19 7.5", escalated: "M12 7v6M12 17h.01", blocked: "M7 7l10 10M17 7L7 17", stopped: "M7 12h10" };
-// Each agent has its own glyph in the orb; the state is the orb's ring colour plus a small corner badge.
+const ICON = { escalated: "M12 7v6M12 17h.01", blocked: "M7 7l10 10M17 7L7 17" };
+// Each agent has its own glyph in a round icon. Finished = quiet blue; only the steps that need attention get colour
+// (amber: sent to a person, red: blocked) plus a small round status badge.
 const AGENT_GLYPH = {
   "AG-01": "M4 13h4l1.5 2.5h5L16 13h4M5.5 6h13l1.5 7v5H4v-5z",
   "AG-02": "M4 7h5M4 12h5M4 17h5M15 7h5M15 12h5M15 17h5M9 7l6 5M9 17l6-5",
@@ -1851,18 +1852,17 @@ const AGENT_GLYPH = {
   "AG-05": "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4",
   "AG-06": "M20 11.4a7.6 7.6 0 0 1-11.3 6.6L4 19.6l1.6-4.4A7.6 7.6 0 1 1 20 11.4z",
 };
-// What each agent achieved, in business words, read from its own recorded step summary (nothing invented).
-function outcomeLine(code, s) {
-  const t = String(s.summary || ""), n = (re) => { const m = t.match(re); return m ? m.slice(1) : null; };
-  let m;
-  if (code === "AG-01" && (m = n(/(\d+) sources present/))) return [el("b", {}, m[0]), ` files checked${/unchanged/.test(t) ? " · unchanged" : ""}`];
-  if (code === "AG-02" && (m = n(/(\d+) bank and ledger rows/))) return [el("b", {}, m[0]), " lines standardised"];
-  if (code === "AG-03" && (m = n(/(\d+) matched automatically, (\d+) exception/))) return [el("b", {}, m[0]), " matched · ", el("b", {}, m[1]), " for review"];
-  if (code === "AG-04" && escCount(s)) return "Routed to a CPA reviewer";
-  if (code === "AG-04") return "Nothing needed a person";
-  if (code === "AG-05" && /ready/.test(t)) return [el("b", {}, "2"), " reports ready"];
-  if (code === "AG-06" && /available/.test(t)) return "Ready for questions";
-  return [el("b", {}, `${s.rows_in} → ${s.rows_out}`), " rows"];
+// What each agent achieved as [headline number, label], read from its own recorded step summary (nothing invented).
+function outcomeMetric(code, s) {
+  const t = String(s.summary || ""), m = (re) => t.match(re);
+  let x;
+  if (code === "AG-01" && (x = m(/(\d+) sources present/))) return [x[1], `files checked${/unchanged/.test(t) ? " · unchanged" : ""}`];
+  if (code === "AG-02" && (x = m(/(\d+) bank and ledger rows/))) return [x[1], "lines standardised"];
+  if (code === "AG-03" && (x = m(/(\d+) matched automatically, (\d+) exception/))) return [x[1], `matched · ${x[2]} for review`];
+  if (code === "AG-04") { const n = escCount(s); return n ? [String(n), "sent to a CPA reviewer"] : ["0", "needed a person"]; }
+  if (code === "AG-05" && /ready/.test(t)) return ["2", "reports ready"];
+  if (code === "AG-06" && /available/.test(t)) return ["Ready", "for questions"];
+  return [String(s.rows_out), "records out"];
 }
 function nodeFor(a, i) {
   const an = S.anim, forced = an && an.states[a.code];
@@ -1875,33 +1875,34 @@ function nodeFor(a, i) {
   let label = STATE_LABEL[state];
   if (state === "escalated" && escCount(step)) label = `${escCount(step)} sent to a person`;
   const dec = (d) => String(d).split(":")[0];
-  // a decision row shows the ALLOW/ESCALATE/DENY chip on the left and the policy id on the right, so nothing is cut off
-  const stats = (rows) => el("dl", { class: "pstats" }, rows.map(([k, v]) => k === "Decision"
-    ? el("div", { class: "pdec" }, el("dt", {}, el("span", { class: "dchip " + dec(v[0]) }, dec(v[0]))), el("dd", {}, v[1] || ""))
-    : el("div", {}, el("dt", {}, k), el("dd", {}, v))));
-  const decision = (d, pol) => [d, pol];
-  let data;
-  if (state === "working") data = el("div", { class: "pnote" }, an.titles[a.code] || an.note || "");
-  else if (state === "queued") data = el("div", { class: "pnote" }, "Waiting for the previous step");
-  else if (state === "stopped") data = el("div", { class: "pnote" }, "The workflow stopped at the blocked step");
+  const pill = (txt) => el("span", { class: "pstate" }, el("i"), el("span", { class: "pst" }, txt));
+  let body;
+  if (state === "working") body = [pill("Working"), el("div", { class: "pnote" }, an.titles[a.code] || an.note || "")];
+  else if (state === "queued") body = [pill("Queued")];
+  else if (state === "stopped") body = [pill("Not run"), el("div", { class: "pnote" }, "The workflow stopped at the blocked step")];
   else if (state === "blocked" && a.status === "BLOCKED" && a.last && !forced)
-    data = el("div", { class: "pline" }, `Tried ${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`);
-  else if (step) data = el("div", { class: "pline",
-    title: `${step.rows_in} → ${step.rows_out} rows · TrustOps ${dec(step.decision)} · ${step.policy_id} · ${step.duration_ms} ms` }, outcomeLine(a.code, step));
-  else if (a.last) data = el("div", { class: "pline" }, `${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`);
-  else data = el("div", { class: "pnote" }, "No requests yet");
+    body = [pill("Blocked by TrustOps"), el("div", { class: "pline" }, `Tried ${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`)];
+  else if (step) {
+    const [n, txt] = outcomeMetric(a.code, step);
+    body = [el("div", { class: "pmetric" }, el("b", { class: "pnum" + (/^\d+$/.test(n) ? "" : " word") }, n),
+      el("div", { class: "pline", title: `${step.rows_in} → ${step.rows_out} rows · TrustOps ${dec(step.decision)} · ${step.policy_id} · ${step.duration_ms} ms` }, txt))];
+    if (state === "escalated") body.push(pill("Review now"));
+    else if (state === "blocked") body.push(pill("Blocked by TrustOps"));
+  }
+  else if (state === "blocked") body = [pill("Blocked by TrustOps")];
+  else if (a.last) body = [el("div", { class: "pline" }, `${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`)];
+  else body = [el("div", { class: "pnote" }, "Not used yet")];
   const ico = AGENT_GLYPH[a.code] ? icon(AGENT_GLYPH[a.code]) : el("span", {}, String(i + 1));
   const badge = ICON[state] ? el("span", { class: "pbadge", "aria-hidden": "true" }, icon(ICON[state])) : null;
   const cls = `pnode s-${state}` + (live ? " live" : "") + (an && an.fresh === a.code && forced !== "working" ? " fresh" : "");
   // A step that sent work to a person links to the review queue (see the delegated handler after renderPipelines).
   const go = state === "escalated" && !forced ? { role: "link", tabindex: "0", "data-go-review": "1" } : {};
-  return { live, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}`, ...go },
+  return { live, state, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}`, ...go },
     el("div", { class: "prail" }, el("span", { class: "pico" }, el("span", { class: "porb" }, ico), badge)),
     el("div", { class: "pbody" },
       el("div", { class: "pcode" }, a.code),
       el("div", { class: "pname" }, a.name),
-      el("span", { class: "pstate" }, el("i"), el("span", { class: "pst" }, label)),
-      data)) };
+      body)) };
 }
 function renderPipelines() {
   const d = S.agents, an = S.anim;
@@ -1911,6 +1912,10 @@ function renderPipelines() {
     const nodes = d.agents.map(nodeFor);
     active = an ? Object.values(an.states).filter((s) => s === "working").length : nodes.filter((n) => n.live).length;
     track = el("ol", { class: "pipe-track", "aria-live": "polite" }, nodes.map((n) => n.el));
+    // One timeline runs through every circle; its blue fill reaches the last finished (or working) step and glides there.
+    let last = -1; nodes.forEach((n, i) => { if (FINISHED.has(n.state) || n.state === "working") last = i; });
+    const p = nodes.length > 1 && last > 0 ? last / (nodes.length - 1) : 0;
+    track.style.setProperty("--p", p.toFixed(3)); track.style.setProperty("--p0", (S.wfP == null ? p : S.wfP).toFixed(3)); S.wfP = p;
   }
   let foot;
   if (an && an.mode === "running") foot = "Run in progress on the server…";
@@ -1918,7 +1923,9 @@ function renderPipelines() {
   else if (an && an.mode === "upload") foot = `${an.note}. Each agent asks TrustOps before it acts.`;
   else if (d && d.run_id) foot = "Every step was checked by TrustOps and signed into the audit trail.";
   else foot = "No run yet. Upload a bank statement and a ledger, then run reconciliation.";
-  for (const id of PIPE_IDS) { const n = $(id); if (n) put(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, foot)); }
+  const shield = icon("M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z M9 12l2 2 4-4");
+  for (const id of PIPE_IDS) { const n = $(id); if (n) put(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, shield.cloneNode(true), el("span", {}, foot))); }
+  if (an && an.fresh && !reducedMotion()) document.querySelectorAll(PIPE_IDS.map((i) => `#${i} .pnode.fresh .pnum`).join(",")).forEach(countUp);
   pipeHeader(d, an);
   document.querySelectorAll('[data-pipe="count"]').forEach((c) => {
     c.classList.toggle("on", active > 0 || !!(an && an.mode === "running"));
@@ -1929,6 +1936,13 @@ function renderPipelines() {
 // Card header: one status chip and a thin progress line under the title. The progress line is
 // kept between renders (only its width changes) so it glides from step to step instead of jumping.
 const FINISHED = new Set(["done", "escalated", "blocked", "stopped"]);
+// A finished step's number counts up from 0 (skipped under reduced motion).
+function countUp(n) {
+  const to = Number(n.textContent); if (!(to > 1)) return;
+  const t0 = performance.now(), dur = 650;
+  const f = (t) => { const k = Math.min(1, (t - t0) / dur); n.textContent = String(Math.round(to * (1 - Math.pow(1 - k, 3)))); if (k < 1) requestAnimationFrame(f); };
+  n.textContent = "0"; requestAnimationFrame(f);
+}
 function pipeHeader(d, an) {
   const total = d ? d.agents.length : 6;
   const states = an ? Object.values(an.states) : [];
@@ -1947,11 +1961,6 @@ function pipeHeader(d, an) {
     const card = $(id) && $(id).closest(".pipe"); if (!card) continue;
     const meta = card.querySelector(".pipe-meta");
     if (meta) put(meta, el("span", { class: "pipe-chip " + chip[0] }, el("i"), chip[1]));
-    let bar = card.querySelector(".pipe-prog");
-    if (!bar) { bar = el("div", { class: "pipe-prog", "aria-hidden": "true" }, el("span")); card.querySelector(".pipe-head").after(bar); }
-    bar.classList.toggle("busy", !!(an && an.mode === "running"));
-    bar.classList.toggle("warn", !an && !!(d && d.agents.some((a) => a.last_run_step && escCount(a.last_run_step))));
-    bar.style.setProperty("--p", total ? (an && an.mode === "running" ? 0.04 : doneN / total) : 0);
   }
 }
 // The workflow track is cloned into two pages, so clicks are handled here once rather than on each copy.
