@@ -22,8 +22,10 @@ ZIP_MAGIC = b"PK\x03\x04"
 OLE_MAGIC = b"\xd0\xcf\x11\xe0"  # legacy .xls / macro containers
 
 CANONICAL = {
-    "bank": ["line_id", "date", "description", "reference", "amount", "currency"],
-    "ledger": ["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
+    # Bank: one signed amount, OR separate money-in / money-out columns (Paid in / Paid out, Credit / Debit).
+    # Ledger: separate debit / credit, OR one signed amount (cash side: positive = money in).
+    "bank": ["line_id", "date", "description", "reference", "amount", "currency", "paid_in", "paid_out"],
+    "ledger": ["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency", "amount"],
     # The trailing AR/AP fields are optional facts for CPA review (state tax readiness, foreign supplier).
     # Files without them import exactly as before; nothing is ever computed from them, only flagged.
     "ar": ["invoice_id", "customer_alias", "issue_date", "amount", "open_balance", "currency",
@@ -47,6 +49,9 @@ SYNONYMS = {
     "account": ["account", "gl account", "account name"],
     "debit": ["debit", "dr"],
     "credit": ["credit", "cr"],
+    # bank statements are written from the account holder's side: a credit is money in, a debit money out
+    "paid_in": ["paid in", "money in", "credit", "credits", "credit amount", "deposit", "deposits", "receipts"],
+    "paid_out": ["paid out", "money out", "debit", "debits", "debit amount", "withdrawal", "withdrawals", "payments"],
     "bill_id": ["bill id", "bill number", "bill no", "vendor invoice", "invoice number", "invoice id", "reference"],
     "vendor_alias": ["vendor", "vendor name", "supplier", "payee"],
     "customer_alias": ["customer", "customer name", "client"],
@@ -303,6 +308,25 @@ def propose_mapping(kind: str, header: list[str]) -> dict[str, str | None]:
     return out
 
 
+# A required field may instead be covered by these columns (e.g. a bank statement with Paid in / Paid out columns
+# has no single Amount). Either way every row must give exactly one non-zero amount.
+ALTERNATIVES = {"bank": {"amount": ("paid_in", "paid_out")}}
+
+
+def missing_required(kind: str, mapping: dict) -> list[str]:
+    alt = ALTERNATIVES.get(kind, {})
+    return [f for f in REQUIRED[kind] if not mapping.get(f) and not any(mapping.get(a) for a in alt.get(f, ()))]
+
+
+def required_for(kind: str, mapping: dict) -> list[str]:
+    """Required fields as shown in the mapping step, after alternatives are taken into account."""
+    out = []
+    for f in REQUIRED[kind]:
+        alts = [a for a in ALTERNATIVES.get(kind, {}).get(f, ()) if mapping.get(a)]
+        out += alts if (alts and not mapping.get(f)) else [f]
+    return out
+
+
 REQUIRED = {
     "bank": ["line_id", "date", "amount", "currency"],
     "ledger": ["entry_id", "posted_date", "currency"],
@@ -327,7 +351,7 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
     fits, near = [], []
     for kind in CANONICAL:
         mapping = propose_mapping(kind, header)
-        missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
+        missing = missing_required(kind, mapping)
         if missing:
             near.append((len(missing), kind, missing))
             continue
@@ -359,7 +383,7 @@ def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str |
     `confirmed_order` ("DMY" / "MDY") is the order a person confirmed in the mapping step; otherwise it is detected."""
     if confirmed_order not in (None, "DMY", "MDY"):
         raise IngestError("date order must be DMY or MDY")
-    missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
+    missing = missing_required(kind, mapping)
     if missing:
         raise IngestError(f"mapping incomplete: {missing}")
     header, rows = table if table else read_table(filename, blob)
@@ -393,21 +417,39 @@ def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str |
     return res
 
 
+def _nonzero(v: str) -> str:
+    """'' for an empty or zero amount cell (exports often write 0.00 in the unused debit/credit column)."""
+    try:
+        return "" if not v or to_cents(v) == 0 else v
+    except ValueError:
+        return v  # unreadable: keep it, so the row is rejected with the real reason
+
+
 def _canon(kind: str, raw: dict, order: str = "MDY") -> dict:
     s = lambda k: ("" if raw.get(k) is None else str(raw.get(k)).strip())
     if kind == "bank":
         cur = s("currency").upper()
         if not re.fullmatch(r"[A-Z]{3}", cur):
             raise ValueError(f"bad currency {cur!r}")
+        if s("amount") or not ("paid_in" in raw or "paid_out" in raw):
+            amt = to_cents(raw.get("amount"))  # a blank cell is rejected as "empty amount", as before
+        else:  # separate money-in / money-out columns; a 0.00 in the unused column counts as empty
+            pin, pout = _nonzero(s("paid_in")), _nonzero(s("paid_out"))
+            if bool(pin) == bool(pout):
+                raise ValueError("exactly one of paid in / paid out required")
+            amt = abs(to_cents(pin)) if pin else -abs(to_cents(pout))
         return {"id": s("line_id"), "date": parse_date(raw["date"], order), "description": s("description"),
                 "reference": s("reference"), "ref_norm": norm_ref(s("reference")),
-                "amount_cents": to_cents(raw["amount"]), "currency": cur}
+                "amount_cents": amt, "currency": cur}
     if kind == "ledger":
-        dr, cr = s("debit"), s("credit")
-        if bool(dr) == bool(cr):
-            raise ValueError("exactly one of debit/credit required")
+        dr, cr = _nonzero(s("debit")), _nonzero(s("credit"))
         # Ledger lines here are the cash-side postings: debit to income/AR receipt = cash in.
-        amt = to_cents(dr) if dr else -to_cents(cr)
+        if not dr and not cr and s("amount"):  # one signed amount column (positive = cash in)
+            amt = to_cents(raw["amount"])
+        elif bool(dr) == bool(cr):
+            raise ValueError("exactly one of debit/credit required")
+        else:
+            amt = to_cents(dr) if dr else -to_cents(cr)
         return {"id": s("entry_id"), "date": parse_date(raw["posted_date"], order), "account": s("account"),
                 "description": s("description"), "reference": s("reference"),
                 "ref_norm": norm_ref(s("reference")), "amount_cents": amt, "currency": s("currency").upper()}

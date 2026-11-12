@@ -86,3 +86,69 @@ def test_r08_unknown_date_order_is_refused(cpa):
     up = _upload(cpa, "bank", "bad_order.csv", BANK_HEAD + "Z1,05/10/2026,X,R1,10.00,USD\n")
     r = cpa.post(f"{WS}/uploads/{up['id']}/mapping", headers=H, json={"mapping": up["proposed_mapping"], "date_order": "YMD"})
     assert r.status_code == 422
+
+
+# ---- #11 more real-world column layouts (deterministic; no AI) ----
+import csv
+import io
+
+
+def _rows(name):
+    return list(csv.DictReader(io.StringIO((FIXTURES / name).read_text())))
+
+
+def _csv(header, rows):
+    buf = io.StringIO(); w = csv.writer(buf, lineterminator="\n"); w.writerow(header); w.writerows(rows)
+    return buf.getvalue()
+
+
+def _auto(c, name, text):
+    up = c.post(WS + "/uploads", headers=H, files={"file": (name, text.encode())})   # kind=auto: worked out from content
+    assert up.status_code == 200, up.text
+    up = up.json()
+    r = c.post(f"{WS}/uploads/{up['id']}/mapping", headers=H, json={"mapping": up["proposed_mapping"]})
+    assert r.status_code == 200, r.text
+    return up, r.json()
+
+
+def test_r11_paid_in_out_bank_and_signed_ledger_reconcile_exactly_like_the_golden_files(cpa):
+    golden = golden_run(cpa)["result"]
+    bank = [[r["line_id"], r["date"], r["description"], r["reference"],
+             r["amount"] if float(r["amount"]) > 0 else "0.00", f"{-float(r['amount']):.2f}" if float(r["amount"]) < 0 else "",
+             r["currency"]] for r in _rows("client-a_bank.csv")]
+    ledger = [[r["entry_id"], r["posted_date"], r["account"], r["description"], r["reference"],
+               r["debit"] or f"-{r['credit']}", r["currency"]] for r in _rows("client-a_ledger.csv")]
+    up_b, res_b = _auto(cpa, "statement_paid_in_out.csv",
+                        _csv(["Txn ID", "Date", "Description", "Reference", "Paid in", "Paid out", "Currency"], bank))
+    up_l, res_l = _auto(cpa, "gl_signed_amount.csv",
+                        _csv(["entry_id", "posted_date", "account", "description", "reference", "amount", "currency"], ledger))
+    assert up_b["kind"] == "bank" and up_l["kind"] == "ledger"
+    assert "paid_in" in up_b["required"] and "amount" not in up_b["required"]          # what the mapping step marks
+    assert res_b["health"]["rejected"] == [] and res_l["health"]["rejected"] == []
+    run = cpa.post(WS + "/reconciliation-runs", headers=H).json()["result"]
+    key = lambda res: (sorted((e["type"], e["bank_id"] or "", e["amount_cents"]) for e in res["exceptions"]),
+                       sorted((m["bank_id"], m["ledger_id"]) for m in res["matches"]), res["variance_cents"])
+    assert key(run) == key(golden)                                                     # same money result
+
+
+def test_r11_bank_debit_credit_columns_and_bad_rows(cpa):
+    assert cpa.post(WS + "/reset", headers=H).status_code == 200
+    text = _csv(["line_id", "date", "description", "reference", "debit", "credit", "currency"],
+                [["B1", "2026-10-02", "DEPOSIT", "R1", "", "250.00", "USD"],
+                 ["B2", "2026-10-03", "CARD", "R2", "40.00", "0.00", "USD"],          # 0.00 in the other column is fine
+                 ["B3", "2026-10-04", "BOTH", "R3", "10.00", "10.00", "USD"]])         # both filled: refused, with a reason
+    up, res = _auto(cpa, "bank_dr_cr.csv", text)
+    assert up["kind"] == "bank"
+    rows = {r["id"]: r["amount_cents"] for r in appmod.svc.ws["client-a"].batches["bank"]["rows"]}
+    assert rows == {"B1": 25000, "B2": -4000}
+    assert [x["row"] for x in res["health"]["rejected"]] == [4] and "paid in / paid out" in res["health"]["rejected"][0]["reason"]
+
+
+def test_r11_ledger_zero_in_unused_column_is_accepted(cpa):
+    assert cpa.post(WS + "/reset", headers=H).status_code == 200
+    text = _csv(["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
+                [["L1", "2026-10-02", "Sales", "receipt", "R1", "250.00", "0.00", "USD"],
+                 ["L2", "2026-10-03", "Supplies", "card", "R2", "0", "40.00", "USD"]])
+    up, res = _auto(cpa, "gl_zeros.csv", text)
+    assert up["kind"] == "ledger" and res["health"]["rejected"] == []
+    assert {r["id"]: r["amount_cents"] for r in appmod.svc.ws["client-a"].batches["ledger"]["rows"]} == {"L1": 25000, "L2": -4000}

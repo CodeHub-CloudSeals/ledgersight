@@ -363,7 +363,7 @@ class Service:
         dcol = mapping.get("date") or mapping.get("posted_date")
         dates = ingest.describe_dates(r[header.index(dcol)] for r in rows if dcol in header and header.index(dcol) < len(r))             if dcol and kind in ("bank", "ledger") else None
         rec = {"id": uid, "kind": kind, "filename": filename, "sha256": sha, "size": len(blob),
-               "required": ingest.REQUIRED[kind], "dates": dates,
+               "required": ingest.required_for(kind, mapping), "dates": dates,
                "header": header, "preview": [[str(c) if c is not None else "" for c in r] for r in rows[:6]],
                "rows": len(rows), "proposed_mapping": mapping, "state": "MAPPED_PENDING_CONFIRMATION",
                "uploaded_by": user.user_id, "uploaded_at": _ts(),
