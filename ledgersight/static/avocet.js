@@ -46,6 +46,9 @@ const niceList = (v) => /^[a-z0-9_.]+(, ?[a-z0-9_.]+)*$/.test(String(v || "")) ?
 function niceActor(id) {
   const a = S.agents && S.agents.agents.find((x) => x.actor_id === id);
   if (a) return `${a.name} Agent`;
+  const d = (S.demoPeople || []).find((x) => x.user_id === id);   // local demo: "Staff Preparer", not "staff-preparer"
+  if (d) return d.name;
+  if (S.me && id === S.me.user_id && S.me.display_name) return S.me.display_name;
   return String(id ?? "").startsWith("agent:") ? `${nice(String(id).slice(6))} Agent` : id;
 }
 function niceDecision(d) { const [k, ...r] = String(d ?? "").split(":"); return r.length ? `${k} · ${nice(r.join(":"))}` : k; }
@@ -1152,8 +1155,9 @@ function staleUpload() {
 // return tells the staff preparer. Polled every 10 seconds while the page is visible (and on focus), so both
 // people stay in step; "seen" is stored on the server, so it is the same in every browser.
 S.notif = null;
-const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned" };
-const NOTIF_ICON = { PROPOSED: "M4 20h4L19 9l-4-4L4 16z", APPROVED: "M5 12.5l4.5 4.5L19 7.5", REJECTED: "M7 7l10 10M17 7L7 17", RETURNED: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" };
+const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned", ATTACHED: "attached proof to" };
+const NOTIF_ICON = { PROPOSED: "M4 20h4L19 9l-4-4L4 16z", APPROVED: "M5 12.5l4.5 4.5L19 7.5", REJECTED: "M7 7l10 10M17 7L7 17", RETURNED: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  ATTACHED: "M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" };
 async function loadNotifications(quiet) {
   if (!S.ws || !S.me) return;
   let n; try { n = await api(W("/notifications")); } catch (_) { return; }
@@ -1185,7 +1189,7 @@ function renderNotifPanel() {
   const when = (t) => { const s = (Date.now() - new Date(t).getTime()) / 1000; return s < 86400 ? ago(Math.max(1, s)) : new Date(t).toLocaleDateString(); };
   put("notif-panel",
     el("div", { class: "np-head" }, el("b", {}, "Notifications"),
-      el("span", { class: "muted small" }, n.for === "reviewer" ? "Proposals from staff preparers" : "Decisions from CPA reviewers")),
+      el("span", { class: "muted small" }, n.for === "reviewer" ? "Proposals and proof from staff preparers" : "Decisions and proof from CPA reviewers")),
     n.items.length ? el("ul", { class: "np-list" }, groupNotifs(n.items).map((it) => el("li", { class: "np-item k-" + it.kind + (it.unread ? " unread" : ""),
         role: "button", tabindex: "0", title: "Open this case in the review queue",
         onclick: () => openNotif(it), onkeydown: (e) => { if (e.key === "Enter") openNotif(it); } },
@@ -1456,13 +1460,47 @@ function govLine(t) {
 const TRAIL_WORD = { ACCEPT: "Approved", REJECT: "Rejected", RETURN: "Returned to preparer" };
 function reviewTrail(x) {
   const steps = [...(x.proposals || []).map((p) => ({ at: p.at, by: p.by, what: "Proposed", note: p.note, id: p.proposal_id, k: "prop" })),
-    ...(x.history || []).map((h) => ({ at: h.at, by: h.by, what: TRAIL_WORD[h.decision] || nice(h.decision), note: h.note, id: h.approval_id, k: h.decision }))]
+    ...(x.history || []).map((h) => ({ at: h.at, by: h.by, what: TRAIL_WORD[h.decision] || nice(h.decision), note: h.note, id: h.approval_id, k: h.decision })),
+    ...(x.attachments || []).map((a) => ({ at: a.at, by: a.by, what: "Proof attached", note: a.filename, id: a.id, k: "proof" }))]
     .sort((a, b) => String(a.at).localeCompare(String(b.at)));
   if (steps.length < 2) return null;
   return el("div", { class: "xtrail" }, el("div", { class: "xs-k" }, "Review trail"),
     el("ol", {}, steps.map((s) => el("li", { class: "t-" + s.k },
       el("b", {}, s.what), ` by ${niceActor(s.by)}`, s.note ? ` · “${s.note}”` : "",
       el("span", { class: "muted small" }, ` · ${new Date(s.at).toLocaleString()}${s.id ? " · " + s.id : ""}`)))));
+}
+// Proof on a review item: a receipt, bill, statement extract or email. Both roles can add it while the item is
+// open; the server stores it unopened, fingerprints and signs it. Files download; nothing is opened in the page.
+const PROOF_ACCEPT = ".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.txt,.eml";
+const kbSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+function proofList(x) {
+  const list = x.attachments || [];
+  if (!list.length) return null;
+  return el("div", { class: "xproof" }, el("div", { class: "xs-k" }, `Proof · ${list.length} file${list.length === 1 ? "" : "s"}`),
+    el("ul", {}, list.map((a) => el("li", {},
+      el("span", { class: "pf-ext" }, (a.extension || "").replace(".", "").toUpperCase() || "FILE"),
+      el("div", { class: "pf-b" },
+        el("a", { class: "pf-name", href: W(`/runs/${S.run.id}/exceptions/${x.id}/attachments/${a.id}`), download: "",
+          title: `SHA-256 ${a.sha256}` }, a.filename),
+        el("div", { class: "pf-m" }, `${kbSize(a.size)} · added by ${niceActor(a.by)} · ${new Date(a.at).toLocaleString()} · ${a.id}`),
+        a.note ? el("div", { class: "pf-note" }, `“${a.note}”`) : null)))));
+}
+function proofButton(x, out, note) {
+  const input = el("input", { type: "file", accept: PROOF_ACCEPT, class: "hidden", "aria-label": "Choose a proof file" });
+  const btn = el("button", { class: "secondary xproof-btn", title: "Attach a receipt, bill, statement extract or email (PDF, image, Excel, CSV, TXT, EML; up to 10 MB)",
+    onclick: () => input.click() }, "Attach proof");
+  input.onchange = () => withBusy(btn, async () => {
+    const f = input.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f); fd.append("note", note.value || "");
+    try {
+      const a = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/attachments`), { method: "POST", form: fd });
+      (x.attachments = x.attachments || []).push(a); S.excSeen.add(x.id);
+      toast(`${a.filename} attached to ${x.case_id || x.id}. Fingerprinted and recorded in the audit trail.`, "good");
+      renderExceptions();
+    } catch (e) { out.textContent = e.message; out.className = "msg err"; }
+    input.value = "";
+  }, "Uploading…");
+  return [btn, input];
 }
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
@@ -1532,8 +1570,9 @@ function renderExceptions() {
         el("div", { class: "muted small" }, x.type === "TAX_REVIEW" ? "Review required. No tax liability or amount is asserted; nothing is filed or paid."
           : "Human review. No exchange rate is invented and the payment is not auto-matched.")) : null,
       x.suggestion ? el("div", { class: "xs" }, el("div", { class: "xs-k" }, "Suggested next step"), el("div", {}, rich(x.suggestion))) : null,
-      x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${x.proposed_by}`), el("div", {}, `“${x.proposal_note}”`)) : null,
+      x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${niceActor(x.proposed_by)}`), el("div", {}, `“${x.proposal_note}”`)) : null,
       x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
+      proofList(x),
       reviewTrail(x),
       el("details", { class: "xd" }, el("summary", {}, "Details"),
         el("dl", {},
@@ -1548,6 +1587,7 @@ function renderExceptions() {
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
+            proofButton(x, out, note),
             // Decisions are the CPA reviewer's: a staff preparer only proposes (the server refuses a preparer decision anyway, POL-02/POL-06).
             reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
               el("button", { class: "no", onclick: act("REJECT") }, "Reject"),

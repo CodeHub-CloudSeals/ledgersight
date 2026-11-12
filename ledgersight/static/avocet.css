@@ -2244,3 +2244,16 @@ body:not(.side-mini) .rail-tip{display:none}
 .np-item:hover .np-ico{transform:scale(1.08) rotate(-6deg)}
 .np-dot{animation:npDot 1.8s ease-in-out infinite}
 @keyframes npDot{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}50%{box-shadow:0 0 0 5px transparent}}
+
+/* Proof on a review item (2026-11-12) */
+.xproof{margin-top:14px;padding:12px 16px;border-radius:16px;background:var(--ds-inset,var(--subtle))}
+.xproof ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.xproof li{display:grid;grid-template-columns:44px minmax(0,1fr);gap:12px;align-items:start}
+.pf-ext{height:44px;border-radius:12px;display:grid;place-items:center;font-size:10.5px;font-weight:800;letter-spacing:.04em;
+  background:var(--surface);color:var(--accent);box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.pf-name{font-weight:600;font-size:13.5px;color:var(--text);text-decoration:none;overflow-wrap:anywhere}
+.pf-name:hover{color:var(--accent);text-decoration:underline}
+.pf-m{font-size:12px;color:var(--muted);margin-top:2px}
+.pf-note{font-size:13px;color:var(--text-2);margin-top:2px}
+.xtrail li.t-proof::before{background:var(--accent-2,var(--accent))}
+.k-ATTACHED .np-ico{background:var(--accent-soft);color:var(--accent)}

@@ -331,6 +331,21 @@ with sync_playwright() as pw:
         return f"preparer sees {len(tabs)} pages; governance links land on Overview/Reconciliation; 'My work' tiles; draft note; 0 failed requests"
     check("Staff preparer view", "Acting as Staff Preparer: sidebar, page guard, Overview, Reports", t_preparer_view)
 
+    def t_proof():
+        # 2026-11-12: proof on a review item. The preparer attaches the vendor bill PDF to DB06 (both roles can).
+        tab(p, "exceptions"); p.wait_for_timeout(500)
+        assert exc("DB06").get_by_role("button", name="Attach proof").count() == 1
+        exc("DB06").locator("input[type=file]").set_input_files(str(M1 / "13_invoice_PK-3302_packaging.pdf"))
+        p.wait_for_selector("#exc-list .exc:has-text('DB06') .xproof", timeout=10000); p.wait_for_timeout(300)
+        box = exc("DB06").locator(".xproof").inner_text()
+        assert "13_invoice_PK-3302_packaging.pdf" in box and "added by" in box and "PF-" in box, box
+        href = exc("DB06").locator(".xproof a.pf-name").get_attribute("href")
+        got = p.evaluate("async (u) => { const r = await fetch(u, {credentials: 'same-origin'}); const b = new Uint8Array(await r.arrayBuffer()); return [r.status, String.fromCharCode(...b.slice(0, 4)), r.headers.get('content-disposition')]; }", href)
+        assert got[0] == 200 and got[1] == "%PDF" and got[2].startswith("attachment"), got
+        shot(p, "06b-proof")
+        return f"preparer attached the vendor bill to DB06; listed on the card; download returns the PDF as an attachment"
+    check("Proof on a review item", "Acting as Staff Preparer: Attach proof on DB06, download it", t_proof)
+
     def t_decisions():
         p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200); tab(p, "exceptions")
         exc("DB06").get_by_role("button", name="Approve").click(); p.wait_for_timeout(700)
@@ -341,9 +356,9 @@ with sync_playwright() as pw:
         assert "returned" in exc("DB10").inner_text().lower()
         # 2026-11-12: the card shows its review trail - DB06 was proposed by the preparer, then approved by the CPA
         trail = [t.strip() for t in exc("DB06").locator(".xtrail li").all_inner_texts()]
-        assert len(trail) == 2 and trail[0].startswith("Proposed") and trail[1].startswith("Approved"), trail
+        assert len(trail) == 3 and trail[0].startswith("Proposed") and trail[1].startswith("Proof attached") and trail[2].startswith("Approved"), trail
         exc("DB06").scroll_into_view_if_needed(); exc("DB06").screenshot(path=os.path.join(SHOTS, "07b-review-trail.png"))
-        return "DB06 ACCEPTED (trail: proposed → approved), DB04 REJECTED, DB10 RETURNED"
+        return "DB06 ACCEPTED (trail: proposed → proof attached → approved), DB04 REJECTED, DB10 RETURNED"
     check("Review decisions ACCEPT / REJECT / RETURN", "Acting as CPA Reviewer", t_decisions)
 
     def t_notifications():

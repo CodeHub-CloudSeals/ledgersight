@@ -67,6 +67,13 @@ preparers; your own actions never notify you. Read from the signed evidence log 
 10 s while visible + on focus; a new item refreshes the run so both people's review queues stay in step. "Seen" is
 per person per book on the server (POST /notifications/seen, stored in the book state as notif_seen).
 
+## Proof on review items (2026-11-12, tests in tests/test_proof.py)
+Both roles (`exception.attach`, policy set trustops-policy-2026.11.4) can attach proof to an OPEN/RETURNED review item:
+PDF, PNG, JPG, XLSX, CSV, TXT, EML up to 10 MB; content must match the extension (magic bytes); exact duplicates
+refused. Stored unopened as <id>.proof, SHA-256 fingerprinted, signed (exception.attachment_added), listed on the
+card + review trail, downloadable as an attachment (nosniff, fingerprint re-checked). Carried to a re-run with the
+case. Attaching notifies the other person (bell). Never used by reconciliation.
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.
