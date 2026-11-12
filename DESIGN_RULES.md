@@ -15,7 +15,7 @@ layer of `ledgersight/static/avocet.css` (the "DESIGN RULES (v7)" block), so old
 | 7 | **Tables** | No outer frame. Thin lines between rows only. |
 | – | **Type** | Urbanist everywhere; monospace only for ids, hashes and file names. Numbers use tabular figures. |
 | – | **Scrollbars** | Never visible. Boxes still scroll by wheel, trackpad, touch and keyboard. |
-| – | **Colour (light mode)** | 60 / 30 / 10. Background: soft powder blue (`--sk-panel` #DFEBF6 main area, `--sk-page` #EEF4FA edge). Surfaces: white cards, sidebar and top-bar pills; boxes inside cards use the lighter powder blue (`--ds-inset` #EEF4FA). Accent: navy/blue for actions and highlights. Grey text is `--muted` #56647C (at least 4.5:1 on the background). Dark mode keeps its own palette. |
+| – | **Colour (light mode)** | 60 / 30 / 10. Background: soft off-white behind the cards (`--sk-panel` / `--sk-page` #F6F8FB, not pure white). Sidebar: powder blue (`--sk-side` #DFEBF6) with a white pill on the active page. Surfaces: white cards and top-bar pills; boxes inside cards use the lighter powder blue (`--ds-inset` #EEF4FA). Accent: navy/blue for actions and highlights. Grey text is `--muted` #56647C (at least 4.5:1 on the background). Dark mode keeps its own palette. |
 
 ## Adding something new
 - New box on a page → use `.card`. New box inside a card → give it the inset look (rule 2). Don't add borders.

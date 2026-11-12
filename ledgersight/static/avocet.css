@@ -2271,6 +2271,12 @@ table th,.case-row:hover,.case-row:focus-visible,.dropzone,.dz-connect{backgroun
 :root[data-theme="dark"]{--sk-navpill:var(--sk-card)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--sk-navpill:var(--sk-card)}}
 .nav-pill{background:var(--sk-navpill);box-shadow:none}
+/* 2026-11-12 (user request): the sidebar is the powder-blue panel; the page behind the cards is a soft off-white
+   (not pure white, so the white cards still lift off it). The active page's pill in the sidebar is white. Light mode only. */
+:root{--sk-page:#F6F8FB;--sk-panel:#F6F8FB;--sk-side:#DFEBF6;--sk-navpill:#FFFFFF}
+.sidebar .side-toggle{background:#FFFFFF}
+:root[data-theme="dark"] .sidebar .side-toggle{background:var(--sk-card)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .sidebar .side-toggle{background:var(--sk-card)}}
 
 /* ============ 2026-11-12: Ask in the sidebar, Users page, light motion on every tab and button ============ */
 /* Ask LedgerSight: bottom of the sidebar, always visible; icon-only when the sidebar is collapsed */
