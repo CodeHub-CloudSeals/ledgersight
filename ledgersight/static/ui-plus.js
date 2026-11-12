@@ -101,9 +101,10 @@
   //  3. the content blocks, then the cards inside them, rise one after another.
   const HEAD = ".page-head, .ov-head";
   const TEXT = "h2, .sub, .greet, .hero-meta";
+  const HEADLINE = "h2, .greet";   // these rise one letter at a time
   const UNIT = ".badge, code, kbd, svg, button, input, select, img, .mono, .pill, .chip";  // never split inside these
   // Wrap every word in <span.ls-w><span.ls-wi>word</span></span> (bold/links are split too; badges stay whole).
-  function splitWords(node) {
+  function splitWords(node, chars) {
     if (node.dataset.lsSplit) unsplit(node);
     const inners = [];
     const flexLike = /flex|grid/.test(getComputedStyle(node).display);
@@ -120,8 +121,16 @@
           for (const s of parts) {
             if (!s) continue;
             if (!s.trim()) { frag.appendChild(document.createTextNode(s)); continue; }
-            const w = document.createElement("span"), i = document.createElement("span");
-            w.className = "ls-w"; i.className = "ls-wi"; i.textContent = s; w.appendChild(i); frag.appendChild(w); inners.push(i);
+            const w = document.createElement("span");
+            if (chars) {
+              // headline: the word stays one unbreakable clip box; each letter inside it rises on its own
+              w.className = "ls-w ls-wc";
+              for (const ch of Array.from(s)) { const i = document.createElement("span"); i.className = "ls-wi"; i.textContent = ch; w.appendChild(i); inners.push(i); }
+            } else {
+              const i = document.createElement("span");
+              w.className = "ls-w"; i.className = "ls-wi"; i.textContent = s; w.appendChild(i); inners.push(i);
+            }
+            frag.appendChild(w);
           }
           n.replaceWith(frag);
         } else if (n.nodeType === 1) {
@@ -141,18 +150,25 @@
   }
   function unsplit(node) {
     if (!node || !node.dataset.lsSplit) return;
-    node.querySelectorAll(".ls-w").forEach((w) => { const i = w.firstChild; w.replaceWith(...(i ? i.childNodes : [])); });
+    node.querySelectorAll(".ls-w").forEach((w) => {
+      if (w.classList.contains("ls-wc")) return w.replaceWith(document.createTextNode(w.textContent));
+      const i = w.firstChild; w.replaceWith(...(i ? i.childNodes : []));
+    });
     node.querySelectorAll(".ls-wrun").forEach((r) => r.replaceWith(...r.childNodes));
     delete node.dataset.lsSplit; node.normalize();
   }
   function revealWords(nodes, startDelay) {
     let t = startDelay;
     nodes.forEach((node) => {
-      const words = splitWords(node);
+      // Headlines rise letter by letter; subtitles and other header text rise word by word.
+      const chars = node.matches(HEADLINE);
+      const words = splitWords(node, chars);
       if (!words.length) return;
-      const step = Math.min(0.045, 0.42 / words.length);   // long subtitles still finish quickly
-      words.forEach((w) => { w.style.transform = "translateY(110%)"; });
-      const anim = M.animate(words, { y: ["110%", "0%"] }, { duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) });
+      const step = chars ? Math.min(0.032, 0.5 / words.length) : Math.min(0.045, 0.42 / words.length);   // long text still finishes quickly
+      words.forEach((w) => { w.style.transform = "translateY(110%)"; if (chars) w.style.opacity = "0"; });
+      const anim = chars
+        ? M.animate(words, { y: ["110%", "0%"], opacity: [0, 1] }, { duration: 0.6, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) })
+        : M.animate(words, { y: ["110%", "0%"] }, { duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) });
       const done = () => unsplit(node);
       (anim.finished || anim).then(done, done);
       setTimeout(() => { if (node.dataset.lsSplit) done(); }, (t + step * words.length + 0.6) * 1000 + 400);

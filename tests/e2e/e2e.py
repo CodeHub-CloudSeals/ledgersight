@@ -224,15 +224,19 @@ with sync_playwright() as pw:
         if not p.evaluate("!!window.Motion"): return "motion library absent; static pages (fallback)"
         p.click('.sidebar nav .tab[data-tab="reports"]'); p.wait_for_timeout(60)
         mid = p.evaluate("""() => { const w = [...document.querySelectorAll('#p-reports .ls-wi')], pl = document.querySelector('.nav-pill').getBoundingClientRect();
-            return [w.length, new Set(w.slice(0, 8).map(e => Math.round(new DOMMatrix(getComputedStyle(e).transform).m42))).size, Math.round(pl.height)]; }""")
+            const c = [...document.querySelectorAll('#p-reports h2 .ls-wc .ls-wi')];
+            return [w.length, new Set(w.slice(0, 8).map(e => Math.round(new DOMMatrix(getComputedStyle(e).transform).m42))).size, Math.round(pl.height),
+                    c.length, c.map(e => e.textContent).join('')]; }""")
         assert mid[0] >= 5 and mid[1] > 1, f"words are not rising one after another: {mid}"
+        # 2026-11-12: the headline rises one letter at a time (subtitle stays word by word)
+        assert mid[3] >= 5 and mid[3] == len(mid[4]) and mid[4] == p.evaluate("document.querySelector('#p-reports h2').textContent.replace(/\\s+/g, '')"), mid
         p.wait_for_timeout(2400)
         left = p.evaluate("""() => document.querySelectorAll('.ls-w, .ls-wrun, [data-ls-split]').length + [...document.querySelectorAll('.panel.active *')].filter(e => e.offsetParent &&
             ((e.style.opacity && e.style.opacity !== '1') || e.style.filter || (e.style.transform && e.style.transform !== 'none'))).length""")
         pill = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(), A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect();
             return Math.max(Math.abs(P.top - A.top), Math.abs(P.height - A.height)); }""")
         assert left == 0 and pill <= 1, (left, pill)
-        return f"{mid[0]} words rising in sequence, sidebar highlight {mid[2]}px tall mid-glide; settles exactly, wrappers removed"
+        return f"headline {mid[3]} letters one by one, {mid[0]} pieces rising in sequence, sidebar highlight {mid[2]}px tall mid-glide; settles exactly, wrappers removed"
     check("Page entrance + sidebar glide", "switch Overview → Reports, sample mid-animation and after", t_page_motion)
 
     def t_workflow_stepper():
