@@ -82,4 +82,4 @@ def test_policy_grants_governance_read_to_the_reviewer_only():
     from ledgersight.core import policy
     assert "governance.read" in policy.ROLE_ACTIONS["owner_reviewer"]
     assert "governance.read" not in policy.ROLE_ACTIONS["preparer"]
-    assert policy.POLICY_VERSION == "trustops-policy-2026.11.3"
+    assert policy.POLICY_VERSION == "trustops-policy-2026.11.4"

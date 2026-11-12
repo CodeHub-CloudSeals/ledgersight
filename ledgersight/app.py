@@ -206,7 +206,7 @@ def invite_page():
 def auth_config():
     return {"mfa": REQUIRE_MFA, "login_required": not NO_LOGIN, "version": APP_VERSION,
             "samples_enabled": os.environ.get("AVOCET_SHOW_SAMPLES", "0") == "1",
-            "demo_people": [{"key": k, "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else [],
+            "demo_people": [{"key": k, "user_id": v[0], "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else [],
             "google_login": _GL, "google_client_id": GOOGLE_LOGIN_CLIENT_ID if _GL else None}
 
 
@@ -515,6 +515,21 @@ def decide(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depends
 @app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/proposals")
 def propose(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depends(current_user)):
     return handle(svc.propose, u, wid, run_id, exc_id, body.get("note", ""))
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/attachments")
+async def attach_proof(wid: str, run_id: str, exc_id: str, note: str = Form(""), file: UploadFile = File(...), u=Depends(current_user)):
+    """Proof for a review item (receipt, bill, statement extract, email). Stored unopened and signed."""
+    blob = await file.read(MAX_BYTES + 1)
+    return await run_in_threadpool(handle, svc.attach_proof, u, wid, run_id, exc_id, file.filename or "proof", blob, note)
+
+
+@app.get("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/attachments/{att_id}")
+def proof_file(wid: str, run_id: str, exc_id: str, att_id: str, u=Depends(current_user)):
+    rec, blob, mime = handle(svc.proof_file, u, wid, run_id, exc_id, att_id)
+    safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in rec["filename"])
+    return Response(blob, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{safe}"',
+                                                     "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/v1/workspaces/{wid}/actions/attempt")

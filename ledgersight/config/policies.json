@@ -1,5 +1,5 @@
 {
-  "version": "trustops-policy-2026.11.3",
+  "version": "trustops-policy-2026.11.4",
   "owner": "TrustOps",
   "policies": [
     {"id": "POL-01", "name": "CLIENT_SCOPE", "version": "1.0", "effect": "DENY",
@@ -51,9 +51,9 @@
   "role_actions": {
     "owner_reviewer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.decide",
                        "export.read", "workspace.reset", "workspace.configure", "party.confirm", "query.ask",
-                       "governance.read"],
+                       "governance.read", "exception.attach"],
     "preparer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.propose",
-                 "export.read", "party.confirm", "query.ask"],
+                 "export.read", "party.confirm", "query.ask", "exception.attach"],
     "support": ["health.read"]
   }
 }

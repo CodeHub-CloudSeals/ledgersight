@@ -777,7 +777,7 @@ class Service:
         return run
 
     CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy", "proposal_id",
-                    "proposed_by", "proposal_note", "history", "proposals")
+                    "proposed_by", "proposal_note", "history", "proposals", "attachments")
 
     def _carry_decisions(self, user, w, run):
         """A re-run after an input change keeps the CPA's decision on any case whose facts did not change
@@ -786,7 +786,7 @@ class Service:
         if not prev:
             return
         fp = lambda e: (e["type"], e.get("bank_id"), e.get("ledger_id"), e["amount_cents"], e.get("case_id"))
-        old = {fp(e): e for e in prev["result"]["exceptions"] if e["status"] != "OPEN" or e.get("proposed_by")}
+        old = {fp(e): e for e in prev["result"]["exceptions"] if e["status"] != "OPEN" or e.get("proposed_by") or e.get("attachments")}
         for e in run["result"]["exceptions"]:
             o = old.get(fp(e))
             if not o:
@@ -892,17 +892,87 @@ class Service:
                      workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return exc
 
+    # ---- proof attached to a review item (both roles) ----------------------------
+    # A receipt, bill, statement extract or email that supports the decision. Stored unopened under a neutral
+    # name, fingerprinted (SHA-256) and signed into the audit trail; never parsed, rendered or executed here,
+    # and never used by reconciliation. Only while the item is open or returned: a decided record is final.
+    PROOF_TYPES = {".pdf": ("application/pdf", (b"%PDF",)), ".png": ("image/png", (b"\x89PNG",)),
+                   ".jpg": ("image/jpeg", (b"\xff\xd8\xff",)), ".jpeg": ("image/jpeg", (b"\xff\xd8\xff",)),
+                   ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", (b"PK\x03\x04",)),
+                   ".csv": ("text/csv", ()), ".txt": ("text/plain", ()), ".eml": ("message/rfc822", ())}
+
+    def _exc(self, w, run_id, exc_id):
+        run = w.runs.get(run_id)
+        exc = next((e for e in (run or {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
+        if not exc:
+            raise KeyError(exc_id)
+        return run, exc
+
+    def attach_proof(self, user, wid, run_id, exc_id, filename, blob, note=""):
+        if not blob:
+            raise ingest.IngestError("the file is empty")
+        if len(blob) > ingest.MAX_BYTES:
+            raise ingest.IngestError("file exceeds 10 MB limit")
+        name = Path(str(filename or "proof").replace("\\", "/")).name[:200] or "proof"
+        ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ""
+        if ext not in self.PROOF_TYPES:
+            raise ingest.IngestError(f"{ext or 'files without an extension'} not accepted as proof. Use PDF, PNG, JPG, Excel (.xlsx), CSV, TXT or a saved email (.eml).")
+        magic = self.PROOF_TYPES[ext][1]
+        if magic and not any(blob.startswith(m) for m in magic):
+            raise ingest.IngestError(f"{name} is not a real {ext[1:].upper()} file (its content does not match the extension).")
+        if ext in (".csv", ".txt", ".eml") and b"\x00" in blob[:4096]:
+            raise ingest.IngestError(f"{name} is not a text file.")
+        sha = hashlib.sha256(blob).hexdigest()
+        w0 = self.ws.get(wid)
+        exc0 = None
+        if w0 and wid in user.workspaces:
+            exc0 = next((e for e in w0.runs.get(run_id, {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
+        w, d = self._gate(user, wid, "exception.attach", run_id=run_id, batch_sha=sha,
+                          refs=((exc0 or {}).get("evidence_refs") or []) + [f"proof:{ext[1:]}"])
+        run, exc = self._exc(w, run_id, exc_id)
+        if exc["status"] not in ("OPEN", "RETURNED"):
+            raise ValueError(f"already {exc['status']}: proof can only be added before the decision")
+        same = next((a for a in exc.get("attachments") or [] if a["sha256"] == sha), None)
+        if same:
+            raise ValueError(f"this exact file is already attached ({same['id']})")
+        aid = "PF-" + uuid.uuid4().hex[:8]
+        prefix = DATA_DIR / TENANT / wid
+        prefix.mkdir(parents=True, exist_ok=True)
+        (prefix / f"{aid}.proof").write_bytes(blob)
+        rec = {"id": aid, "filename": name, "extension": ext, "size": len(blob), "sha256": sha,
+               "by": user.user_id, "at": _ts(), "note": " ".join(str(note or "").split())[:300]}
+        exc.setdefault("attachments", []).append(rec)
+        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
+                     run_id=run_id, action="exception.attachment_added", policy_decision=d.label(),
+                     policy_id=d.policy_id, policy_version=d.policy_version, approval_id=aid, source_batch_sha256=sha,
+                     source_line_refs=list(exc.get("evidence_refs") or []), matching_rule_id=exc.get("rule_id"),
+                     workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
+        return rec
+
+    def proof_file(self, user, wid, run_id, exc_id, att_id):
+        w = self.gate(user, wid, "export.read", run_id=run_id, refs=[att_id])
+        _, exc = self._exc(w, run_id, exc_id)
+        rec = next((a for a in exc.get("attachments") or [] if a["id"] == att_id), None)
+        f = DATA_DIR / TENANT / wid / f"{att_id}.proof"
+        if not rec or not f.exists():
+            raise KeyError(att_id)
+        blob = f.read_bytes()
+        if hashlib.sha256(blob).hexdigest() != rec["sha256"]:
+            raise ValueError("stored proof does not match its fingerprint")
+        return rec, blob, self.PROOF_TYPES.get(rec["extension"], ("application/octet-stream",))[0]
+
     # ---- notifications: who needs to know about a proposal or a decision ----------
     # Read from the signed evidence log, so the preparer and the CPA reviewer see the same facts in every browser.
     # A CPA reviewer is told when someone proposes a resolution; a staff preparer is told when a reviewer approves,
     # rejects or returns an item. Your own actions never notify you. Only "seen" is stored (per person, per book).
     NOTIFY_ACTIONS = {"exception.proposed": "PROPOSED", "exception.accept": "APPROVED",
-                      "exception.reject": "REJECTED", "exception.return": "RETURNED"}
+                      "exception.reject": "REJECTED", "exception.return": "RETURNED", "exception.attachment_added": "ATTACHED"}
 
     def notifications(self, user, wid, limit: int = 30):
         w = self.gate(user, wid, "workspace.read", record=False)
         decides = "exception.decide" in policy.ROLE_ACTIONS.get(user.role, set())
-        want = {"exception.proposed"} if decides else {"exception.accept", "exception.reject", "exception.return"}
+        want = ({"exception.proposed"} if decides else {"exception.accept", "exception.reject", "exception.return"}) \
+            | {"exception.attachment_added"}   # proof added by the other person is news for both roles
         by_id = {}
         for run in w.runs.values():
             for x in run.get("result", {}).get("exceptions", []):
@@ -910,6 +980,8 @@ class Service:
                     by_id[p.get("proposal_id")] = (x, p.get("note"))
                 for h in x.get("history") or []:
                     by_id[h.get("approval_id")] = (x, h.get("note"))
+                for a in x.get("attachments") or []:
+                    by_id[a.get("id")] = (x, a.get("filename"))
         items = []
         for seq, e in enumerate(w.log.events):
             if e.get("action") not in want or e.get("actor_id") == user.user_id                     or not str(e.get("policy_decision") or "").startswith("ALLOW"):
