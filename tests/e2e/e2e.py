@@ -713,7 +713,8 @@ with sync_playwright() as pw:
             return [cs('#login .lg-art').backgroundColor, cs('#lg-card').backgroundColor, document.querySelectorAll('#login .lg-steps li').length,
                     cs('#login .lg-art').backgroundImage, document.querySelectorAll('#login .lg-bg, #login .lg-sparks').length]; }""")
         assert "Reconciliation that's" in r.inner_text('#login .login-copy h2'), r.inner_text('#login .login-copy h2')
-        w1 = r.evaluate("[...document.querySelectorAll('#lg-rot .lg-rw:not(.out)')].pop().textContent"); r.wait_for_timeout(3000); w2 = r.evaluate("[...document.querySelectorAll('#lg-rot .lg-rw:not(.out)')].pop().textContent")
+        w1 = r.evaluate("document.querySelector('#lg-rot').textContent"); r.wait_for_timeout(3600); w2 = r.evaluate("document.querySelector('#lg-rot').textContent")
+        assert r.locator('#lg-rot .lg-rw').count() == 1, 'two words at once'
         assert w1 != w2 and w2.strip() in ("audit-ready.", "governed.", "on time.", "explainable."), (w1, w2)  # last word rotates
         assert r.evaluate("getComputedStyle(document.querySelector('#login .lg-rotline'), '::after').content") in ("none", "normal")
         assert lk[0] == "rgb(223, 235, 246)" and lk[1] == "rgb(255, 255, 255)" and lk[2] == 3 and lk[3] == "none" and lk[4] == 0, lk

@@ -105,28 +105,36 @@
     root.addEventListener("pointerleave", () => { if (spot) spot.style.opacity = "0"; layers.forEach((l) => { l.style.translate = "0 0"; }); });
   }
 
-  // Headline: the last word changes every 2.6 s (explainable. / audit-ready. / governed. / on time.). The old word
-  // blurs up and out, the new one rises in, and the line's width glides to fit. Fixed word under reduced motion;
-  // paused while the login screen is hidden. Screen readers get one full sentence (.sr-only) instead.
+  // Headline: the last word changes every 3 s (explainable. / audit-ready. / governed. / on time.). Letter by letter
+  // and never overlapping: the old word's letters lift out one after another, then the line's width glides to the
+  // new word, then its letters rise in one by one (like the app's page headlines). Fixed word under reduced motion;
+  // paused while the login screen or the tab is hidden. Screen readers get one full sentence (.sr-only) instead.
   const rot = document.getElementById("lg-rot");
   if (rot && !reduce) {
     const words = rot.dataset.words.split("|");
-    let wi = 0;
-    const measure = (w) => { const m = document.createElement("span"); m.className = "lg-rw"; m.style.cssText = "position:absolute;visibility:hidden";
-      m.textContent = w; rot.appendChild(m); const x = m.getBoundingClientRect().width; m.remove(); return x; };
-    setInterval(() => {
-      if (root.classList.contains("hidden") || document.hidden) return;
-      const old = rot.querySelector(".lg-rw:not(.out)"); wi = (wi + 1) % words.length;
-      const nw = document.createElement("span"); nw.className = "lg-rw"; nw.textContent = words[wi];
-      const from = rot.getBoundingClientRect().width, to = measure(words[wi]);
-      rot.animate([{ width: from + "px" }, { width: to + "px" }], { duration: 650, easing: "cubic-bezier(.22,1,.36,1)" });
-      if (old) { old.classList.add("out");
-        old.animate([{ opacity: 1, transform: "none", filter: "blur(0)" }, { opacity: 0, transform: "translateY(-55%)", filter: "blur(6px)" }],
-          { duration: 380, easing: "cubic-bezier(.55,0,.75,.2)", fill: "forwards" }).finished.then(() => old.remove()).catch(() => old.remove()); }
-      rot.appendChild(nw);
-      nw.animate([{ opacity: 0, transform: "translateY(55%)", filter: "blur(6px)" }, { opacity: 1, transform: "none", filter: "blur(0)" }],
-        { duration: 700, delay: 230, easing: SPRING, fill: "backwards" });
-    }, 2600);
+    const make = (w) => { const s = document.createElement("span"); s.className = "lg-rw";
+      for (const ch of w) { const c = document.createElement("span"); c.className = "lg-ch"; c.textContent = ch; s.appendChild(c); } return s; };
+    const first = rot.querySelector(".lg-rw"); if (first) first.replaceWith(make(first.textContent));
+    let wi = 0, busy = false;
+    const OUT = "cubic-bezier(.55,0,.75,.2)", GLIDE = "cubic-bezier(.22,1,.36,1)";
+    async function swap() {
+      if (busy || root.classList.contains("hidden") || document.hidden) return;
+      busy = true;
+      try {
+        const old = rot.querySelector(".lg-rw"); wi = (wi + 1) % words.length;
+        const letters = old ? [...old.children] : [];
+        await Promise.all(letters.map((c, i) => c.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-.4em)" }],
+          { duration: 240, delay: i * 22, easing: OUT, fill: "forwards" }).finished));
+        const from = rot.getBoundingClientRect().width, nw = make(words[wi]);
+        if (old) old.replaceWith(nw); else rot.appendChild(nw);
+        const to = rot.getBoundingClientRect().width;
+        rot.animate([{ width: from + "px" }, { width: to + "px" }], { duration: 380, easing: GLIDE });
+        [...nw.children].forEach((c, i) => c.animate([{ opacity: 0, transform: "translateY(.5em)" }, { opacity: 1, transform: "none" }],
+          { duration: 560, delay: 90 + i * 38, easing: SPRING, fill: "backwards" }));
+      } catch (_) { /* an animation was cancelled; the next tick starts clean */ }
+      busy = false;
+    }
+    setInterval(swap, 3000);
   }
 
   // The login screen is revealed by avocet.js removing "hidden"; start the show the moment it appears.
