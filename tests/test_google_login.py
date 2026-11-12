@@ -1,5 +1,5 @@
-"""Google sign-in: domain-restricted, auto-provisions least-privileged accounts, replaces
-password + authenticator code for anyone already on file with a different role."""
+"""Google sign-in: domain-restricted, auto-provisions AVOCET_GOOGLE_DEFAULT_ROLE (preparer by
+default) for any new account, replaces password + authenticator code for anyone already on file."""
 import pytest
 from fastapi.testclient import TestClient
 
@@ -44,7 +44,7 @@ def test_rejects_wrong_domain(google_on, monkeypatch):
                          fake_verify(claims(email="person@gmail.com", hd=None)))
     r = TestClient(appmod.app).post("/v1/login/google", json={"credential": "t"})
     assert r.status_code == 403
-    assert "cloudseals.com" in r.json()["detail"]
+    assert "CloudSeals" in r.json()["detail"]
 
 
 def test_rejects_unverified_email(google_on, monkeypatch):
@@ -53,7 +53,7 @@ def test_rejects_unverified_email(google_on, monkeypatch):
     assert r.status_code == 403
 
 
-def test_never_seen_email_is_auto_provisioned_as_preparer(google_on, monkeypatch):
+def test_never_seen_email_is_auto_provisioned_as_preparer_by_default(google_on, monkeypatch):
     monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
                          fake_verify(claims(email="new-person@cloudseals.com", name="New Person")))
     c = TestClient(appmod.app)
@@ -86,8 +86,8 @@ def test_unknown_default_role_falls_back_to_preparer(google_on, monkeypatch, val
     assert c.get("/v1/me").json()["role"] == "preparer"
 
 
-def test_pre_registered_email_keeps_its_existing_role(google_on, monkeypatch):
-    appmod.auth.invite("rajani@cloudseals.com", "Rajani", "owner_reviewer", {"client-a"})
+def test_pre_registered_email_keeps_its_existing_role_not_auto_upgraded(google_on, monkeypatch):
+    appmod.auth.invite("rajani@cloudseals.com", "Rajani", "preparer", {"client-a"})
     monkeypatch.setattr(appmod.google_id_token, "verify_oauth2_token",
                          fake_verify(claims(email="rajani@cloudseals.com", name="Rajani G")))
     c = TestClient(appmod.app)
@@ -96,7 +96,7 @@ def test_pre_registered_email_keeps_its_existing_role(google_on, monkeypatch):
     me = c.get("/v1/me").json()
     assert me["user_id"] == "rajani@cloudseals.com"
     assert me["display_name"] == "Rajani G"
-    assert me["role"] == "owner_reviewer"
+    assert me["role"] == "preparer"
     assert me["active"] is True
 
 

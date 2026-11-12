@@ -317,7 +317,7 @@ def login_google(body: dict = Body(...)):
     email = (claims.get("email") or "").lower()
     domain = claims.get("hd") or email.rsplit("@", 1)[-1]
     if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
-        raise HTTPException(403, f"only @{GOOGLE_LOGIN_DOMAIN} accounts can sign in this way")
+        raise HTTPException(403, "Only the CloudSeals team can access this.")
     try:
         tok = auth.google_login(email, claims.get("name") or email, set(WORKSPACES))
     except PermissionError as e:
