@@ -164,14 +164,14 @@
       const chars = node.matches(HEADLINE);
       const words = splitWords(node, chars);
       if (!words.length) return;
-      const step = chars ? Math.min(0.032, 0.5 / words.length) : Math.min(0.045, 0.42 / words.length);   // long text still finishes quickly
+      const step = chars ? Math.min(0.065, 1.0 / words.length) : Math.min(0.045, 0.42 / words.length);   // long text still finishes quickly
       words.forEach((w) => { w.style.transform = "translateY(110%)"; if (chars) w.style.opacity = "0"; });
       const anim = chars
-        ? M.animate(words, { y: ["110%", "0%"], opacity: [0, 1] }, { duration: 0.6, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) })
+        ? M.animate(words, { y: ["110%", "0%"], opacity: [0, 1] }, { duration: 0.8, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) })
         : M.animate(words, { y: ["110%", "0%"] }, { duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) });
       const done = () => unsplit(node);
       (anim.finished || anim).then(done, done);
-      setTimeout(() => { if (node.dataset.lsSplit) done(); }, (t + step * words.length + 0.6) * 1000 + 400);
+      setTimeout(() => { if (node.dataset.lsSplit) done(); }, (t + step * words.length + 0.8) * 1000 + 400);
       t += Math.min(0.18, step * words.length * 0.5);
     });
   }
