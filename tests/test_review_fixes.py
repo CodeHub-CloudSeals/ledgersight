@@ -134,8 +134,9 @@ def test_r03_proposal_is_signed_with_case_rows_rule_and_id(cpa):
         assert e["source_line_refs"] == exc["evidence_refs"] and e["matching_rule_id"] == exc["rule_id"]
         assert e["trace_id"] == run["trace_id"] and e["run_id"] == run["id"]
     assert signed["approval_id"] == body["proposal_id"] and body["proposal_id"].startswith("PRP-")
-    assert body["history"][-1] == {**body["history"][-1], "decision": "PROPOSE", "by": "r03-prep@demo.test",
-                                   "note": "bill on file", "proposal_id": body["proposal_id"]}
+    assert body["proposals"][-1] == {**body["proposals"][-1], "by": "r03-prep@demo.test", "note": "bill on file",
+                                     "proposal_id": body["proposal_id"]}
+    assert not any(h.get("decision") == "PROPOSE" for h in body.get("history", []))  # history stays decisions only
     # maker-checker still holds: the maker cannot approve their own proposal
     assert prep.post(f"{WS}/runs/{run['id']}/exceptions/{exc['id']}/decisions", headers=H,
                      json={"decision": "ACCEPT", "note": ""}).status_code == 403

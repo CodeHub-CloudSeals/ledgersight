@@ -753,7 +753,7 @@ class Service:
         return run
 
     CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy", "proposal_id",
-                    "proposed_by", "proposal_note", "history")
+                    "proposed_by", "proposal_note", "history", "proposals")
 
     def _carry_decisions(self, user, w, run):
         """A re-run after an input change keeps the CPA's decision on any case whose facts did not change
@@ -847,7 +847,7 @@ class Service:
     def propose(self, user, wid, run_id, exc_id, note):
         """Preparer proposes a resolution; becomes the maker, so cannot also approve.
         Like a decision, the proposal is signed with the case's source rows, rule and trace, and gets an id
-        (PRP-...) that also appears in the case history, so the audit trail shows exactly what the maker proposed."""
+        (PRP-...) that also appears in the case's proposals list, so the audit trail shows exactly what the maker proposed."""
         w0 = self.ws.get(wid)
         run = w0.runs.get(run_id) if w0 and wid in user.workspaces else None
         exc = next((e for e in (run or {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
@@ -858,8 +858,8 @@ class Service:
         if exc["status"] not in ("OPEN", "RETURNED"):
             raise ValueError(f"already {exc['status']}")
         pid = "PRP-" + uuid.uuid4().hex[:6]
-        exc.setdefault("history", []).append({"decision": "PROPOSE", "by": user.user_id, "at": _ts(), "note": note,
-                                              "proposal_id": pid})
+        # `history` stays decisions only (an existing contract); proposals have their own list with the same shape
+        exc.setdefault("proposals", []).append({"by": user.user_id, "at": _ts(), "note": note, "proposal_id": pid})
         exc.update(proposed_by=user.user_id, proposal_note=note, status="OPEN", proposal_id=pid)
         w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                      run_id=run_id, action="exception.proposed", policy_decision=d.label(),
