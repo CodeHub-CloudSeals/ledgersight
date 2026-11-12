@@ -1758,7 +1758,7 @@ function renderPipelines() {
   });
   document.querySelectorAll(".pipe").forEach((p) => p.classList.toggle("running", !!(an && an.mode === "running")));
 }
-// Card header: one status chip, a Replay button and a thin progress line under the title. The progress line is
+// Card header: one status chip and a thin progress line under the title. The progress line is
 // kept between renders (only its width changes) so it glides from step to step instead of jumping.
 const FINISHED = new Set(["done", "escalated", "blocked", "stopped"]);
 function pipeHeader(d, an) {
@@ -1772,26 +1772,16 @@ function pipeHeader(d, an) {
   else if (an && an.mode === "upload") chip = ["run", "Checking a file"];
   else if (d && d.run_id) chip = ["ok", `Complete · ${total} of ${total}`];
   else chip = ["idle", "No run yet"];
-  const canReplay = !an && S.run && S.run.workflow && S.run.workflow.length;
   for (const id of PIPE_IDS) {
     const card = $(id) && $(id).closest(".pipe"); if (!card) continue;
     const meta = card.querySelector(".pipe-meta");
-    if (meta) put(meta, el("span", { class: "pipe-chip " + chip[0] }, el("i"), chip[1]),
-      canReplay ? el("button", { class: "ghost pipe-replay", title: "Play the last run again from its signed record (nothing is re-run)", onclick: replayLast },
-        icon("M8 5.5v13l10.5-6.5z"), "Replay") : null);
+    if (meta) put(meta, el("span", { class: "pipe-chip " + chip[0] }, el("i"), chip[1]));
     let bar = card.querySelector(".pipe-prog");
     if (!bar) { bar = el("div", { class: "pipe-prog", "aria-hidden": "true" }, el("span")); card.querySelector(".pipe-head").after(bar); }
     bar.classList.toggle("busy", !!(an && an.mode === "running"));
     bar.classList.toggle("warn", !an && !!(d && d.agents.some((a) => a.last_run_step && escCount(a.last_run_step))));
     bar.style.setProperty("--p", total ? (an && an.mode === "running" ? 0.04 : doneN / total) : 0);
   }
-}
-// Replay is presentation only: it plays the run's recorded steps again in order. No request is sent.
-function replayLast() {
-  if (S.anim || !S.run || !S.run.workflow) return;
-  const codes = S.agents ? S.agents.agents.map((a) => a.code) : S.run.workflow.map((s) => s.agent);
-  S.anim = { mode: "replay", run: S.run.id, states: Object.fromEntries(codes.map((c) => [c, "queued"])), shown: {}, titles: {} };
-  renderPipelines(); replay(S.run);
 }
 // The workflow track is cloned into two pages, so clicks are handled here once rather than on each copy.
 document.addEventListener("click", (e) => { if (e.target.closest(".pnode[data-go-review]")) openReview(); });

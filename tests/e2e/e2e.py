@@ -255,25 +255,15 @@ with sync_playwright() as pw:
         return f"{st[0]} finished steps show only the tick (no badge, no box); '{st[3]}' opens the review queue"
     check("Agent workflow stepper", "Agents page: status badges, step boxes, escalated link", t_workflow_stepper)
 
-    def t_workflow_replay():
-        # 2026-11-12: header chip + progress line; Replay plays the recorded run again without calling the server.
+    def t_workflow_header():
+        # 2026-11-12: header status chip + progress line (the Replay button was removed on request).
         tab(p, "recon"); p.wait_for_timeout(800)
         chip = p.inner_text("#rc-pipe .pipe-chip")
         prog = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-prog')).getPropertyValue('--p').trim()")
         assert chip.startswith("Complete") and prog == "1", (chip, prog)
-        posts = []
-        on_req = lambda r: posts.append(r.url) if r.method == "POST" else None
-        p.on("request", on_req)
-        reset_seen(p); p.click("#rc-pipe .pipe-replay")
-        p.wait_for_function("S.anim && S.anim.mode === 'replay' && document.querySelector('#rc-pipeline .s-working')", timeout=5000)
-        mid = p.inner_text("#rc-pipe .pipe-chip")
-        wait_idle(p); p.remove_listener("request", on_req)
-        s = seen(p)
-        assert all("s-working" in s.get(c, []) for c in ["AG-01", "AG-03", "AG-06"]), s
-        assert not posts, posts
-        assert mid.startswith("Step") and p.inner_text("#rc-pipe .pipe-chip").startswith("Complete")
-        return f"chip '{chip}', progress 1; Replay showed '{mid}', every step animated, 0 POST requests"
-    check("Agent workflow header + Replay", "Reconciliation: chip, progress line, Replay", t_workflow_replay)
+        assert p.locator(".pipe-replay").count() == 0
+        return f"chip '{chip}', progress line full; no Replay button"
+    check("Agent workflow header", "Reconciliation: status chip and progress line", t_workflow_header)
 
     def t_design_rules():
         # DESIGN_RULES.md: pill buttons, no edge stripes, borderless insets/cards, 42px fields, frameless tables
