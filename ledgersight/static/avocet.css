@@ -2186,3 +2186,8 @@ body:not(.side-mini) .rail-tip{display:none}
   .prail::after{transform-origin:center top}
 }
 @keyframes railFillV{from{scale:1 0}to{scale:1 1}}
+
+/* CPA reviewer vs staff preparer (2026-11-12): preparer sees a draft note on Reports; period chip is read-only */
+.rep-draft{display:block;margin:0 0 var(--sp-4);padding:12px 16px;border-radius:16px;background:var(--warn-bg);color:var(--warn);font-size:13.5px}
+.rep-draft:empty{display:none}
+.period-chip.ro{cursor:default}

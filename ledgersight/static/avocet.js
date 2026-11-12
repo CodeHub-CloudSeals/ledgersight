@@ -137,12 +137,43 @@ async function boot() {
   put("ws-select", S.wsList.map((w) => el("option", { value: w.id }, proper(w.name))));
   S.ws = S.wsList[0] && S.wsList[0].id;
   document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer" || !!S.noLogin);
+  applyRole();
   await switchWs();
   const fromHash = location.hash.slice(1);
   if (fromHash === "ask") openAsk();
   else if (fromHash && document.getElementById("p-" + fromHash)) go(fromHash);
+  else if (!canOpen((document.querySelector(".sidebar nav .tab.active") || {}).dataset?.tab)) go("home");
 }
 const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", support: "Support" };
+// CPA reviewer vs staff preparer. The reviewer sees every page. The preparer does the work (sources, reconciliation,
+// review queue proposals, counterparties, trace, reports, rulebooks) and does not see the governance and admin
+// pages. The server refuses those views for a preparer too (POL-02, governance.read); hiding them is not the control.
+const GOV_TABS = new Set(["agents", "controls", "evidence", "trust", "team"]);
+const isCPA = () => !!(S.me && S.me.role === "owner_reviewer");
+const canOpen = (tab) => isCPA() || !GOV_TABS.has(tab);
+function applyRole() {
+  document.body.classList.toggle("role-preparer", !isCPA());
+  document.querySelectorAll(".sidebar nav .tab").forEach((t) => {
+    if (t.dataset.tab !== "team") t.classList.toggle("hidden", !canOpen(t.dataset.tab));
+  });
+  // a group label with nothing visible under it is hidden as well
+  document.querySelectorAll(".sidebar nav .navlabel").forEach((lab) => {
+    let n = lab.nextElementSibling, any = false;
+    while (n && !n.classList.contains("navlabel")) { if (n.classList.contains("tab") && !n.classList.contains("hidden")) any = true; n = n.nextElementSibling; }
+    lab.classList.toggle("hidden", !any);
+  });
+  const chip = $("period-chip");
+  chip.title = isCPA() ? "Reporting period. Change it in Data & security → Client profile" : "Reporting period. A CPA reviewer sets it.";
+  chip.classList.toggle("ro", !isCPA());
+  const how = document.querySelector('#ov-how a[data-go="agents"]');
+  if (how) { how.dataset.go = isCPA() ? "agents" : "recon"; how.href = "#" + how.dataset.go; }
+  const decideStep = document.querySelector('#ov-how a[data-go="exceptions"] .tx');
+  if (decideStep) put(decideStep, el("b", {}, isCPA() ? "You decide the problems" : "You propose resolutions"),
+    el("span", {}, isCPA() ? "Approve, reject or return each flagged item." : "A CPA reviewer then approves, rejects or returns each one."),
+    el("em", { class: "who you" }, "YOU"));
+  const active = document.querySelector(".sidebar nav .tab.active");
+  if (active && !canOpen(active.dataset.tab)) go("home");
+}
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
@@ -240,6 +271,9 @@ const KPI_ICON = {
   review: "M3 13h5l2 3h4l2-3h5M5.5 5h13l2.5 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z",
   variance: "M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8h14M8 21h8",
   unexplained: "M12 3l9 16H3zM12 10v4M12 17h.01",
+  propose: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
+  returned: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  waiting: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
 };
 function kpiIcon(name) {
   return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" },
@@ -411,7 +445,7 @@ async function renderOverview() {
     el("div", { class: "ovh-l" },
       el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
       el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
+      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).concat(isCPA() ? [] : ["Your work as staff preparer"]).join(" · "))),
     el("div", { class: "ovh-r" },
       el("span", { class: "next-k" }, "Next step"),
       el("div", { class: "next-btns" },
@@ -424,7 +458,7 @@ async function renderOverview() {
     d.style.width = `${decided / t * 100}%`; o.style.width = `${st.open_exceptions / t * 100}%`; if (decided) pt.append(d); if (st.open_exceptions) pt.append(o);
     return el("div", { class: "prog" }, pt, el("div", { class: "pl" }, el("span", {}, el("b", {}, String(decided)), " decided"), el("span", {}, el("b", {}, String(st.open_exceptions)), " open"))); };
   const unx = r ? r.unexplained_variance_cents : null;
-  put("ov-kpis",
+  if (!isCPA()) prepKpis(r, st, nSrc); else put("ov-kpis",
     kpiCard({ icon: "matched", label: "Matched automatically", tone: r ? "good" : "", cls: "kw-hero", link: "recon", linkLabel: "Open Reconciliation",
       value: r ? counter("k-m", r.matches.length, String) : "–", viz: r ? ring(pct / 100, "ok") : null,
       sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "kt-n" }, `${pct}%`), `of ${bankLines} bank transactions`) : "no run yet" }),
@@ -450,6 +484,29 @@ async function renderOverview() {
   renderCaseCards(r && S.run.id === st.last_run ? r : null);
   $("ov-how").classList.toggle("hidden", !!st.uploads);  // onboarding guide until the first file is in
   await loadAgents();
+}
+// Staff preparer: the same tiles, counting their own work. Read from the run already loaded; nothing invented.
+function prepKpis(r, st, nSrc) {
+  const cur = r && S.run.id === st.last_run, xs = cur ? r.exceptions : [];
+  const toPropose = xs.filter((x) => x.status === "OPEN" && !x.proposal_note).length;
+  const returned = xs.filter((x) => x.status === "RETURNED").length;
+  const waiting = xs.filter((x) => x.status === "OPEN" && x.proposal_note).length;
+  const toReturned = () => { S.excFilter = "returned"; S.excSeen = new Set(); go("exceptions"); renderExceptions(); };
+  const card = (o) => { const c = kpiCard(o); if (o.onGo) { const b = c.querySelector(".kw-go"); if (b) b.onclick = o.onGo; } return c; };
+  put("ov-kpis",
+    card({ icon: "propose", label: "To propose", tone: cur ? (toPropose ? "amb" : "good") : "", cls: "kw-hero", link: "exceptions", linkLabel: "Open the review queue",
+      value: cur ? counter("p-todo", toPropose, String) : "–",
+      sub: cur ? (toPropose ? "items waiting for your proposed resolution" : "every open item has your proposal") : "no run yet" }),
+    card({ icon: "returned", label: "Returned to me", tone: cur ? (returned ? "bad" : "good") : "", link: "exceptions", linkLabel: "Show items returned to me", onGo: toReturned,
+      value: cur ? counter("p-ret", returned, String) : "–",
+      sub: cur ? (returned ? "a CPA reviewer sent these back with a note" : "nothing sent back") : "" }),
+    card({ icon: "waiting", label: "Waiting for a CPA reviewer", tone: cur ? "" : "", link: "exceptions", linkLabel: "Open the review queue",
+      value: cur ? counter("p-wait", waiting, String) : "–",
+      sub: cur ? `${xs.length - xs.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length} of ${xs.length} decided` : "" }),
+    card({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "", link: "import", linkLabel: "Open Sources",
+      value: el("span", {}, counter("k-src", nSrc, String), el("small", {}, ` / ${SOURCE_KINDS.length}`)),
+      sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
+      extra: el("div", { class: "segs lg", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }));
 }
 // Exceptions grouped by what the client sees. Every case is a link to its detail in the review queue.
 const CASE_ORDER = ["INCOMPLETE_SOURCE", "UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
@@ -731,6 +788,7 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
   $("side-toggle").onclick = () => { on = !on; hideTip(); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
 $("period-chip").onclick = () => {
+  if (!isCPA()) return;
   go("trust"); const d = $("ov-profile");
   setTimeout(() => { d.scrollIntoView({ behavior: REDUCE ? "auto" : "smooth", block: "center" }); $("pf-period").focus({ preventScroll: true }); }, 120);
 };
@@ -1125,7 +1183,10 @@ function renderDocs(docs) {
 }
 
 // ---------------- start here / trial home ----------------
-function go(tab) { document.querySelector(`[data-tab="${tab}"]`).click(); }
+function go(tab) {
+  if (!canOpen(tab)) tab = tab === "agents" ? "recon" : "home";   // a preparer never lands on a reviewer page
+  document.querySelector(`[data-tab="${tab}"]`).click();
+}
 window.addEventListener("popstate", () => {  // browser Back / Forward
   const h = location.hash.slice(1) || "home";
   if (h === "ask") return openAsk();
@@ -1294,7 +1355,10 @@ function renderExceptions() {
   const all = S.run.result.exceptions, isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
   const nOpen = all.filter(isOpen).length;
   const typeOf = (x) => x.client_status || "APPROVAL_REQUIRED";
-  const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x));
+  if (S.excFilter === "returned" && isCPA()) S.excFilter = "open";
+  const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "returned" ? x.status === "RETURNED" || S.excSeen.has(x.id)
+    : S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x));
+  const nRet = all.filter((x) => x.status === "RETURNED").length;
   const shown = all.filter((x) => inStatus(x) && (S.excType === "all" || typeOf(x) === S.excType));
   const chip = (k, label, n) => el("button", { class: "pl-chip" + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
     onclick: () => { S.excFilter = k; S.excSeen = new Set(); renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
@@ -1302,11 +1366,13 @@ function renderExceptions() {
   const types = [...new Set(all.map(typeOf))];
   const tchip = (k, label, n) => el("button", { class: "pl-chip" + (S.excType === k ? " on" : ""), "aria-pressed": String(S.excType === k),
     "data-type": k, onclick: () => { S.excType = S.excType === k ? "all" : k; renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
-  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length),
+  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), isCPA() ? null : chip("returned", "Returned to me", nRet),
+    chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length),
     types.length > 1 ? [el("span", { class: "exc-sep", "aria-hidden": "true" }),   // el() flattens one level only
       ...types.map((k) => [k, all.filter((x) => inStatus(x) && typeOf(x) === k).length])
         .filter(([k, n]) => n > 0 || S.excType === k)            // nothing of that type in this view: no chip
         .map(([k, n]) => tchip(k, CASE_STATUS[k] || nice(k), n))] : null);
+  if (!shown.length && S.excFilter === "returned") return put("exc-list", bar, empty("Nothing returned to you", "When a CPA reviewer sends an item back, it appears here with their note."));
   if (!shown.length) return put("exc-list", bar, S.excFilter === "open"
     ? el("div", { class: "empty" }, el("b", {}, "Every item has a decision"), el("span", {}, "This period is ready to report."),
         el("button", { class: "primary mt10", onclick: () => go("reports") }, "Download the reports →"))
@@ -1395,7 +1461,7 @@ function renderControls() {
 }
 // ---------------- TrustOps proof: ALLOW / ESCALATE / DENY / DENY, read from the signed audit trail ----------------
 async function renderProof() {
-  if (!S.ws) return;
+  if (!S.ws || !isCPA()) return;
   let p; try { p = await api(W("/trustops/proof")); } catch (e) { return put("proof", el("div", { class: "msg err" }, e.message)); }
   const isPrep = S.me.role === "preparer";
   const firstOpen = S.run && S.run.result.exceptions.find((x) => x.status === "OPEN" || x.status === "RETURNED");
@@ -1404,7 +1470,9 @@ async function renderProof() {
       try { await api(W(`/runs/${S.run.id}/exceptions/${firstOpen.id}/decisions`), { method: "POST", json: { decision: "ACCEPT", note: "" } }); }
       catch (e) { toast(denyText(e, "ACCEPT"), "bad"); }
       renderProof(); renderEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
-    if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin ? "Switch “Acting as” to Staff Preparer to try it." : "Sign in as a staff preparer to try it.");
+    if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin
+      ? "To see it: switch “Acting as” to Staff Preparer, then click Approve on a review item. The refusal appears here."
+      : "To see it: sign in as a staff preparer, then click Approve on a review item. The refusal appears here.");
     if (c.key === "deny_cross_client") return el("button", { class: "danger", onclick: async () => {
       const q = "Show bank transactions for another client";
       try { const a = await api(W("/ask"), { method: "POST", json: { question: q } }); S.asks.push({ q, a, ws: S.ws }); renderAskLog(); } catch (_) { /* refusal is the point */ }
@@ -1461,7 +1529,7 @@ async function attempt(a) {
 
 // ---------------- evidence ----------------
 async function renderEvidence() {
-  if (!S.ws) return;
+  if (!S.ws || !isCPA()) return;
   const ev = await api(W("/evidence?limit=500"));  // newest 500 on screen; the downloads hold the full trail
   const v = ev.verification;
   S.events = ev.events; S.verify = v.state; S.evTotal = ev.total || ev.events.length; S.evCounts = ev.decision_counts || null;
@@ -1519,6 +1587,7 @@ function renderResults() { progress(); }
 
 // ---------------- trust ----------------
 async function renderTrust() {
+  if (!isCPA()) return;
   const t = await api("/v1/trust");
   put("trust", el("div", { class: "grid two" },
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Data boundary"), el("ul", { class: "plain" },
@@ -1813,12 +1882,16 @@ function renderReports() {
       link(W(`/runs/${S.run.id}/review-pack.json`), "Signed review pack (JSON)", { onclick: markExported }),
       el("a", { class: "linkbtn", href: `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}`,
         target: "_blank", rel: "noopener", onclick: markExported }, "Printable review pack")]],
-    governance: ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]};
+    governance: isCPA() ? ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]
+      : ["The whole signed audit trail is downloaded by a CPA reviewer.", []]};
   put("rep-cards", cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
     el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
     el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
       ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
     el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))));
+  const openN = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
+  put("rep-draft", !isCPA() && openN ? el("div", { class: "msg rep-draft" }, el("b", {}, "Draft. "),
+    `${openN} review item${openN === 1 ? "" : "s"} still need${openN === 1 ? "s" : ""} a CPA reviewer's decision, so these reports are not final yet.`) : null);
   put("rep-preview", el("div", { class: "muted" }, "Choose Preview on either report. Generating a report is itself recorded in the audit trail."));
   $("rep-prev-title").textContent = "Preview";
 }

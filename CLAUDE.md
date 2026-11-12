@@ -52,6 +52,15 @@ Diana review 06/11: Ask LedgerSight is a floating button bottom-right; GET /audi
 whole signed audit trail (button on the Audit trail tab). NOT built here (infra/ops): C10 HTTPS domain + DNS, tenant
 URLs, sandbox pipeline, production URL, email access.
 
+## Roles: CPA reviewer vs staff preparer (2026-11-12, tests in tests/test_roles.py)
+CPA reviewer (owner_reviewer) sees every page and holds `governance.read`. Staff preparer sees Overview ("My work":
+to propose / returned to me / waiting for a CPA reviewer), Sources, Reconciliation, Review queue (+ "Returned to me"),
+Counterparties, Trace, Reports (draft note while items are open; no whole-audit-trail download) and Rulebooks.
+Agents, Guardrails, Audit trail, Data & security and People are hidden AND refused on the server (POL-02,
+governance.read): /evidence, /trustops/proof, /audit-trail.*, /evidence/tamper-check, /actions/attempt, /v1/trust.
+/agents stays open (the Reconciliation workflow card). Approve/Reject/Return stay visible to the preparer on purpose
+(live POL-06 refusal in the demo).
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.

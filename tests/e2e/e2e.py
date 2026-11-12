@@ -312,6 +312,28 @@ with sync_playwright() as pw:
         return "Preparer: own proposal DB06 → Approve/Reject/Return each refused by maker-checker in their own words; another case → 'Only a CPA reviewer can reject'"
     check("Maker-checker (preparer cannot approve own proposal)", "Acting as Staff Preparer → Propose → Approve", t_maker_checker)
 
+    def t_preparer_view():
+        # 2026-11-12: the staff preparer sees their own work; governance and admin pages are the CPA reviewer's.
+        vis = lambda: p.evaluate("[...document.querySelectorAll('.sidebar nav .tab')].filter(t => !t.classList.contains('hidden')).map(t => t.dataset.tab)")
+        tabs = vis()
+        assert tabs == ["home", "import", "recon", "exceptions", "parties", "trace", "reports", "rules"], tabs
+        bad = []
+        on_resp = lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None
+        p.on("response", on_resp)
+        for h in ("evidence", "controls", "trust", "agents"):
+            p.evaluate(f"go('{h}')"); p.wait_for_timeout(300)
+            now = p.evaluate("document.querySelector('.sidebar nav .tab.active').dataset.tab")
+            assert now == ("recon" if h == "agents" else "home"), (h, now)
+        tab(p, "home"); p.wait_for_timeout(900)
+        kpis = p.inner_text("#ov-kpis")
+        assert "To propose" in kpis and "Returned to me" in kpis and "Waiting for a CPA reviewer" in kpis and "Matched automatically" not in kpis, kpis
+        tab(p, "reports"); p.wait_for_timeout(700)
+        assert "Draft." in p.inner_text("#rep-draft") and p.locator("#rep-cards a[href*='audit-trail']").count() == 0
+        p.remove_listener("response", on_resp)
+        assert not bad, bad
+        return f"preparer sees {len(tabs)} pages; governance links land on Overview/Reconciliation; 'My work' tiles; draft note; 0 failed requests"
+    check("Staff preparer view", "Acting as Staff Preparer: sidebar, page guard, Overview, Reports", t_preparer_view)
+
     def t_decisions():
         p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200); tab(p, "exceptions")
         exc("DB06").get_by_role("button", name="Approve").click(); p.wait_for_timeout(700)
