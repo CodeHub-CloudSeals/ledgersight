@@ -2469,3 +2469,72 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
   .wf .pnode.s-done:not(:last-child)::after,.wf .pnode.s-escalated:not(:last-child)::after{background:var(--accent)}
   .wf .pnum{font-size:26px}
 }
+
+/* ============ Login v8 (2026-11-12): the app's own design language ============
+   Same palette as the app (light): soft off-white page, a powder-blue brand panel like the sidebar, white cards,
+   navy accent. Left: brand, headline and the three steps of the journey as white rows on a small timeline (like the
+   Agent workflow card). Right: one white card with 46px fields, the navy pill button and Google sign-in. No stock
+   illustration, no animated gradient border, no card tilt. Stays light in dark mode (as before). */
+#login.login{--lg-page:#F6F8FB;--lg-side:#DFEBF6;--lg-card:#FFFFFF;--lg-ink:#172B4D;--lg-muted:#56647C;--lg-inset:#EEF4FA;
+  --lg-shadow:0 1px 2px rgba(23,43,77,.06),0 18px 40px -24px rgba(23,43,77,.28);
+  display:grid;grid-template-columns:minmax(0,1.1fr) minmax(380px,1fr);gap:16px;padding:16px;min-height:100vh;background:var(--lg-page);color:var(--lg-ink)}
+#login.login.hidden{display:none}
+#login .lg-art{position:relative;overflow:hidden;border-radius:28px;background:var(--lg-side);display:flex;align-items:center;min-height:0}
+#login .lg-art::before,#login .lg-art::after{content:"";position:absolute;border-radius:50%;pointer-events:none}
+#login .lg-art::before{width:560px;height:560px;right:-180px;bottom:-220px;background:radial-gradient(circle,rgba(255,255,255,.75),rgba(255,255,255,0) 68%)}
+#login .lg-art::after{width:380px;height:380px;left:-140px;top:-160px;background:radial-gradient(circle,rgba(53,106,230,.10),rgba(53,106,230,0) 70%)}
+#login .lg-bg,#login .lg-sparks{display:none}
+#login .lg-hero{position:relative;z-index:1;width:100%;max-width:640px;padding:48px clamp(32px,5vw,72px);display:flex;flex-direction:column;gap:30px}
+#login .lv-brand{display:flex;align-items:center;gap:12px;color:var(--lg-ink);font-weight:700;font-size:20px;letter-spacing:-.01em}
+#login .lv-brand img{width:40px;height:40px;animation:none}
+#login .lv-brand em{font-style:normal;font-weight:500;font-size:13px;color:var(--lg-muted);margin-left:2px}
+#login .lg-hero .eyebrow{color:#356AE6;font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+#login .lg-hero .login-copy h2{font-size:clamp(32px,3vw,46px);line-height:1.08;letter-spacing:-.025em;font-weight:700;color:var(--lg-ink);margin:12px 0 14px}
+#login .lg-hero .login-copy h2 .ln{display:block;width:fit-content}
+#login .lg-hero .login-copy h2 .ln-accent{color:#356AE6}
+#login .lg-hero .login-copy p{font-size:16px;line-height:1.55;color:var(--lg-muted);max-width:46ch;margin:0}
+/* the journey: white rows on a thin timeline */
+#login .lg-steps{position:relative;list-style:none;margin:0;padding:0;display:grid;gap:12px;max-width:500px}
+#login .lg-steps::before{content:"";position:absolute;left:39px;top:38px;bottom:38px;width:2px;border-radius:2px;background:#B9CDEA}
+#login .lg-steps li{position:relative;display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;align-items:center;padding:14px 18px;border-radius:20px;
+  background:var(--lg-card);box-shadow:var(--lg-shadow);transition:transform .3s cubic-bezier(.22,1,.36,1),box-shadow .3s}
+#login .lg-steps li:hover{transform:translateX(4px)}
+#login .lgs-ico{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:#EDF3FF;color:#356AE6}
+#login .lg-steps b{display:block;font-size:15px;font-weight:700;color:var(--lg-ink)}
+#login .lg-steps li span:not(.lgs-ico){display:block;font-size:13.5px;line-height:1.45;color:var(--lg-muted);margin-top:2px}
+/* sign-in side */
+#login .lg-side{position:relative;display:flex;align-items:center;justify-content:center;padding:32px 16px;background:none;border:0;box-shadow:none;
+  backdrop-filter:none;-webkit-backdrop-filter:none}
+#login .lg-side::before{content:none}
+#login .lg-side .lg-col{width:100%;max-width:420px;margin:0;padding:0;display:flex;flex-direction:column;gap:18px}
+#login .lg-mbrand{display:none}
+#login .login-card{position:relative;max-width:none;margin:0;padding:36px 36px 26px;border:0;border-radius:24px;background:var(--lg-card);box-shadow:var(--lg-shadow);transform:none!important}
+#login .login-card::before,#login .login-card::after{content:none!important}
+#login .login-card h1{font-size:28px;font-weight:700;letter-spacing:-.02em;color:var(--lg-ink);margin:0 0 6px;opacity:1}
+#login .login-card #lg-hint{font-size:14.5px;color:var(--lg-muted);margin:0 0 22px}
+#login .login-card label{display:block;margin:0 0 14px;font-size:13px;font-weight:650;color:var(--lg-ink)}
+#login .login-card input{display:block;width:100%;height:46px;margin-top:7px;padding:0 16px;border-radius:12px;border:1.5px solid transparent;background:var(--lg-inset);
+  color:var(--lg-ink);font:inherit;font-size:15px;box-shadow:none;transition:border-color .2s,box-shadow .2s,background .2s}
+#login .login-card input:hover{border-color:#C9D9FB}
+#login .login-card input:focus{outline:0;background:#fff;border-color:#356AE6;box-shadow:0 0 0 4px rgba(53,106,230,.14)}
+#login .lg-cta{height:48px;margin-top:6px;border-radius:999px;font-size:15px;font-weight:700;gap:10px}
+#login .lg-cta svg{transition:transform .25s cubic-bezier(.34,1.56,.64,1)}
+#login .lg-cta:hover svg{transform:translateX(4px)}
+#login .lg-cta::after{content:none}
+#login .lg-divider{margin:18px 0 14px}
+#login .lg-google #g_id_button{display:flex;justify-content:center}
+#login .lg-trust{display:flex;align-items:center;gap:8px;margin-top:20px;padding:10px 14px;border:0;border-radius:999px;background:var(--lg-inset);
+  font-size:13px;color:var(--lg-muted)}
+#login .lg-trust svg{color:#16A36A;flex:none}
+#login .login-foot{text-align:center;font-size:12.5px;color:var(--lg-muted)}
+/* tablet / phone: the brand panel becomes a short header above the card */
+@media (max-width:980px){
+  #login.login{grid-template-columns:1fr;grid-template-rows:auto 1fr;padding:10px;gap:10px}
+  #login .lg-art{display:flex;border-radius:22px}
+  #login .lg-hero{padding:24px 22px;gap:14px}
+  #login .lg-steps,#login .lg-hero .login-copy p,#login .lg-hero .eyebrow{display:none}
+  #login .lg-hero .login-copy h2{font-size:28px;margin:8px 0 0}
+  #login .lg-side{align-items:flex-start;padding:8px 0 24px}
+  #login .login-card{padding:28px 22px 22px}
+}
+@media (max-height:760px) and (min-width:981px){#login .lg-steps li span:not(.lgs-ico){display:none}#login .lg-hero{gap:22px}}

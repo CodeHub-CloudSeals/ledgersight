@@ -706,10 +706,18 @@ with sync_playwright() as pw:
     ctx3 = br.new_context(viewport={"width": 1280, "height": 900}, bypass_csp=True); r = ctx3.new_page(); wire(r)
     def t_login():
         r.goto(LOGIN_BASE + "/"); r.wait_for_selector("#login:not(.hidden)"); shot(r, "16-login")
+        # 2026-11-12 login v8: the app's own design language (powder-blue brand panel, white card, three journey
+        # steps; no stock illustration, no tilting card)
+        r.wait_for_timeout(1200)
+        lk = r.evaluate("""() => { const cs = (s) => getComputedStyle(document.querySelector(s));
+            return [cs('#login .lg-art').backgroundColor, cs('#lg-card').backgroundColor, document.querySelectorAll('#login .lg-steps li').length,
+                    cs('#login .lg-art').backgroundImage, document.querySelectorAll('#login .lg-bg, #login .lg-sparks').length]; }""")
+        assert lk[0] == "rgb(223, 235, 246)" and lk[1] == "rgb(255, 255, 255)" and lk[2] == 3 and lk[3] == "none" and lk[4] == 0, lk
+        r.hover("#lg-card"); r.mouse.move(700, 300); r.mouse.move(720, 320); assert r.evaluate("document.querySelector('#lg-card').style.transform") == "", "card tilts"
         r.fill("#lg-user", "presenter"); r.fill("#lg-pw", "wrong-password"); r.click("#lg-btn"); r.wait_for_timeout(700)
         assert r.inner_text("#lg-msg").strip(), "no error for wrong password"
         r.fill("#lg-pw", "E2e-Test-Password-42"); r.press("#lg-pw", "Enter"); r.wait_for_selector("#app:not(.hidden)")
-        return "wrong password shows error; correct password signs in"
+        return "app-style sign-in (powder-blue panel, white card, 3 steps); wrong password shows error; correct password signs in"
     check("Sign-in screen", "port 8092 login mode", t_login)
     def t_team():
         r.click('.tab[data-tab="team"]'); r.wait_for_timeout(500)

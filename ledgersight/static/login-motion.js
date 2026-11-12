@@ -1,4 +1,4 @@
-// Login page motion: spring entrances, word reveal, cursor spotlight + parallax, card tilt, live decision feed.
+// Login page motion: spring entrances and word reveal (2026-11-12: the card tilt was removed; the page follows the app's calm style).
 // Plain Web Animations API (the CSP allows only same-origin scripts). Honours prefers-reduced-motion.
 (function () {
   "use strict";
@@ -103,13 +103,6 @@
       });
     });
     root.addEventListener("pointerleave", () => { if (spot) spot.style.opacity = "0"; layers.forEach((l) => { l.style.translate = "0 0"; }); });
-    const card = document.getElementById("lg-card");
-    card && card.addEventListener("pointermove", (ev) => {
-      const r = card.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width - 0.5, y = (ev.clientY - r.top) / r.height - 0.5;
-      card.style.transform = `perspective(900px) rotateX(${(-y * 3).toFixed(2)}deg) rotateY(${(x * 3).toFixed(2)}deg)`;
-      card.style.setProperty("--gx", `${(x + 0.5) * 100}%`); card.style.setProperty("--gy", `${(y + 0.5) * 100}%`);
-    });
-    card && card.addEventListener("pointerleave", () => { card.style.transform = ""; });
   }
 
   // The login screen is revealed by avocet.js removing "hidden"; start the show the moment it appears.
