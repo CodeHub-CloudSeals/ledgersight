@@ -1983,3 +1983,15 @@ body.fab-away .ask-fab:not(.on){transform:translateY(120%) scale(.9);opacity:0;p
    trackpad, touch and keyboard; only the bar itself is hidden. */
 html,html *{scrollbar-width:none!important}
 html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
+/* One button family: Approve / Reject / Clear share the pill shape, size, weight and 1.5px border of Propose and Return;
+   colour carries the meaning (green = approve, red = reject, blue gradient = propose, ink outline = return). */
+.ok,.no,.danger{border-radius:999px;font-weight:650;letter-spacing:.005em;font-size:13.5px}
+.ok,button.ok{background:linear-gradient(135deg,#0E6B44 0%,#117A4E 55%,#15803D 100%);border:0;color:#fff;padding:11px 22px;
+  box-shadow:0 12px 24px -14px rgba(17,122,78,.75);transition:filter .2s,box-shadow .2s,transform .15s}
+.ok:hover,button.ok:hover{background:linear-gradient(135deg,#0E6B44 0%,#117A4E 55%,#15803D 100%);filter:brightness(1.08);box-shadow:0 14px 28px -14px rgba(17,122,78,.85)}
+:root[data-theme="dark"] .ok,:root[data-theme="dark"] button.ok{background:linear-gradient(135deg,#117A4E 0%,#15803D 100%);border:0}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{background:linear-gradient(135deg,#117A4E 0%,#15803D 100%);border:0}}
+.no,.danger{background:transparent;border:1.5px solid var(--bad);color:var(--bad);padding:10px 20px}
+.no:hover,.danger:hover{background:var(--bad-solid);border-color:var(--bad-solid);color:#fff}
+.danger.solid{background:var(--bad-solid);border-color:var(--bad-solid);color:#fff}
+.ok:disabled,.no:disabled,.danger:disabled{filter:grayscale(.4) opacity(.55);box-shadow:none;cursor:not-allowed}

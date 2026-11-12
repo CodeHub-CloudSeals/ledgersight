@@ -205,6 +205,17 @@ with sync_playwright() as pw:
         return f"KPIs from run; sidebar review count {nr}; ESCALATE {esc} and recent activity are current"
     check("Overview KPIs + review count badge", "Overview after run", t_overview)
 
+    def t_decision_buttons():
+        # Regression (2026-11-12): Reject/Approve kept the old square style next to the pill Propose/Return buttons.
+        tab(p, "exceptions")
+        st = p.evaluate("""() => { const row = [...document.querySelectorAll('.xa-row')].find(r => r.offsetParent); if (!row) return null;
+            return [...row.querySelectorAll('button:not(.linkbtn)')].map(b => [b.textContent, Math.round(b.getBoundingClientRect().height), getComputedStyle(b).borderTopLeftRadius]); }""")
+        if not st: return "no open case on screen; nothing to check"
+        assert len({h for _, h, _ in st}) == 1 and {r for _, _, r in st} == {"999px"}, st
+        return f"{len(st)} decision buttons, one height ({st[0][1]}px), all pill-shaped: " + ", ".join(t for t, _, _ in st)
+    check("Decision buttons share one style", "Review queue: compare height and corner radius", t_decision_buttons)
+
+
     # ---------- review queue: maker-checker ----------
     def exc(id_):
         return p.locator("#exc-list .exc", has_text=id_).first
@@ -451,6 +462,7 @@ with sync_playwright() as pw:
         n = p.evaluate("(() => { const e = document.getElementById('events'); if (e.scrollHeight <= e.clientHeight) return -1; e.scrollTop = 200; return e.scrollTop; })()")
         assert n != 0, "audit trail list no longer scrolls"
         return "no scrollbar on 7 pages; audit trail list still scrolls"
+
     check("No visible scrollbars", "measure scrollbar space on every scrolling box", t_no_scrollbars)
 
     check("Reconciliation number tiles line up", "measure tile values per row at 1440/1280/390px", t_tiles_aligned)
