@@ -142,6 +142,7 @@ async function boot() {
   await authConfig;
   try { S.me = await api("/v1/me"); } catch (_) { showLogin(); return; }
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  applyTrustOpsNav();
   $("logout").classList.toggle("hidden", !!S.noLogin);
   $("me-name").parentElement.classList.toggle("hidden", !!S.noLogin);
   $("act-as-wrap").classList.toggle("hidden", !S.noLogin);
@@ -1520,6 +1521,28 @@ function proofButton(x, out, note) {
   }, "Uploading…");
   return [btn, input];
 }
+// When TrustOps is connected, governance (rules, guardrails, agents, audit trail, approvals) lives in TrustOps.
+function applyTrustOpsNav() {
+  const t = S.me && S.me.trustops;
+  if (!t || !t.connected) return;
+  ["agents", "rules", "controls", "evidence"].forEach((k) => { const b = document.querySelector(`#tabs .tab[data-tab="${k}"]`); if (b) { b.classList.add("hidden"); b.style.display = "none"; } });
+  const last = document.querySelector('#tabs .tab[data-tab="evidence"]');
+  if (last && !document.getElementById("trustops-link") && t.console_url) {
+    const a = el("a", { id: "trustops-link", class: "tab", href: t.console_url, target: "_blank", rel: "noopener" },
+      el("span", { class: "ico" }, "⛨"), "TrustOps ↗");
+    last.after(a);
+  }
+}
+// TrustOps approval status for one review item (approval happens in TrustOps, never here)
+function tropsStatus(x, tops) {
+  const tr = x.trustops_review || {};
+  const check = el("button", { class: "secondary", onclick: async () => {
+    try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); } catch (e) { toast(e.message, "bad"); } } }, "Check now");
+  const open = tops.approvals_url ? el("a", { class: "secondary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Open TrustOps ↗") : null;
+  if (tr.status === "PENDING") return [el("span", { class: "tro-pill" }, "⏳ Waiting for approval in TrustOps"), open, check];
+  if (tr.status === "NOT_SENT") return [el("span", { class: "tro-pill bad" }, `Not sent to TrustOps: ${tr.reason || "unavailable"}`), check];
+  return [el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes"), check];
+}
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
   if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
@@ -1564,6 +1587,7 @@ function renderExceptions() {
       catch (e) { fail(e); }
     };
     const actionable = x.status === "OPEN" || x.status === "RETURNED";
+    const tops = S.run && S.run.trustops && S.run.trustops.connected ? S.run.trustops : null;
     const t = x.trustops;
     const rec = (id) => recCard(id);
     const refs = x.evidence_refs || [];
@@ -1606,12 +1630,15 @@ function renderExceptions() {
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
             proofButton(x, out, note),
+            // With TrustOps connected, approval happens only in TrustOps; LedgerSight shows the status.
+            tops ? tropsStatus(x, tops)
             // Decisions are the CPA reviewer's: a staff preparer only proposes (the server refuses a preparer decision anyway, POL-02/POL-06).
-            reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
+            : reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
               el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
               el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
               : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
-          el("div", { class: "xa-hint" }, reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
+          el("div", { class: "xa-hint" }, tops ? "Approved or rejected by an approver in TrustOps. The result appears here automatically."
+            : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer approves, rejects or returns it."), out)
         : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
             (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")));
@@ -2171,6 +2198,15 @@ async function renderRules() {
 
 // ---------------- team ----------------
 async function renderTeam() {
+  const tops = S.me && S.me.trustops;
+  if (tops && tops.connected) {
+    put("users", el("div", { class: "card" }, el("div", { class: "card-title" }, "People are managed in TrustOps"),
+      el("p", { class: "muted" }, "Add people, choose Preparer or Reviewer for LedgerSight, or remove access in TrustOps > Team & access. They sign in here with Google using the same work email."),
+      tops.console_url ? el("a", { class: "primary btnlink", href: tops.console_url + "#/governance-team", target: "_blank", rel: "noopener" }, "Open Team & access in TrustOps ↗") : null));
+    const add = document.getElementById("inv-btn"); const card = add && add.closest(".card"); if (card) card.style.display = "none";
+    const sub = document.querySelector("#p-team .page-head .sub"); if (sub) sub.textContent = "Who can use LedgerSight is set in TrustOps. Everyone signs in with Google using their work email.";
+    return;
+  }
   put("users-demo-note", S.noLogin ? el("div", { class: "callout users-note" }, el("b", {}, "Local demo: "),
     "this copy has no sign-in screen (switch people with “Acting as”). Users you add here sign in on the hosted version, with their password and authenticator code.") : null);
   put("inv-ws", S.wsList.map((w) => el("label", { class: "ws-chip" }, el("input", { type: "checkbox", value: w.id, checked: w.id === S.ws }), el("span", {}, proper(w.name)))));

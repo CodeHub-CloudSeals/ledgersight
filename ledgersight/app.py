@@ -11,7 +11,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -29,6 +29,7 @@ from .auth import REQUIRE_MFA, AuthStore, Invite, User, now, otpauth_uri
 from .core.ingest import IngestError, MAX_BYTES
 from .core.reports import FORMATS as REPORT_TYPES
 from .service import FIXTURES, WORKSPACES, Denied, Service
+from . import trustops_client as trustops_api
 
 BASE = Path(__file__).resolve().parent
 COOKIE = "ls_session"
@@ -147,6 +148,10 @@ async def headers(request: Request, call_next):
     return resp
 
 
+# TrustOps application roles -> LedgerSight roles
+TRUSTOPS_ROLES = {"preparer": "preparer", "reviewer": "owner_reviewer"}
+
+
 # ---- local demo mode: no login screen ------------------------------------------
 # AVOCET_NO_LOGIN=1 skips sign-in for a presenter's laptop. It is honoured only when the local-demo
 # settings are also on (MFA off, insecure cookie), so a hosted deployment cannot be opened by accident.
@@ -172,6 +177,13 @@ def current_user(request: Request):
     u = demo_user(request.cookies.get(DEMO_COOKIE, "reviewer")) if NO_LOGIN else auth.resolve(request.cookies.get(COOKIE))
     if not u:
         raise HTTPException(401, "sign in required")
+    if not NO_LOGIN and trustops_api.configured() and "@" in u.user_id:
+        role = trustops_api.app_access(u.user_id)      # re-checked at most once a minute
+        if role != trustops_api.UNREACHABLE:
+            if role not in TRUSTOPS_ROLES:
+                auth.logout(request.cookies.get(COOKIE, ""))
+                raise HTTPException(401, "Your LedgerSight access was removed in TrustOps.")
+            u.role = TRUSTOPS_ROLES[role]
     # CSRF: mutating calls must carry the custom header (cross-site forms cannot set it).
     if request.method in ("POST", "PUT", "DELETE") and request.headers.get("x-ledgersight") != "1":
         raise HTTPException(403, "missing request header")
@@ -316,6 +328,20 @@ def login_google(body: dict = Body(...)):
         raise HTTPException(401, "Google sign-in could not be verified")
     email = (claims.get("email") or "").lower()
     domain = claims.get("hd") or email.rsplit("@", 1)[-1]
+    if trustops_api.configured():
+        # People are managed in TrustOps (Team & access): it decides who may enter and with which role.
+        if not claims.get("email_verified"):
+            raise HTTPException(403, "Your Google account email is not verified.")
+        role = trustops_api.app_access(email, max_age=0)
+        if role == trustops_api.UNREACHABLE:
+            raise HTTPException(503, "Sign-in is paused: TrustOps could not be reached. Try again shortly.")
+        if role not in TRUSTOPS_ROLES:
+            raise HTTPException(403, "You don't have access to LedgerSight. Ask your administrator to give you access in TrustOps.")
+        tok = auth.trustops_login(email, claims.get("name") or email, set(WORKSPACES), TRUSTOPS_ROLES[role])
+        save_users()
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
+        return resp
     if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
         raise HTTPException(403, "Only the CloudSeals team can access this.")
     try:
@@ -338,7 +364,8 @@ def logout(request: Request):
 
 @app.get("/v1/me")
 def me(u=Depends(current_user)):
-    return {**u.public(), "support_contact": os.environ.get("AVOCET_SUPPORT_CONTACT", "your administrator")}
+    return {**u.public(), "support_contact": os.environ.get("AVOCET_SUPPORT_CONTACT", "your administrator"),
+            "trustops": {"connected": trustops_api.configured(), "console_url": trustops_api.console_link("")}}
 
 
 @app.get("/v1/users")
@@ -350,6 +377,8 @@ def users(u=Depends(current_user)):
 
 @app.post("/v1/invites")
 def create_invite(request: Request, body: dict = Body(...), u=Depends(current_user)):
+    if trustops_api.configured():
+        raise HTTPException(409, "People are managed in TrustOps > Team & access.")
     if u.role != "owner_reviewer":
         raise HTTPException(403, {"decision": "DENY", "reason_code": "ROLE_NOT_AUTHORISED"})
     ws = set(body.get("workspaces") or [])
@@ -379,6 +408,8 @@ def _managed_user(u, user_id):
 
 @app.post("/v1/users/{user_id}/revoke")
 def revoke(user_id: str, u=Depends(current_user)):
+    if trustops_api.configured():
+        raise HTTPException(409, "People are managed in TrustOps > Team & access.")
     _managed_user(u, user_id)
     auth.revoke(user_id)
     save_users()
@@ -480,6 +511,7 @@ def sample_file(wid: str, name: str, u=Depends(current_user)):
 def _run_view(r: dict) -> dict:
     """A run as the UI sees it. Stage status is recomputed so 'Complete' always reflects open cases."""
     out = {k: v for k, v in r.items() if k != "batch_key"}
+    out["trustops"] = {"connected": trustops_api.configured(), "approvals_url": trustops_api.console_link("#/approvals")}
     if r.get("workflow"):
         out["stages"] = svc._stages(r["workflow"], r["result"])
     return out
@@ -495,7 +527,19 @@ def get_run(wid: str, run_id: str, u=Depends(current_user)):
     w = handle(svc.gate, u, wid, "workspace.read", run_id=run_id)
     if run_id not in w.runs:
         raise HTTPException(404, "not found")
+    svc.sync_trustops(w, w.runs[run_id])
     return _run_view(w.runs[run_id])
+
+
+@app.get("/trustops/items/{ref:path}")
+def trustops_item(ref: str, x_trustops_key: str | None = Header(default=None)):
+    """TrustOps 'Load details' for an item it is asked to approve. Authenticated by the shared TrustOps key."""
+    if not trustops_api.valid_key(x_trustops_key):
+        raise HTTPException(401, "invalid key")
+    try:
+        return svc.trustops_item(ref)
+    except KeyError:
+        raise HTTPException(404, "not found")
 
 
 @app.get("/v1/workspaces/{wid}/trustops/proof")

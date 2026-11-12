@@ -2469,3 +2469,7 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
   .wf .pnode.s-done:not(:last-child)::after,.wf .pnode.s-escalated:not(:last-child)::after{background:var(--accent)}
   .wf .pnum{font-size:26px}
 }
+
+/* TrustOps approval status in the review queue */
+.tro-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;font-weight:650;font-size:13px;background:#fffaeb;color:#93370d}
+.tro-pill.bad{background:#fef3f2;color:#b42318}

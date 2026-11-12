@@ -1,0 +1,4 @@
+bill_id,vendor_alias,issue_date,amount,open_balance,currency,vendor_country
+IP-4412,VEND-INKWELL,2026-11-04,1185.50,1185.50,USD,US
+LS-318,VEND-LUMEN,2026-11-20,299.00,299.00,USD,US
+TVC-5521,VEND-THAMES,2026-11-19,4100.00,4100.00,GBP,UK
