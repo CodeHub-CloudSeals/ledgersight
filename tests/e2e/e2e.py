@@ -226,8 +226,17 @@ with sync_playwright() as pw:
         e.get_by_role("button", name="Propose resolution for reviewer").click(); p.wait_for_timeout(700)
         e = exc("DB06"); e.get_by_role("button", name="Approve").click(); p.wait_for_timeout(700)
         out = exc("DB06").inner_text(); assert "MAKER_CHECKER" in out or "maker-checker" in out.lower(), out[-300:]
+        assert "can't approve it yourself" in out, out[-300:]
         shot(p, "06-maker-checker")
-        return "Preparer proposed DB06, own approval refused: TrustOps DENY MAKER_CHECKER"
+        # 2026-11-12: each button gets its own refusal text (it used to say "approve" for Reject and Return too)
+        exc("DB06").get_by_role("button", name="Reject").click(); p.wait_for_timeout(700)
+        out = exc("DB06").inner_text(); assert "can't reject it yourself" in out and "approve it" not in out, out[-300:]
+        exc("DB06").get_by_role("button", name="Return to preparer").click(); p.wait_for_timeout(700)
+        out = exc("DB06").inner_text(); assert "Return to preparer is how a CPA reviewer" in out and "approve it" not in out, out[-300:]
+        other = p.locator("#exc-list .exc").filter(has_not_text="DB06").filter(has=p.get_by_role("button", name="Reject")).first
+        other.get_by_role("button", name="Reject").click(); p.wait_for_timeout(700)
+        out = other.inner_text(); assert "Only a CPA reviewer can reject" in out and "you proposed" not in out.lower(), out[-300:]
+        return "Preparer: own proposal DB06 → Approve/Reject/Return each refused by maker-checker in their own words; another case → 'Only a CPA reviewer can reject'"
     check("Maker-checker (preparer cannot approve own proposal)", "Acting as Staff Preparer → Propose → Approve", t_maker_checker)
 
     def t_decisions():

@@ -1220,14 +1220,23 @@ const FACT_LABEL = { invoice: "Invoice", customer: "Customer", ship_from_state: 
   paid_amount: "Amount paid", vendor_country: "Supplier country", vendor: "Supplier" };
 const INPUT_LABEL = { taxability: "Taxability in destination state", nexus_status: "Nexus status in destination state",
   dest_registration: "Seller registration in destination state", issue_date: "Effective (tax point) date" };
+// The refusal names the button that was pressed: one generic "approve" text for Approve, Reject and Return was wrong.
+const DECISION_VERB = { ACCEPT: "approve", REJECT: "reject", RETURN: "return" };
+const DENY_TITLE = { MAKER_CHECKER_SELF_APPROVAL: "Maker-checker", ROLE_NOT_AUTHORISED: "Role not authorised",
+  REQUIRED_ROLE_MISSING: "CPA reviewer required", AGENT_CANNOT_APPROVE: "Agents cannot decide" };
 const DENY_TEXT = {
-  MAKER_CHECKER_SELF_APPROVAL: "You proposed this resolution, so you cannot approve it yourself (maker-checker rule).",
-  ROLE_NOT_AUTHORISED: "Your role cannot decide review items. A CPA reviewer must decide.",
-  REQUIRED_ROLE_MISSING: "TrustOps escalated this item to a CPA reviewer.", AGENT_CANNOT_APPROVE: "Agents can never approve.",
+  MAKER_CHECKER_SELF_APPROVAL: (v) => v === "return"
+    ? "You proposed this resolution. Return to preparer is how a CPA reviewer sends work back to you, so you can't use it on your own proposal. A CPA reviewer who didn't propose it decides (maker-checker rule)."
+    : `You proposed this resolution, so you can't ${v} it yourself. A CPA reviewer who didn't propose it decides (maker-checker rule).`,
+  ROLE_NOT_AUTHORISED: (v) => `Only a CPA reviewer can ${v} review items. As a staff preparer you can propose a resolution for a reviewer instead.`,
+  REQUIRED_ROLE_MISSING: () => "TrustOps escalated this item to a CPA reviewer.",
+  AGENT_CANNOT_APPROVE: () => "Agents can never approve, reject or return review items.",
 };
-function denyText(e) {
+function denyText(e, decision) {
   const d = e.body && e.body.detail;
-  return d && d.reason_code ? `TrustOps DENY · ${nice(d.reason_code)} · ${d.policy_id || ""}. ${DENY_TEXT[d.reason_code] || ""} The refusal is recorded in the audit trail.` : e.message;
+  if (!(d && d.reason_code)) return e.message;
+  const v = DECISION_VERB[decision] || "decide", txt = DENY_TEXT[d.reason_code];
+  return `TrustOps DENY · ${DENY_TITLE[d.reason_code] || nice(d.reason_code)} · ${d.policy_id || ""}. ${txt ? txt(v) : ""} The refusal is recorded in the audit trail.`;
 }
 function govLine(t) {
   if (!t) return null;
@@ -1253,11 +1262,11 @@ function renderExceptions() {
   put("exc-list", bar, shown.map((x) => {
     const note = el("textarea", { rows: 2, placeholder: "Add a note (saved with your name in the audit trail)", "aria-label": "Review note" });
     const out = el("div", { class: "msg" });
-    const fail = (e) => { out.textContent = denyText(e); out.className = "msg err"; renderEvidence(); };
+    const fail = (e, d) => { out.textContent = denyText(e, d); out.className = "msg err"; renderEvidence(); };
     const act = (d) => async () => {
       try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/decisions`), { method: "POST", json: { decision: d, note: note.value } });
         Object.assign(x, res); S.excSeen.add(x.id); renderExceptions(); renderRun(); renderResults(); }
-      catch (e) { fail(e); }
+      catch (e) { fail(e, d); }
     };
     const propose = async () => {
       try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/proposals`), { method: "POST", json: { note: note.value } }); Object.assign(x, res); renderExceptions(); }
@@ -1340,7 +1349,7 @@ async function renderProof() {
   const tryBtn = (c) => {
     if (c.key === "deny_preparer_approval" && isPrep && firstOpen) return el("button", { class: "danger", onclick: async () => {
       try { await api(W(`/runs/${S.run.id}/exceptions/${firstOpen.id}/decisions`), { method: "POST", json: { decision: "ACCEPT", note: "" } }); }
-      catch (e) { toast(denyText(e), "bad"); }
+      catch (e) { toast(denyText(e, "ACCEPT"), "bad"); }
       renderProof(); renderEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
     if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin ? "Switch “Acting as” to Staff Preparer to try it." : "Sign in as a staff preparer to try it.");
     if (c.key === "deny_cross_client") return el("button", { class: "danger", onclick: async () => {
