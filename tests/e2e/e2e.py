@@ -340,6 +340,30 @@ with sync_playwright() as pw:
         return "DB06 ACCEPTED (trail: proposed → approved), DB04 REJECTED, DB10 RETURNED"
     check("Review decisions ACCEPT / REJECT / RETURN", "Acting as CPA Reviewer", t_decisions)
 
+    def t_notifications():
+        # 2026-11-12: the bell. The preparer's proposal notified the CPA reviewer; the reviewer's decisions notify
+        # the preparer. Opening the list marks it seen on the server.
+        p.click("#notif-btn"); p.wait_for_timeout(700)
+        cpa_txt = p.inner_text("#notif-panel")
+        assert "Staff Preparer proposed a resolution for case" in cpa_txt and "Vendor bill PK-3302 supports it" in cpa_txt, cpa_txt[:300]
+        p.keyboard.press("Escape"); p.wait_for_timeout(300)
+        assert p.is_hidden("#notif-panel") and p.is_hidden("#notif-count")
+        p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1500)
+        n = int(p.inner_text("#notif-count"))
+        assert n >= 3, n
+        p.click("#notif-btn"); p.wait_for_timeout(700)
+        prep_txt = p.inner_text("#notif-panel")
+        assert "CPA Reviewer approved case" in prep_txt and "CPA Reviewer rejected case" in prep_txt and "CPA Reviewer returned case" in prep_txt, prep_txt[:400]
+        assert "Duplicate confirmed with bank" in prep_txt
+        shot(p, "07c-notifications")
+        p.locator("#notif-panel .np-item").first.click(); p.wait_for_timeout(800)
+        assert p.evaluate("document.querySelector('#p-exceptions').classList.contains('active')") and p.is_hidden("#notif-panel")
+        p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200)
+        assert p.is_hidden("#notif-count"), "seen state not kept on the server"
+        p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200)
+        return f"CPA sees the preparer's proposal with its note; preparer gets {n} decisions (approved/rejected/returned); click opens the case; seen kept"
+    check("Notifications (preparer ↔ CPA reviewer)", "bell: proposal → reviewer, decisions → preparer, seen on server", t_notifications)
+
     def t_queue_types():
         # 2026-11-12: case-type chips narrow the queue; clicking the chip again shows everything again
         tab(p, "exceptions"); p.click(".exc-filter .pl-chip:has-text('All')"); p.wait_for_timeout(300)

@@ -61,6 +61,12 @@ governance.read): /evidence, /trustops/proof, /audit-trail.*, /evidence/tamper-c
 /agents stays open (the Reconciliation workflow card). Approve/Reject/Return are shown to the CPA reviewer only
 (user decision 2026-11-12); the preparer proposes. The server still refuses a preparer decision (POL-06/POL-02).
 
+## Notifications (2026-11-12, tests in tests/test_notifications.py)
+Bell in the top bar. A proposal (exception.proposed) notifies CPA reviewers; approve/reject/return notify staff
+preparers; your own actions never notify you. Read from the signed evidence log (GET /notifications), polled every
+10 s while visible + on focus; a new item refreshes the run so both people's review queues stay in step. "Seen" is
+per person per book on the server (POST /notifications/seen, stored in the book state as notif_seen).
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.

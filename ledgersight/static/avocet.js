@@ -187,6 +187,7 @@ async function switchWs() {
   if (S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
   fillProfile(w);
   await progress();
+  S.notif = null; closeNotif(); await loadNotifications(true);   // a new client or person: start from that book's list
 }
 
 // ---------------- progress: stepper + overview ----------------
@@ -1143,12 +1144,84 @@ function staleUpload() {
   resetIntakeUi();
   msg("up-msg", `${name} is no longer on this client: its data was cleared. Upload it again if you still need it.`, "err");
 }
+// ---------------- notifications (preparer <-> CPA reviewer) ----------------
+// The server reads them from the signed audit trail: a proposal tells the CPA reviewer, an approve / reject /
+// return tells the staff preparer. Polled every 10 seconds while the page is visible (and on focus), so both
+// people stay in step; "seen" is stored on the server, so it is the same in every browser.
+S.notif = null;
+const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned" };
+const NOTIF_ICON = { PROPOSED: "M4 20h4L19 9l-4-4L4 16z", APPROVED: "M5 12.5l4.5 4.5L19 7.5", REJECTED: "M7 7l10 10M17 7L7 17", RETURNED: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" };
+async function loadNotifications(quiet) {
+  if (!S.ws || !S.me) return;
+  let n; try { n = await api(W("/notifications")); } catch (_) { return; }
+  const before = S.notif, newest = n.items[0];
+  const fresh = before && newest && (!before.items[0] || newest.seq > before.items[0].seq);
+  S.notif = n;
+  const c = $("notif-count");
+  c.textContent = n.unread > 9 ? "9+" : String(n.unread); c.classList.toggle("hidden", !n.unread);
+  $("notif-btn").setAttribute("aria-label", n.unread ? `Notifications, ${n.unread} new` : "Notifications");
+  if (fresh) {
+    if (!quiet) toast(notifText(newest), "good");
+    // the other person changed a case: bring this page's copy of the run up to date
+    if (S.run) {
+      try { S.run = await api(W(`/runs/${S.run.id}`)); } catch (_) { /* run withdrawn: the next sync handles it */ }
+      renderExceptions(); if (isActive("home")) renderOverview();
+    }
+  }
+  if (!$("notif-panel").classList.contains("hidden")) renderNotifPanel();
+}
+function notifText(it) {
+  const who = it.by === S.me.user_id ? "You" : (it.by_name || niceActor(it.by) || "Someone");
+  return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"}`;
+}
+function renderNotifPanel() {
+  const n = S.notif || { items: [], unread: 0, for: isCPA() ? "reviewer" : "preparer" };
+  const when = (t) => { const s = (Date.now() - new Date(t).getTime()) / 1000; return s < 86400 ? ago(Math.max(1, s)) : new Date(t).toLocaleDateString(); };
+  put("notif-panel",
+    el("div", { class: "np-head" }, el("b", {}, "Notifications"),
+      el("span", { class: "muted small" }, n.for === "reviewer" ? "Proposals from staff preparers" : "Decisions from CPA reviewers")),
+    n.items.length ? el("ul", { class: "np-list" }, n.items.map((it) => el("li", { class: "np-item k-" + it.kind + (it.unread ? " unread" : ""),
+        role: "button", tabindex: "0", title: "Open this case in the review queue",
+        onclick: () => openNotif(it), onkeydown: (e) => { if (e.key === "Enter") openNotif(it); } },
+      el("span", { class: "np-ico" }, icon(NOTIF_ICON[it.kind] || NOTIF_ICON.PROPOSED)),
+      el("div", { class: "np-b" }, el("div", { class: "np-t" }, notifText(it)),
+        it.note ? el("div", { class: "np-note" }, `“${it.note}”`) : null,
+        el("div", { class: "np-m" }, [when(it.at), it.ref].filter(Boolean).join(" · "))),
+      it.unread ? el("i", { class: "np-dot", "aria-label": "new" }) : null)))
+      : el("div", { class: "np-empty" }, el("b", {}, "Nothing yet"),
+        el("span", {}, n.for === "reviewer" ? "When a staff preparer proposes a resolution, it shows up here."
+          : "When a CPA reviewer approves, rejects or returns an item, it shows up here.")));
+}
+function openNotif(it) {
+  closeNotif();
+  if (it.exception_id && S.run && S.run.result.exceptions.some((x) => x.id === it.exception_id)) openCase(it.exception_id);
+  else { go("exceptions"); if (it.run_id && S.run && it.run_id !== S.run.id) toast(`That was in an earlier run (${it.run_id}).`); }
+}
+async function openNotifPanel() {
+  $("notif-panel").classList.remove("hidden"); $("notif-btn").setAttribute("aria-expanded", "true");
+  renderNotifPanel(); await loadNotifications(true);
+  // opening the list marks everything in it as seen (on the server, for this person only)
+  const top = S.notif && S.notif.items[0];
+  if (top && S.notif.unread) {
+    try { await api(W("/notifications/seen"), { method: "POST", json: { upto: top.seq } }); } catch (_) { return; }
+    S.notif.unread = 0; $("notif-count").classList.add("hidden"); $("notif-btn").setAttribute("aria-label", "Notifications");
+  }
+}
+function closeNotif() {
+  $("notif-panel").classList.add("hidden"); $("notif-btn").setAttribute("aria-expanded", "false");
+  if (S.notif) S.notif.items.forEach((it) => { it.unread = false; });
+}
+$("notif-btn").onclick = (e) => { e.stopPropagation(); if ($("notif-panel").classList.contains("hidden")) openNotifPanel(); else closeNotif(); };
+document.addEventListener("click", (e) => { if (!e.target.closest(".notif-wrap") && !$("notif-panel").classList.contains("hidden")) closeNotif(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("notif-panel").classList.contains("hidden")) { closeNotif(); $("notif-btn").focus(); } });
+setInterval(() => { if (document.visibilityState === "visible") loadNotifications(false); }, 10000);
+
 // Several people can work on the same client. When this tab comes back into view, re-read the client so a
 // clear, upload or run done elsewhere is reflected (at most every 3 seconds).
 let lastSync = 0;
 function syncIfStale() {
   if (!S.ws || !S.me || document.visibilityState === "hidden" || Date.now() - lastSync < 3000) return;
-  lastSync = Date.now(); refreshWs().catch(() => {});
+  lastSync = Date.now(); refreshWs().catch(() => {}); loadNotifications(false);
 }
 window.addEventListener("focus", syncIfStale);
 document.addEventListener("visibilitychange", syncIfStale);
