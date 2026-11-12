@@ -404,8 +404,18 @@ class Service:
         up["health"] = {"received": res.rows_received, "accepted": len(res.accepted), "rejected": res.rejected,
                         "debit_cents": res.debit_cents, "credit_cents": res.credit_cents, "net_cents": res.net_cents,
                         "control_total_ok": res.rows_received == len(res.accepted) + len(res.rejected)}
-        w.batches[up["kind"]] = {"upload_id": upload_id, "sha256": up["sha256"], "rows": res.accepted,
-                                 "origin": up.get("origin", "upload"), "filename": up["filename"]}
+        rows, batch_sha, extra = res.accepted, up["sha256"], {}
+        prev = w.batches.get(up["kind"])
+        if up["kind"] == "documents" and prev and prev.get("pdf_added"):
+            # PDF receipts a person already confirmed stay on file when a documents table is (re)imported.
+            # On the same reference the confirmed PDF wins, exactly as confirm_pdf does in the other order.
+            pdf_rows = [r for r in prev["rows"] if r.get("confirmed_by")]
+            pdf_refs = {r["ref_norm"] for r in pdf_rows}
+            rows = [r for r in rows if r.get("ref_norm") not in pdf_refs] + pdf_rows
+            batch_sha = hashlib.sha256((up["sha256"] + "".join(r["source_sha256"] for r in pdf_rows)).encode()).hexdigest()
+            extra = {"pdf_added": True}
+        w.batches[up["kind"]] = {"upload_id": upload_id, "sha256": batch_sha, "rows": rows,
+                                 "origin": up.get("origin", "upload"), "filename": up["filename"], **extra}
         w.digests[(up["kind"], up["sha256"])] = upload_id
         w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                      action="mapping.confirmed", policy_decision="ALLOW:OK", source_batch_sha256=up["sha256"],
