@@ -152,3 +152,31 @@ def test_r11_ledger_zero_in_unused_column_is_accepted(cpa):
     up, res = _auto(cpa, "gl_zeros.csv", text)
     assert up["kind"] == "ledger" and res["health"]["rejected"] == []
     assert {r["id"]: r["amount_cents"] for r in appmod.svc.ws["client-a"].batches["ledger"]["rows"]} == {"L1": 25000, "L2": -4000}
+
+
+# ---- #5 (labels) a non-USD book's reports are labelled and formatted in its own currency ----
+def test_r05_gbp_book_reports_use_gbp_labels_and_formats(cpa):
+    import openpyxl
+    import pdfplumber
+    assert cpa.post(WS + "/reset", headers=H).status_code == 200
+    _auto(cpa, "gbp_bank.csv", _csv(["line_id", "date", "description", "reference", "amount", "currency"],
+                                    [["G1", "2026-10-02", "FPS CREDIT CUSTOMER 01", "INV-G1", "500.00", "GBP"],
+                                     ["G2", "2026-10-05", "CARD PRINT SUPPLIER", "PS-9", "-40.00", "GBP"]]))
+    _auto(cpa, "gbp_gl.csv", _csv(["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
+                                  [["L1", "2026-10-02", "Sales", "receipt", "INV-G1", "500.00", "", "GBP"]]))
+    run = cpa.post(WS + "/reconciliation-runs", headers=H).json()
+    assert run["result"]["base_currency"] == "GBP"
+    base = f"{WS}/runs/{run['id']}/reports/finance"
+    fin = cpa.get(base + ".json").json()
+    keys = [k for k, _ in fin["summary"]]
+    assert fin["currency"] == "GBP" and "Variance (GBP)" in keys and not any("(USD)" in k for k in keys)
+    assert all("(USD)" not in c for s in fin["sections"] for c in s["columns"])
+    wb = openpyxl.load_workbook(io.BytesIO(cpa.get(base + ".xlsx").content))
+    fmts = {c.number_format for row in wb["Summary"].iter_rows() for c in row if isinstance(c.value, (int, float))}
+    assert any("GBP" in f for f in fmts) and not any("$" in f for f in fmts)
+    with pdfplumber.open(io.BytesIO(cpa.get(base + ".pdf").content)) as pdf:
+        txt = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    assert "GBP 460.00" in txt and "$460.00" not in txt and "Variance" in txt
+    # a USD book is unchanged
+    usd = golden_run(cpa)
+    assert "Variance (USD)" in dict(cpa.get(f"{WS}/runs/{usd['id']}/reports/finance.json").json()["summary"])
