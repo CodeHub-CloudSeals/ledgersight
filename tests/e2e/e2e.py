@@ -436,6 +436,23 @@ with sync_playwright() as pw:
             sizes = [len(r) for r in rows]; assert len(set(sizes)) == 1, (w, sizes); out.append(f"{w}px {'+'.join(map(str, sizes))}")
         p.set_viewport_size({"width": 1280, "height": 900})
         return "numbers on one line per row; " + ", ".join(out)
+    def t_no_scrollbars():
+        # Requested 2026-11-12: no visible scrollbars anywhere; boxes must still scroll.
+        hits = []
+        for t in ("home", "import", "recon", "agents", "rules", "evidence", "trust"):
+            tab(p, t)
+            hits += p.evaluate("""(t) => { const b = []; if (innerWidth - document.documentElement.clientWidth > 0) b.push(t + ':page');
+              for (const e of document.querySelectorAll('body *')) { if (!e.offsetParent) continue; const cs = getComputedStyle(e);
+                if (!/(auto|scroll)/.test(cs.overflowY + cs.overflowX)) continue;
+                const bl = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth), bt = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+                if (e.offsetWidth - e.clientWidth - bl > .5 || e.offsetHeight - e.clientHeight - bt > .5) b.push(t + ':' + (e.id || e.className)); } return b; }""", t)
+        assert not hits, hits
+        tab(p, "evidence")
+        n = p.evaluate("(() => { const e = document.getElementById('events'); if (e.scrollHeight <= e.clientHeight) return -1; e.scrollTop = 200; return e.scrollTop; })()")
+        assert n != 0, "audit trail list no longer scrolls"
+        return "no scrollbar on 7 pages; audit trail list still scrolls"
+    check("No visible scrollbars", "measure scrollbar space on every scrolling box", t_no_scrollbars)
+
     check("Reconciliation number tiles line up", "measure tile values per row at 1440/1280/390px", t_tiles_aligned)
 
     check("Sidebar highlight after hover-peek click", "collapse rail, hover, click tab, move away, compare boxes", t_pill_after_peek)

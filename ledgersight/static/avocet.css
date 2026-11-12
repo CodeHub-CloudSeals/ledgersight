@@ -1979,3 +1979,7 @@ body.fab-away .ask-fab:not(.on){transform:translateY(120%) scale(.9);opacity:0;p
 .tiles{--tg:12px;gap:var(--tg);grid-template-columns:repeat(auto-fill,minmax(calc(max((100% - 5 * var(--tg)) / 6,
   clamp(0px, (6 * 145px + 5 * var(--tg) - 100%) * 999, (100% - 2 * var(--tg)) / 3),
   clamp(0px, (3 * 145px + 2 * var(--tg) - 100%) * 999, (100% - var(--tg)) / 2)) - .5px),1fr))}
+/* No visible scrollbars anywhere (page, tables, audit trail, feeds, sidebar). Boxes still scroll with wheel,
+   trackpad, touch and keyboard; only the bar itself is hidden. */
+html,html *{scrollbar-width:none!important}
+html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
