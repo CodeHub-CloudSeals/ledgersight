@@ -1842,6 +1842,15 @@ function icon(d) {
   const p = document.createElementNS(SVGNS, "path"); p.setAttribute("d", d); p.setAttribute("pathLength", "1"); s.append(p); return s;
 }
 const ICON = { done: "M5 12.5l4.5 4.5L19 7.5", escalated: "M12 7v6M12 17h.01", blocked: "M7 7l10 10M17 7L7 17", stopped: "M7 12h10" };
+// Each agent has its own glyph in the orb; the state is the orb's ring colour plus a small corner badge.
+const AGENT_GLYPH = {
+  "AG-01": "M4 13h4l1.5 2.5h5L16 13h4M5.5 6h13l1.5 7v5H4v-5z",
+  "AG-02": "M4 7h5M4 12h5M4 17h5M15 7h5M15 12h5M15 17h5M9 7l6 5M9 17l6-5",
+  "AG-03": "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  "AG-04": "M5 21V4M5 4h11l-2.5 4 2.5 4H5",
+  "AG-05": "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4",
+  "AG-06": "M20 11.4a7.6 7.6 0 0 1-11.3 6.6L4 19.6l1.6-4.4A7.6 7.6 0 1 1 20 11.4z",
+};
 // What each agent achieved, in business words, read from its own recorded step summary (nothing invented).
 function outcomeLine(code, s) {
   const t = String(s.summary || ""), n = (re) => { const m = t.match(re); return m ? m.slice(1) : null; };
@@ -1881,12 +1890,13 @@ function nodeFor(a, i) {
     title: `${step.rows_in} → ${step.rows_out} rows · TrustOps ${dec(step.decision)} · ${step.policy_id} · ${step.duration_ms} ms` }, outcomeLine(a.code, step));
   else if (a.last) data = el("div", { class: "pline" }, `${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`);
   else data = el("div", { class: "pnote" }, "No requests yet");
-  const ico = ICON[state] ? icon(ICON[state]) : el("span", {}, String(i + 1));
+  const ico = AGENT_GLYPH[a.code] ? icon(AGENT_GLYPH[a.code]) : el("span", {}, String(i + 1));
+  const badge = ICON[state] ? el("span", { class: "pbadge", "aria-hidden": "true" }, icon(ICON[state])) : null;
   const cls = `pnode s-${state}` + (live ? " live" : "") + (an && an.fresh === a.code && forced !== "working" ? " fresh" : "");
   // A step that sent work to a person links to the review queue (see the delegated handler after renderPipelines).
   const go = state === "escalated" && !forced ? { role: "link", tabindex: "0", "data-go-review": "1" } : {};
   return { live, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}`, ...go },
-    el("div", { class: "prail" }, el("span", { class: "pico" }, ico)),
+    el("div", { class: "prail" }, el("span", { class: "pico" }, el("span", { class: "porb" }, ico), badge)),
     el("div", { class: "pbody" },
       el("div", { class: "pcode" }, a.code),
       el("div", { class: "pname" }, a.name),
@@ -1928,7 +1938,10 @@ function pipeHeader(d, an) {
   if (an && an.mode === "running") chip = ["run", "Running on the server"];
   else if (an && an.mode === "replay") chip = ["run", `Step ${Math.max(stepN, 1)} of ${total}`];
   else if (an && an.mode === "upload") chip = ["run", "Checking a file"];
-  else if (d && d.run_id) chip = ["ok", `Complete · ${total} of ${total}`];
+  else if (d && d.run_id) {
+    const blocked = d.agents.filter((a) => a.status === "BLOCKED").length;
+    chip = blocked ? ["bad", `Complete · ${blocked} agent${blocked === 1 ? "" : "s"} blocked`] : ["ok", `Complete · ${total} of ${total}`];
+  }
   else chip = ["idle", "No run yet"];
   for (const id of PIPE_IDS) {
     const card = $(id) && $(id).closest(".pipe"); if (!card) continue;

@@ -264,7 +264,11 @@ with sync_playwright() as pw:
         prog = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-prog')).getPropertyValue('--p').trim()")
         assert chip.startswith("Complete") and prog == "1", (chip, prog)
         assert p.locator(".pipe-replay").count() == 0
-        return f"chip '{chip}', progress line full; no Replay button"
+        # 2026-11-12 redesign: each agent is an orb with its own glyph; finished steps carry a status badge
+        orbs, badges = p.locator("#rc-pipe .pnode .porb svg").count(), p.locator("#rc-pipe .pnode .pbadge").count()
+        bg = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe')).backgroundImage")
+        assert orbs == 6 and badges == 6 and "radial-gradient" in bg, (orbs, badges, bg[:80])
+        return f"chip '{chip}', progress line full; 6 agent orbs with status badges on the dark panel; no Replay button"
     check("Agent workflow header", "Reconciliation: status chip and progress line", t_workflow_header)
 
     def t_design_rules():

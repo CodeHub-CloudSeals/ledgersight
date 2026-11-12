@@ -2370,3 +2370,92 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
   .sa-t span{display:none}.side-ask{grid-template-columns:34px minmax(0,1fr) auto;padding:6px 12px 6px 6px}.sa-ico{width:34px;height:34px}
 }
 @media (min-width:821px) and (max-height:720px){.sidefoot{display:flex}.sa-k{display:none}}
+
+/* ============ Agent workflow, futuristic (2026-11-12) ============
+   A dark "mission control" panel in both themes: navy glass with a faint grid and a soft glow. Each agent is an orb
+   with its own glyph; the state is the orb's ring colour + a small corner badge (tick / ! / x). Finished links carry
+   small data packets that keep flowing; the working link has a bright comet. Text stays high contrast on navy. */
+.card.pipe{position:relative;overflow:hidden;color:#E6EEFB;
+  background:radial-gradient(120% 160% at 0% 0%,#24489A 0%,#152C5E 42%,#0C1A38 100%);
+  box-shadow:0 24px 48px -28px rgba(12,26,56,.85),0 2px 6px rgba(12,26,56,.25)}
+.card.pipe::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);
+  background-size:30px 30px;-webkit-mask-image:radial-gradient(ellipse 80% 90% at 20% 0%,#000 25%,transparent 75%);mask-image:radial-gradient(ellipse 80% 90% at 20% 0%,#000 25%,transparent 75%)}
+.card.pipe::after{content:"";position:absolute;right:-120px;top:-140px;width:420px;height:420px;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle,rgba(56,189,248,.22),transparent 65%);animation:pipeGlow 9s ease-in-out infinite}
+@keyframes pipeGlow{0%,100%{transform:translate(0,0)}50%{transform:translate(-40px,30px)}}
+.card.pipe>*{position:relative;z-index:1}
+.pipe .card-title{color:#fff;letter-spacing:-.01em}
+.pipe .pipe-meta,.pipe .pipe-meta .muted{color:rgba(230,238,251,.65)}
+.pipe .pipe-chip{background:rgba(255,255,255,.08);color:#E6EEFB;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);backdrop-filter:blur(6px)}
+.pipe .pipe-chip.ok{background:rgba(52,211,153,.14);color:#86EFAC;box-shadow:inset 0 0 0 1px rgba(52,211,153,.4)}
+.pipe .pipe-chip.ok i{background:#34D399;box-shadow:0 0 10px #34D399}
+.pipe .pipe-chip.bad{background:rgba(248,113,113,.14);color:#FCA5A5;box-shadow:inset 0 0 0 1px rgba(248,113,113,.4)}
+.pipe .pipe-chip.bad i{background:#F87171;box-shadow:0 0 10px #F87171}
+.pipe .pipe-chip.run{background:rgba(56,189,248,.14);color:#7DD3FC;box-shadow:inset 0 0 0 1px rgba(56,189,248,.4)}
+.pipe .pipe-chip.run i{background:#38BDF8}
+.pipe .pipe-prog{height:3px;background:rgba(255,255,255,.08);margin-bottom:30px}
+.pipe .pipe-prog>span{background:linear-gradient(90deg,#38BDF8,#34D399);box-shadow:0 0 12px rgba(52,211,153,.7)}
+.pipe .pipe-prog.warn>span{background:linear-gradient(90deg,#38BDF8,#34D399 60%,#FBBF24)}
+.pipe .pipe-foot{display:block;color:rgba(230,238,251,.6);font-family:var(--mono);font-size:11.5px;letter-spacing:.02em}
+.pipe .pipe-foot::before{content:"›";color:#7DD3FC;margin-right:2px}
+/* orbs */
+.pipe .prail{height:58px;margin-bottom:16px}
+.pipe .pnode .pico,.pipe .pnode.s-done .pico,.pipe .pnode.s-escalated .pico,.pipe .pnode.s-blocked .pico,.pipe .pnode.s-working .pico,
+.pipe .pnode.s-queued .pico,.pipe .pnode.s-idle .pico,.pipe .pnode.s-stopped .pico{
+  --c:rgba(255,255,255,.28);position:relative;width:58px;height:58px;flex:0 0 58px;border-radius:50%;border:0;color:#DCE8FF;
+  background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.22),rgba(255,255,255,.05) 55%,rgba(255,255,255,.02));
+  box-shadow:inset 0 0 0 1.5px var(--c),0 0 0 6px color-mix(in srgb,var(--c) 14%,transparent),0 0 26px -4px var(--c)}
+.pipe .pnode.s-done .pico{--c:#34D399}
+.pipe .pnode.s-escalated .pico{--c:#FBBF24}
+.pipe .pnode.s-blocked .pico{--c:#F87171}
+.pipe .pnode.s-working .pico{--c:#38BDF8;color:#fff}
+.pipe .pnode.s-queued .pico{--c:rgba(125,211,252,.45);border:0}
+.pipe .pnode.s-stopped .pico{--c:rgba(255,255,255,.18)}
+.pipe .porb{display:grid;place-items:center}
+.pipe .porb svg{width:24px;height:24px;stroke-width:1.7}
+.pipe .pbadge{position:absolute;right:-3px;bottom:-3px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+  background:var(--c);color:#0C1A38;box-shadow:0 0 0 3px #13285A,0 0 12px var(--c)}
+.pipe .pbadge svg{width:12px;height:12px;stroke-width:3.2}
+.pipe .pnode.s-escalated .pico{animation:orbBreath 2.8s ease-in-out infinite}
+@keyframes orbBreath{0%,100%{box-shadow:inset 0 0 0 1.5px var(--c),0 0 0 6px color-mix(in srgb,var(--c) 14%,transparent),0 0 26px -4px var(--c)}
+  50%{box-shadow:inset 0 0 0 1.5px var(--c),0 0 0 11px color-mix(in srgb,var(--c) 8%,transparent),0 0 34px 0 var(--c)}}
+.pipe .pnode.s-working .pico::before{inset:-6px;border-radius:50%;padding:2px;background:conic-gradient(from 0deg,#38BDF8,transparent 60%)}
+.pipe .pnode.fresh .pico::after{border-color:var(--c)}
+/* links between agents */
+.pipe .prail::after,.pipe .pnode.s-done .prail::after,.pipe .pnode.s-escalated .prail::after,.pipe .pnode.s-blocked .prail::after,
+.pipe .pnode.s-stopped .prail::after{left:72px;right:-4px;height:2px;border-radius:2px;background:rgba(255,255,255,.12)}
+.pipe .pnode.s-done .prail::after{background:linear-gradient(90deg,rgba(52,211,153,.9),rgba(52,211,153,.25))}
+.pipe .pnode.s-escalated .prail::after{background:linear-gradient(90deg,rgba(251,191,36,.9),rgba(52,211,153,.25))}
+.pipe .pnode.s-working .prail::after{left:72px;right:-4px;height:2px;background:linear-gradient(90deg,#38BDF8 0 35%,rgba(255,255,255,.12) 35% 100%);background-size:220% 100%}
+.pipe .pnode.s-done .prail::before,.pipe .pnode.s-escalated .prail::before{content:"";position:absolute;z-index:2;top:50%;left:72px;width:6px;height:6px;margin-top:-3px;
+  border-radius:50%;background:#A7F3D0;box-shadow:0 0 8px 2px rgba(52,211,153,.8);animation:packet 2.6s linear infinite;opacity:0}
+.pipe .pnode.s-escalated .prail::before{background:#FDE68A;box-shadow:0 0 8px 2px rgba(251,191,36,.8)}
+.pipe-track .pnode:nth-child(2) .prail::before{animation-delay:.45s}.pipe-track .pnode:nth-child(3) .prail::before{animation-delay:.9s}
+.pipe-track .pnode:nth-child(4) .prail::before{animation-delay:1.35s}.pipe-track .pnode:nth-child(5) .prail::before{animation-delay:1.8s}
+@keyframes packet{0%{left:72px;opacity:0}12%{opacity:1}88%{opacity:1}100%{left:calc(100% - 6px);opacity:0}}
+.pipe .pnode.s-working .prail::before{left:72px;background:#7DD3FC;box-shadow:0 0 0 4px rgba(56,189,248,.25),0 0 16px 3px rgba(56,189,248,.8);animation-name:comet72}
+@keyframes comet72{0%{left:72px;opacity:0}15%{opacity:1}85%{opacity:1}100%{left:calc(100% - 4px);opacity:0}}
+.pipe .pipe-track .pnode:last-child .prail::before,.pipe .pipe-track .pnode:last-child .prail::after{display:none}
+/* text */
+.pipe .pcode{font-family:var(--mono);color:#7DD3FC;font-size:11px;letter-spacing:.14em}
+.pipe .pname{color:#fff;font-size:15.5px}
+.pipe .pline,.pipe .pnote{color:rgba(230,238,251,.72)}
+.pipe .pline b{color:#fff}
+.pipe .pnode.s-escalated .pstate{color:#FCD34D}
+.pipe .pnode.s-blocked .pstate{color:#FCA5A5}
+.pipe .pnode.s-working .pstate,.pipe .pnode.s-queued .pstate{color:#7DD3FC}
+.pipe .pnode.s-idle .pstate,.pipe .pnode.s-stopped .pstate{color:rgba(230,238,251,.55)}
+.pipe .pnode.s-working .pname{color:#7DD3FC}
+.pipe .pnode[data-go-review]:hover .pname{color:#FCD34D}
+.pipe .pnode[data-go-review]:focus-visible{outline-color:#7DD3FC}
+.pipe .pnode:hover .pico{transform:translateY(-2px);transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+.pipe .skel{background:rgba(255,255,255,.1)}
+/* tablet / phone: the same orbs, vertical links */
+@container (max-width:520px){
+  .pipe .prail{height:auto}
+  .pipe .pnode{grid-template-columns:58px minmax(0,1fr);gap:16px}
+  .pipe .prail::after,.pipe .pnode.s-done .prail::after,.pipe .pnode.s-escalated .prail::after,.pipe .pnode.s-blocked .prail::after,
+  .pipe .pnode.s-stopped .prail::after,.pipe .pnode.s-working .prail::after{left:28px;right:auto;top:66px;bottom:-18px;width:2px;height:auto}
+  .pipe .prail::before{display:none!important}
+}
