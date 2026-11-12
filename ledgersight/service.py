@@ -752,7 +752,7 @@ class Service:
         w.runs[rid] = run
         return run
 
-    CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy",
+    CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy", "proposal_id",
                     "proposed_by", "proposal_note", "history")
 
     def _carry_decisions(self, user, w, run):
@@ -845,15 +845,27 @@ class Service:
         return exc
 
     def propose(self, user, wid, run_id, exc_id, note):
-        """Preparer proposes a resolution; becomes the maker, so cannot also approve."""
-        w = self.gate(user, wid, "exception.propose", run_id=run_id)
-        run = w.runs.get(run_id)
+        """Preparer proposes a resolution; becomes the maker, so cannot also approve.
+        Like a decision, the proposal is signed with the case's source rows, rule and trace, and gets an id
+        (PRP-...) that also appears in the case history, so the audit trail shows exactly what the maker proposed."""
+        w0 = self.ws.get(wid)
+        run = w0.runs.get(run_id) if w0 and wid in user.workspaces else None
         exc = next((e for e in (run or {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
+        w, d = self._gate(user, wid, "exception.propose", run_id=run_id, refs=(exc or {}).get("evidence_refs"),
+                          rule=(exc or {}).get("rule_id"), trace_id=(run or {}).get("trace_id"))
         if not exc:
             raise KeyError(exc_id)
         if exc["status"] not in ("OPEN", "RETURNED"):
             raise ValueError(f"already {exc['status']}")
-        exc.update(proposed_by=user.user_id, proposal_note=note, status="OPEN")
+        pid = "PRP-" + uuid.uuid4().hex[:6]
+        exc.setdefault("history", []).append({"decision": "PROPOSE", "by": user.user_id, "at": _ts(), "note": note,
+                                              "proposal_id": pid})
+        exc.update(proposed_by=user.user_id, proposal_note=note, status="OPEN", proposal_id=pid)
+        w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
+                     run_id=run_id, action="exception.proposed", policy_decision=d.label(),
+                     policy_id=d.policy_id, policy_version=d.policy_version,
+                     approval_id=pid, source_line_refs=exc["evidence_refs"], matching_rule_id=exc["rule_id"],
+                     workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return exc
 
     # ---- evidence + export --------------------------------------------

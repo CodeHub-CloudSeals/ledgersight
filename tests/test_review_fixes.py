@@ -116,3 +116,26 @@ def test_r02_forwarded_header_ignored_without_a_trusted_proxy(monkeypatch):
     monkeypatch.setattr(appmod, "TRUST_PROXY", False)
     req = type("R", (), {"headers": {"x-forwarded-for": "203.0.113.9"}, "client": type("C", (), {"host": "10.0.0.1"})()})()
     assert appmod.client_ip(req) == "10.0.0.1"
+
+
+# ---- #3 the maker's proposal is identified in the signed audit trail ----
+def test_r03_proposal_is_signed_with_case_rows_rule_and_id(cpa):
+    run = golden_run(cpa)
+    prep = make_user("r03-prep@demo.test", "preparer", ["client-a"])
+    exc = next(x for x in run["result"]["exceptions"] if x["status"] == "OPEN" and x["evidence_refs"])
+    n = len(appmod.svc.ws["client-a"].log.events)
+    r = prep.post(f"{WS}/runs/{run['id']}/exceptions/{exc['id']}/proposals", headers=H, json={"note": "bill on file"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    new = appmod.svc.ws["client-a"].log.events[n:]
+    gate = next(e for e in new if e["action"] == "exception.propose")
+    signed = next(e for e in new if e["action"] == "exception.proposed")
+    for e in (gate, signed):
+        assert e["source_line_refs"] == exc["evidence_refs"] and e["matching_rule_id"] == exc["rule_id"]
+        assert e["trace_id"] == run["trace_id"] and e["run_id"] == run["id"]
+    assert signed["approval_id"] == body["proposal_id"] and body["proposal_id"].startswith("PRP-")
+    assert body["history"][-1] == {**body["history"][-1], "decision": "PROPOSE", "by": "r03-prep@demo.test",
+                                   "note": "bill on file", "proposal_id": body["proposal_id"]}
+    # maker-checker still holds: the maker cannot approve their own proposal
+    assert prep.post(f"{WS}/runs/{run['id']}/exceptions/{exc['id']}/decisions", headers=H,
+                     json={"decision": "ACCEPT", "note": ""}).status_code == 403
