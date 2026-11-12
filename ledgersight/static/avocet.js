@@ -159,19 +159,22 @@ async function switchWs() {
 }
 
 // ---------------- progress: stepper + overview ----------------
-S.exported = (() => { try { return JSON.parse(localStorage.getItem("ls-exported") || "{}"); } catch (_) { return {}; } })();
-function markExported() {  // the Report step is done once this run's report has been downloaded (remembered in this browser)
+// The Report step is done once a report or review pack for the latest run has been downloaded. The server reads that
+// from the signed audit trail (status.report_delivered), so every browser and colleague sees the same thing; the
+// in-memory flag only bridges the moment between the click and the server recording the download.
+S.exported = {};
+function markExported() {
   if (!S.run) return;
   S.exported[S.ws + S.run.id] = true;
-  try { localStorage.setItem("ls-exported", JSON.stringify(S.exported)); } catch (_) {}
-  setTimeout(progress, 300);
+  setTimeout(progress, 300); setTimeout(progress, 1500);
 }
 const STEPS = [["Import", "import"], ["Confirm columns", "import"], ["Reconcile", "recon"], ["Review", "exceptions"], ["Report", "reports"]];
 async function progress() {
   S.wsList = await api("/v1/workspaces");
   const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
   const st = w.status;
-  const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0, !!S.exported[S.ws + st.last_run]];
+  const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0,
+    !!st.report_delivered || !!S.exported[S.ws + st.last_run]];
   const cur = done.indexOf(false);
   // Compact month-end progress on Overview: one segment per step (click to open that page) + the current step.
   const nDone = done.filter(Boolean).length;
@@ -1434,7 +1437,7 @@ async function renderEvidence() {
     $(id).classList.toggle("disabled", !S.run); $(id).href = S.run ? W(`/runs/${S.run.id}/${p}`) : "#";
   }
   $("exp-print").classList.toggle("disabled", !S.run);
-  $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv");
+  $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv"); $("exp-audit-xlsx").href = W("/audit-trail.xlsx"); $("exp-audit-json").href = W("/audit-trail.json");
   $("exp-print").href = S.run ?`/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
   put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first` +
       (S.evTotal > ev.events.length ? `; showing the latest ${ev.events.length} of ${S.evTotal}. Download the audit trail for every event.` : ".")),
@@ -1732,15 +1735,24 @@ function renderReports() {
   const cards = [
     ["finance", "Finance Reconciliation Report", "LEDGERSIGHT", "FIN-", "What happened to the financial records. Totals, matches, exceptions, outstanding balances and reviewer status."],
     ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]];
+  // Each report card also links the other downloads for this run, so nothing has to be hunted for on Audit trail.
+  const link = (href, label, extra) => el("a", { class: "linkbtn", href, download: "", ...(extra || {}) }, label);
+  const also = {
+    finance: ["Review pack for this run", [link(W(`/runs/${S.run.id}/export.csv`), "Review CSV", { onclick: markExported }),
+      link(W(`/runs/${S.run.id}/review-pack.json`), "Signed review pack (JSON)", { onclick: markExported }),
+      el("a", { class: "linkbtn", href: `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}`,
+        target: "_blank", rel: "noopener", onclick: markExported }, "Printable review pack")]],
+    governance: ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]};
   put("rep-cards", cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
     el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
     el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
-      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))))));
+      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
+    el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))));
   put("rep-preview", el("div", { class: "muted" }, "Choose Preview on either report. Generating a report is itself recorded in the audit trail."));
   $("rep-prev-title").textContent = "Preview";
 }
 async function previewReport(kind) {
-  let r; try { r = await api(W(`/runs/${S.run.id}/reports/${kind}.json`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
+  let r; try { r = await api(W(`/runs/${S.run.id}/reports/${kind}.json?preview=1`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
   $("rep-prev-title").textContent = `Preview · ${r.title} · ${r.report_id}`;
   put("rep-preview", el("table", { class: "kv" }, r.summary.map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, k), el("td", { class: "small" }, String(v))))),
     r.sections.map((s) => el("div", {}, el("div", { class: "card-title gap" }, `${s.title} (${s.rows.length})`),

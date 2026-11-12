@@ -303,7 +303,20 @@ class Service:
                 "unexplained_cents": last["result"]["unexplained_variance_cents"] if last else None,
                 "last_activity": w.log.events[-1]["timestamp_utc"] if w.log.events else w.started_at,
                 # inputs changed since the last run: its figures no longer describe the current files
-                "stale": bool(last) and list(last.get("batch_key") or []) != current}
+                "stale": bool(last) and list(last.get("batch_key") or []) != current,
+                # Report step: read from the signed audit trail, so every browser and colleague sees the same thing
+                "report_delivered": bool(last) and self._delivered(w, last["id"])}
+
+    def _delivered(self, w, run_id) -> bool:
+        for e in reversed(w.log.events):
+            if e.get("run_id") != run_id or not str(e.get("policy_decision", "")).startswith("ALLOW"):
+                continue
+            refs = e.get("source_line_refs") or []
+            if e.get("action") == "report.compose" and refs and not refs[0].endswith(".preview"):
+                return True
+            if e.get("action") == "export.read" and refs and refs[0] in self.DELIVERY_REFS:
+                return True
+        return False
 
     # ---- uploads -------------------------------------------------------
     def upload(self, user, wid, kind, filename, blob, data_class="synthetic", origin="upload", hint=None):
@@ -1131,8 +1144,12 @@ class Service:
         return {"tampered_index": i, "verification": evidence.verify(events, self.public_key_pem()),
                 "original_chain": evidence.verify(w.log.events, self.public_key_pem())}
 
+    # Downloads that deliver a run's output. The Report step is complete once one of these is on the signed record
+    # for the latest run (a Preview is tagged ".preview" and does not count).
+    DELIVERY_REFS = ("review.csv", "review-pack.json")
+
     def export_csv(self, user, wid, run_id) -> str:
-        w = self.gate(user, wid, "export.read", run_id=run_id)
+        w = self.gate(user, wid, "export.read", run_id=run_id, refs=["review.csv"])
         run = w.runs[run_id]
         buf = io.StringIO()
         out = csv.writer(buf)
@@ -1157,7 +1174,7 @@ class Service:
         return w.batches.get("documents", {}).get("rows", [])
 
     def review_pack(self, user, wid, run_id) -> dict:
-        w = self.gate(user, wid, "export.read", run_id=run_id)
+        w = self.gate(user, wid, "export.read", run_id=run_id, refs=["review-pack.json"])
         run = w.runs[run_id]
         return {"client": w.meta, "workspace_id": wid, "tenant_id": TENANT, "run": run["result"] | {"id": run_id},
                 "inputs": ({k: {"sha256": v["sha256"], "rows": v["rows"]} for k, v in run["inputs"].items()} if run.get("inputs") else
@@ -1169,7 +1186,7 @@ class Service:
                 "generated_by": user.user_id, "generated_at": _ts()}
 
     # ---- reports (AG-05): finance + governance, same run id, several formats --------
-    def report(self, user, wid, run_id, kind, fmt="json") -> tuple[dict, bytes]:
+    def report(self, user, wid, run_id, kind, fmt="json", preview=False) -> tuple[dict, bytes]:
         if kind not in reports.KINDS or fmt not in reports.FORMATS:
             raise ValueError("report must be finance or governance; format json, csv, xlsx or pdf")
         w = self.gate(user, wid, "export.read", run_id=run_id)
@@ -1177,7 +1194,7 @@ class Service:
         if not run:
             raise KeyError(run_id)
         self._agent_or_stop(user, w, "agent:report", "report.compose", run_id=run_id, trace_id=run.get("trace_id"),
-                            refs=[f"{kind}.{fmt}"])
+                            refs=[f"{kind}.{fmt}" + (".preview" if preview else "")])
         common = {"client": w.meta, "run": run, "generated_by": user.user_id, "generated_at": _ts()}
         if kind == "finance" and run.get("inputs"):
             rep = reports.finance_report(inputs={k: {kk: vv for kk, vv in v.items() if kk != "upload_id"} for k, v in run["inputs"].items()}, **common)

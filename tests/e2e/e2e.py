@@ -385,8 +385,14 @@ with sync_playwright() as pw:
             href = a.get_attribute("href"); r = p.request.get(BASE + href)
             assert r.status == 200 and len(r.body()) > 100, (href, r.status); got.append(href.rsplit("/", 1)[1])
         assert len(got) == 8, got
+        # 2026-11-12: each card also links this run's review pack / the whole audit trail (no hunting on Audit trail)
+        also = []
+        for a in p.locator("#rep-cards .rep-also a").all():
+            href = a.get_attribute("href"); r = p.request.get((BASE + href) if href.startswith("/") else href)
+            assert r.status == 200, (href, r.status); also.append(a.inner_text())
+        assert len(also) == 7, also
         shot(p, "09-reports")
-        return "preview works; downloads 200: " + ", ".join(got)
+        return "preview works; downloads 200: " + ", ".join(got) + f"; plus {len(also)} review-pack/audit-trail links"
     check("Reports: preview + 2 reports × 4 formats", "click Preview, fetch every download link", t_reports)
 
     # ---------- audit trail ----------

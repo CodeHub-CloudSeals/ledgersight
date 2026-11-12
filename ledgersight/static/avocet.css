@@ -2102,3 +2102,6 @@ body:not(.side-mini) .rail-tip{display:none}
   .pnode{grid-template-columns:40px minmax(0,1fr);gap:14px}
 }
 @container (max-width:520px){.pipe-track .pnode:last-child .prail::after{display:none}}
+/* Reports: the other downloads for the same run, as a quiet line of text links inside each report card */
+.rep-also{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.rep-also .muted{flex-basis:100%}
