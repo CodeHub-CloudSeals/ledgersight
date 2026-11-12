@@ -423,6 +423,21 @@ with sync_playwright() as pw:
         if not was_mini: p.click("#side-toggle"); p.mouse.move(900, 500); p.wait_for_timeout(500)
         p.set_viewport_size({"width": 1280, "height": 900})
         return f"collapsed rail: hover-peek + click {', '.join(seen)} → highlight sits exactly on the active item inside the rail"
+    def t_tiles_aligned():
+        # Regression (2026-11-12): wrapped tile labels pushed some numbers lower than others; 1280px left a 5+1 row.
+        tab(p, "recon"); out = []
+        for w in (1440, 1280, 390):
+            p.set_viewport_size({"width": w, "height": 900}); p.wait_for_timeout(400)
+            rows = p.evaluate("""() => { const m = {}; document.querySelectorAll('#tiles .tile').forEach(t => {
+                const r = t.getBoundingClientRect(); (m[Math.round(r.top)] = m[Math.round(r.top)] || []).push(Math.round(t.querySelector('.v').getBoundingClientRect().bottom)); });
+                return Object.values(m); }""")
+            if not rows: return "no run on screen; nothing to check"
+            assert all(len(set(r)) == 1 for r in rows), (w, rows)
+            sizes = [len(r) for r in rows]; assert len(set(sizes)) == 1, (w, sizes); out.append(f"{w}px {'+'.join(map(str, sizes))}")
+        p.set_viewport_size({"width": 1280, "height": 900})
+        return "numbers on one line per row; " + ", ".join(out)
+    check("Reconciliation number tiles line up", "measure tile values per row at 1440/1280/390px", t_tiles_aligned)
+
     check("Sidebar highlight after hover-peek click", "collapse rail, hover, click tab, move away, compare boxes", t_pill_after_peek)
 
     def t_back():

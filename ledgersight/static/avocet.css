@@ -1968,3 +1968,14 @@ body.fab-away .ask-fab:not(.on){transform:translateY(120%) scale(.9);opacity:0;p
   .ss-clear{min-width:44px;justify-content:center}
   .mprog .step i{width:40px}
 }
+/* KPI tiles: every label gets the same two-line slot and the numbers sit on one baseline across the row;
+   the status dot lines up with the first line of the label, not the middle of a wrapped one. */
+.tile{display:flex;flex-direction:column}
+.tile .k{align-items:flex-start;line-height:1.35;min-height:2.7em}
+.tile .k::before{margin-top:calc(.675em - 3px)}
+.tile .v{margin-top:auto;padding-top:10px}
+/* Six tiles break 6 -> 3+3 -> 2+2+2, never 5+1: the column minimum switches with the row width (no media query,
+   so it follows the sidebar being open or collapsed). 145px is the narrowest a tile can be without clipping. */
+.tiles{--tg:12px;gap:var(--tg);grid-template-columns:repeat(auto-fill,minmax(calc(max((100% - 5 * var(--tg)) / 6,
+  clamp(0px, (6 * 145px + 5 * var(--tg) - 100%) * 999, (100% - 2 * var(--tg)) / 3),
+  clamp(0px, (3 * 145px + 2 * var(--tg) - 100%) * 999, (100% - var(--tg)) / 2)) - .5px),1fr))}
