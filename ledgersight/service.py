@@ -739,7 +739,7 @@ class Service:
                       "currency": sorted({r.get("currency") for r in v["rows"] if r.get("currency")}),
                       "net_cents": (sum(r.get("amount_cents") or 0 for r in v["rows"] if r.get("currency") in (None, result.get("base_currency", "USD")))
                                     if k in ("bank", "ledger") else
-                                    sum(r.get("open_cents") or 0 for r in v["rows"] if r.get("currency") == "USD")
+                                    sum(r.get("open_cents") or 0 for r in v["rows"] if r.get("currency") == result.get("base_currency", "USD"))
                                     if k in ("ar", "ap") else None)}
                   for k, v in b.items()}
         run = {"id": rid, "trace_id": trace, "batch_key": key, "created_by": user.user_id, "created_at": _ts(), "inputs": inputs,
@@ -1182,12 +1182,13 @@ class Service:
         if kind == "finance" and run.get("inputs"):
             rep = reports.finance_report(inputs={k: {kk: vv for kk, vv in v.items() if kk != "upload_id"} for k, v in run["inputs"].items()}, **common)
         elif kind == "finance":
+            base = (run.get("result") or {}).get("base_currency", "USD")
             inputs = {k: {"sha256": v["sha256"], "rows": len(v["rows"]), "filename": v.get("filename"),
                           "currency": sorted({r.get("currency") for r in v["rows"] if r.get("currency")}),
-                          # bank/ledger: net movement; AR/AP: total still open (only same-currency USD rows are summed)
-                          "net_cents": (sum(r.get("amount_cents") or 0 for r in v["rows"] if r.get("currency") in (None, "USD"))
+                          # bank/ledger: net movement; AR/AP: total still open (only rows in the book's base currency)
+                          "net_cents": (sum(r.get("amount_cents") or 0 for r in v["rows"] if r.get("currency") in (None, base))
                                         if k in ("bank", "ledger") else
-                                        sum(r.get("open_cents") or 0 for r in v["rows"] if r.get("currency") == "USD")
+                                        sum(r.get("open_cents") or 0 for r in v["rows"] if r.get("currency") == base)
                                         if k in ("ar", "ap") else None)}
                       for k, v in w.batches.items()}
             rep = reports.finance_report(inputs=inputs, **common)

@@ -165,3 +165,28 @@ def test_r04_commands_and_other_clients_still_refused(cpa, q, code):
     golden_run(cpa)
     a = _ask(cpa, q)
     assert a["status"] == "REFUSED" and a["trustops"]["reason_code"] == code, (q, a.get("trustops"))
+
+
+# ---- #5 a book whose base currency is not USD: AR/AP open balances use the base currency ----
+def _import(c, kind, name, text):
+    up = c.post(WS + "/uploads", headers=H, data={"kind": kind}, files={"file": (name, text.encode())}).json()
+    r = c.post(f"{WS}/uploads/{up['id']}/mapping", headers=H, json={"mapping": up["proposed_mapping"]})
+    assert r.status_code == 200, r.text
+
+
+def test_r05_ar_open_balance_uses_the_books_base_currency(cpa):
+    assert cpa.post(WS + "/reset", headers=H).status_code == 200
+    _import(cpa, "bank", "gbp_bank.csv", "line_id,date,description,reference,amount,currency\n"
+            "GB1,2026-10-02,FPS CREDIT CUSTOMER 01,INV-G1,500.00,GBP\nGB2,2026-10-05,CARD PRINT SUPPLIER,PS-9,-40.00,GBP\n")
+    _import(cpa, "ledger", "gbp_ledger.csv", "entry_id,posted_date,account,description,reference,debit,credit,currency\n"
+            "GL1,2026-10-02,Sales,Customer 01 receipt,INV-G1,500.00,,GBP\nGL2,2026-10-05,Supplies,Print Supplier,PS-9,,40.00,GBP\n")
+    _import(cpa, "ar", "gbp_ar.csv", "invoice_id,customer_alias,issue_date,amount,open_balance,currency\n"
+            "INV-G2,CUST-01,2026-09-20,300.00,300.00,GBP\nINV-U1,CUST-02,2026-09-21,999.00,999.00,USD\n")
+    run = cpa.post(WS + "/reconciliation-runs", headers=H).json()
+    assert run["result"]["base_currency"] == "GBP"
+    assert run["inputs"]["ar"]["net_cents"] == 30000          # the GBP invoice only; the USD one is not mixed in
+    # older runs saved without an input snapshot fall back to live batches: same rule, and no crash
+    del appmod.svc.ws["client-a"].runs[run["id"]]["inputs"]
+    rep = cpa.get(f"{WS}/runs/{run['id']}/reports/finance.json").json()
+    totals = next(s for s in rep["sections"] if s["title"] == "Source totals")["rows"]
+    assert next(r for r in totals if r[0] == "ar")[-1] == "300.00"
