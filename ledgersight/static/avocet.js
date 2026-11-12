@@ -1713,9 +1713,8 @@ async function renderTrust() {
       el("table", {}, el("tr", {}, el("th", {}, "Worker"), el("th", {}, "Does"), el("th", {}, "Model")), t.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code || ""), " " + niceActor(a.id)), el("td", {}, a.does), el("td", {}, a.model)))),
       el("div", { class: "muted small gap" }, `Allowlisted routes: ${t.model_routes_allowed.map(nice).join(", ")} · in use: ${t.model_routes_in_use.map(nice).join(", ")}`)),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Never permitted (no grant exists)"), el("ul", { class: "plain" }, t.forbidden_actions.map((f) => el("li", {}, nice(f))))),
-    el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, ROLE_NAME[r] || (String(r).startsWith("agent:") ? niceActor(r) : nice(r)))), el("td", { class: "small" }, a.map(nice).join(", ")))))),
-    el("div", { class: "card" }, el("div", { class: "card-title" }, "Evidence signing"), el("div", {}, `${t.evidence.algorithm} · key: ${t.evidence.key_source} · policy ${t.policy_version}`),
-      el("pre", {}, t.evidence.public_key_pem), el("div", { class: "muted small" }, `Security events outside client scope: ${t.security_events}`))));
+    el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, ROLE_NAME[r] || (String(r).startsWith("agent:") ? niceActor(r) : nice(r)))), el("td", { class: "small" }, a.map(nice).join(", "))))))));
+  // (the "Evidence signing" card with the raw public key was removed on request, 2026-11-12; /v1/trust still returns it for API users)
 }
 
 // ---------------- live agent monitor ----------------

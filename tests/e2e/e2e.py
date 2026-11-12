@@ -506,7 +506,8 @@ with sync_playwright() as pw:
 
     def t_rules_trust():
         tab(p, "rules"); p.wait_for_selector("#rules table"); r = p.inner_text("#rules"); assert "POL-01" in r and "POL-10" in r
-        tab(p, "trust"); p.wait_for_timeout(300); t = p.inner_text("#trust"); assert "Never permitted" in t and "Ed25519" in t
+        tab(p, "trust"); p.wait_for_timeout(300); t = p.inner_text("#trust"); assert "Never permitted" in t and "Role permissions" in t
+        assert "Evidence signing" not in t and "BEGIN PUBLIC KEY" not in t   # 2026-11-12: card removed on request
         shot(p, "13-trust"); return "POL-01…POL-10 listed; data & security sections"
     check("Rulebooks + Data & security", "open tabs", t_rules_trust)
 
