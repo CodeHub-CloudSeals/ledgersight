@@ -2218,3 +2218,29 @@ body:not(.side-mini) .rail-tip{display:none}
 .np-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:6px}
 .np-empty{display:flex;flex-direction:column;gap:4px;padding:18px 12px 20px;font-size:13px;color:var(--muted)}
 .np-empty b{color:var(--text)}
+
+/* Top bar without the search box: the right-hand group keeps its place */
+.topbar .tb-right{margin-left:auto}
+/* Bell motion (2026-11-12): rings when something new arrives, a gentle nudge every few seconds while unread,
+   a small swing on hover; the count pops in. The panel's fluid open/close is driven by Motion (spring). */
+#notif-btn svg{transform-origin:50% 8%}
+#notif-btn:hover svg{animation:bellHover .6s ease-in-out}
+#notif-btn.has-unread svg{animation:bellNudge 4.5s ease-in-out 1.5s infinite}
+#notif-btn.ring svg{animation:bellRing 1s cubic-bezier(.36,.07,.19,.97)}
+#notif-btn.has-unread{color:var(--accent)}
+#notif-btn.open{color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+#notif-btn.open svg{animation:none;transform:rotate(-8deg) scale(1.06);transition:transform .3s cubic-bezier(.34,1.56,.64,1)}
+@keyframes bellRing{0%{transform:rotate(0)}10%{transform:rotate(18deg)}22%{transform:rotate(-16deg)}34%{transform:rotate(12deg)}46%{transform:rotate(-9deg)}58%{transform:rotate(6deg)}70%{transform:rotate(-3deg)}82%,100%{transform:rotate(0)}}
+@keyframes bellNudge{0%,86%,100%{transform:rotate(0)}89%{transform:rotate(12deg)}92%{transform:rotate(-10deg)}95%{transform:rotate(6deg)}98%{transform:rotate(-3deg)}}
+@keyframes bellHover{0%,100%{transform:rotate(0)}30%{transform:rotate(12deg)}60%{transform:rotate(-8deg)}}
+.notif-count.bump{animation:countBump .6s cubic-bezier(.34,1.56,.64,1)}
+@keyframes countBump{0%{transform:scale(.4)}55%{transform:scale(1.25)}100%{transform:scale(1)}}
+#notif-btn.has-unread::after{content:"";position:absolute;inset:-1px;border-radius:50%;pointer-events:none;border:2px solid var(--accent);opacity:0;animation:bellWave 4.5s ease-out 1.5s infinite}
+@keyframes bellWave{0%,85%{opacity:0;transform:scale(1)}88%{opacity:.5}100%{opacity:0;transform:scale(1.45)}}
+.notif-panel{transform-origin:92% 0;will-change:transform,opacity,filter,clip-path}
+.np-item{transition:background .2s,transform .2s cubic-bezier(.22,1,.36,1)}
+.np-item:hover{transform:translateX(3px)}
+.np-item .np-ico{transition:transform .25s cubic-bezier(.34,1.56,.64,1)}
+.np-item:hover .np-ico{transform:scale(1.08) rotate(-6deg)}
+.np-dot{animation:npDot 1.8s ease-in-out infinite}
+@keyframes npDot{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}50%{box-shadow:0 0 0 5px transparent}}

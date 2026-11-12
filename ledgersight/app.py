@@ -656,9 +656,10 @@ def reset(wid: str, u=Depends(current_user)):
 @app.get("/v1/workspaces/{wid}/notifications")
 def notifications(wid: str, u=Depends(current_user)):
     n = handle(svc.notifications, u, wid)
+    demo_names = {uid: name for uid, name, _ in DEMO_PEOPLE.values()}  # local demo people are not in the user list
     for it in n["items"]:  # the person's display name, for the bell list
         x = auth.users.get(it["by"])
-        it["by_name"] = x.display_name if x else it["by"]
+        it["by_name"] = x.display_name if x else demo_names.get(it["by"], it["by"])
     return n
 
 

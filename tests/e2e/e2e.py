@@ -88,16 +88,17 @@ with sync_playwright() as pw:
     def t_shell():
         groups = p.eval_on_selector_all(".navlabel", "n => n.map(x => x.textContent)")
         assert groups == ["WorkSpace", "Outputs", "Governance", "Admin"], groups
-        assert p.is_visible("#ws-select") and p.is_visible("#act-as") and p.is_visible("#theme") and p.is_visible("#ask-open") and p.is_visible("#tb-search")
+        assert p.is_visible("#ws-select") and p.is_visible("#act-as") and p.is_visible("#theme") and p.is_visible("#ask-open") and p.is_visible("#notif-btn")
+        assert p.locator("#tb-search").count() == 0   # 2026-11-12: the top-bar search box was removed on request
         tabs = p.eval_on_selector_all(".tab", "n => n.map(x => x.dataset.tab)")
         assert len(tabs) == 13 and "ask" not in tabs, tabs
         assert p.inner_text("#app-version").strip() == "LedgerSight v1.0.0", p.inner_text("#app-version")
         assert "Governed By TrustOps" in p.inner_text(".bsub")
-        top = p.eval_on_selector("#tb-search", "e => e.closest('.topbar') !== null")
+        top = p.eval_on_selector("#notif-btn", "e => e.closest('.topbar') !== null")
         fab = p.eval_on_selector("#ask-open", "e => { const r = e.getBoundingClientRect(); return [innerWidth - r.right, innerHeight - r.bottom]; }")
-        assert top and fab[0] < 80 and fab[1] < 80, (top, fab)  # Ask: search box in the top bar + floating button bottom-right
+        assert top and fab[0] < 80 and fab[1] < 80, (top, fab)  # bell in the top bar; Ask: floating button bottom-right + Ctrl+K
         p.keyboard.press("Control+k"); p.wait_for_timeout(400); assert p.evaluate("S.askOpen"); p.keyboard.press("Escape"); p.wait_for_timeout(300)
-        return f"WorkSpace/Outputs/Governance/Admin, {len(tabs)} tabs, Ask in top bar (Ctrl+K) and bottom-right, LedgerSight v1.0.0, Governed By TrustOps"
+        return f"WorkSpace/Outputs/Governance/Admin, {len(tabs)} tabs, Ask bottom-right and Ctrl+K, bell in the top bar, LedgerSight v1.0.0, Governed By TrustOps"
     check("App shell: grouped sidebar + top bar", "DOM check", t_shell)
 
     def t_empty_overview():

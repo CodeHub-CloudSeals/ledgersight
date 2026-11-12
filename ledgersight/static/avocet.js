@@ -1158,7 +1158,10 @@ async function loadNotifications(quiet) {
   const fresh = before && newest && (!before.items[0] || newest.seq > before.items[0].seq);
   S.notif = n;
   const c = $("notif-count");
-  c.textContent = n.unread > 9 ? "9+" : String(n.unread); c.classList.toggle("hidden", !n.unread);
+  const was = c.classList.contains("hidden") ? 0 : +c.dataset.n || 0;
+  c.textContent = n.unread > 9 ? "9+" : String(n.unread); c.dataset.n = n.unread; c.classList.toggle("hidden", !n.unread);
+  $("notif-btn").classList.toggle("has-unread", !!n.unread);
+  if (n.unread > was) ringBell();
   $("notif-btn").setAttribute("aria-label", n.unread ? `Notifications, ${n.unread} new` : "Notifications");
   if (fresh) {
     if (!quiet) toast(notifText(newest), "good");
@@ -1180,26 +1183,54 @@ function renderNotifPanel() {
   put("notif-panel",
     el("div", { class: "np-head" }, el("b", {}, "Notifications"),
       el("span", { class: "muted small" }, n.for === "reviewer" ? "Proposals from staff preparers" : "Decisions from CPA reviewers")),
-    n.items.length ? el("ul", { class: "np-list" }, n.items.map((it) => el("li", { class: "np-item k-" + it.kind + (it.unread ? " unread" : ""),
+    n.items.length ? el("ul", { class: "np-list" }, groupNotifs(n.items).map((it) => el("li", { class: "np-item k-" + it.kind + (it.unread ? " unread" : ""),
         role: "button", tabindex: "0", title: "Open this case in the review queue",
         onclick: () => openNotif(it), onkeydown: (e) => { if (e.key === "Enter") openNotif(it); } },
       el("span", { class: "np-ico" }, icon(NOTIF_ICON[it.kind] || NOTIF_ICON.PROPOSED)),
       el("div", { class: "np-b" }, el("div", { class: "np-t" }, notifText(it)),
         it.note ? el("div", { class: "np-note" }, `“${it.note}”`) : null,
-        el("div", { class: "np-m" }, [when(it.at), it.ref].filter(Boolean).join(" · "))),
+        el("div", { class: "np-m" }, [when(it.at), it.times > 1 ? `${it.times} times` : null, it.ref].filter(Boolean).join(" · "))),
       it.unread ? el("i", { class: "np-dot", "aria-label": "new" }) : null)))
       : el("div", { class: "np-empty" }, el("b", {}, "Nothing yet"),
         el("span", {}, n.for === "reviewer" ? "When a staff preparer proposes a resolution, it shows up here."
           : "When a CPA reviewer approves, rejects or returns an item, it shows up here.")));
+}
+function groupNotifs(items) {
+  const out = [], byKey = {};
+  for (const it of items) {          // newest first
+    const k = [it.kind, it.by, it.exception_id || it.ref, it.run_id].join("|");
+    if (byKey[k]) { byKey[k].times++; if (it.unread) byKey[k].unread = true; if (!byKey[k].note && it.note) byKey[k].note = it.note; continue; }
+    byKey[k] = { ...it, times: 1 }; out.push(byKey[k]);
+  }
+  return out;
 }
 function openNotif(it) {
   closeNotif();
   if (it.exception_id && S.run && S.run.result.exceptions.some((x) => x.id === it.exception_id)) openCase(it.exception_id);
   else { go("exceptions"); if (it.run_id && S.run && it.run_id !== S.run.id) toast(`That was in an earlier run (${it.run_id}).`); }
 }
+function ringBell() {
+  const b = $("notif-btn"), c = $("notif-count");
+  b.classList.remove("ring", "bump"); c.classList.remove("bump"); void b.offsetWidth;
+  b.classList.add("ring"); c.classList.add("bump");
+  setTimeout(() => { b.classList.remove("ring"); c.classList.remove("bump"); }, 1200);
+}
+const NM = () => (window.Motion && window.Motion.animate && !reducedMotion() ? window.Motion : null);
+function animatePanelIn() {
+  const p = $("notif-panel"), M = NM();
+  if (!M) return;
+  M.animate(p, { opacity: [0, 1], scale: [0.86, 1], y: [-14, 0], filter: ["blur(8px)", "blur(0px)"], clipPath: ["circle(0% at 92% 0%)", "circle(150% at 92% 0%)"] },
+    { type: M.spring, visualDuration: 0.5, bounce: 0.22 });
+  const rows = [...p.querySelectorAll(".np-head, .np-item, .np-empty")];
+  rows.forEach((r) => { r.style.opacity = "0"; });
+  const a = M.animate(rows, { opacity: [0, 1], y: [12, 0], x: [6, 0] }, { type: M.spring, visualDuration: 0.42, bounce: 0.18, delay: M.stagger(0.045, { startDelay: 0.08 }) });
+  const clear = () => rows.forEach((r) => { r.style.opacity = ""; r.style.transform = ""; });
+  (a.finished || a).then(clear, clear);
+}
 async function openNotifPanel() {
-  $("notif-panel").classList.remove("hidden"); $("notif-btn").setAttribute("aria-expanded", "true");
-  renderNotifPanel(); await loadNotifications(true);
+  const p = $("notif-panel");
+  p.classList.remove("hidden", "closing"); $("notif-btn").setAttribute("aria-expanded", "true"); $("notif-btn").classList.add("open");
+  renderNotifPanel(); animatePanelIn(); await loadNotifications(true);
   // opening the list marks everything in it as seen (on the server, for this person only)
   const top = S.notif && S.notif.items[0];
   if (top && S.notif.unread) {
@@ -1208,12 +1239,22 @@ async function openNotifPanel() {
   }
 }
 function closeNotif() {
-  $("notif-panel").classList.add("hidden"); $("notif-btn").setAttribute("aria-expanded", "false");
+  const p = $("notif-panel"), M = NM();
+  $("notif-btn").setAttribute("aria-expanded", "false"); $("notif-btn").classList.remove("open");
   if (S.notif) S.notif.items.forEach((it) => { it.unread = false; });
+  if (p.classList.contains("hidden")) return;
+  if (!M) { p.classList.add("hidden"); return; }
+  p.classList.add("closing");   // already counts as closed: a quick re-open cancels the fade-out
+  const a = M.animate(p, { opacity: [1, 0], scale: [1, 0.9], y: [0, -10], filter: ["blur(0px)", "blur(6px)"], clipPath: ["circle(150% at 92% 0%)", "circle(0% at 92% 0%)"] },
+    { duration: 0.24, ease: [0.4, 0, 1, 1] });
+  const done = () => { if (p.classList.contains("closing")) { p.classList.add("hidden"); p.classList.remove("closing"); }
+    p.style.opacity = ""; p.style.transform = ""; p.style.filter = ""; p.style.clipPath = ""; };
+  (a.finished || a).then(done, done);
 }
-$("notif-btn").onclick = (e) => { e.stopPropagation(); if ($("notif-panel").classList.contains("hidden")) openNotifPanel(); else closeNotif(); };
-document.addEventListener("click", (e) => { if (!e.target.closest(".notif-wrap") && !$("notif-panel").classList.contains("hidden")) closeNotif(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("notif-panel").classList.contains("hidden")) { closeNotif(); $("notif-btn").focus(); } });
+const notifOpen = () => { const p = $("notif-panel"); return !p.classList.contains("hidden") && !p.classList.contains("closing"); };
+$("notif-btn").onclick = (e) => { e.stopPropagation(); if (notifOpen()) closeNotif(); else openNotifPanel(); };
+document.addEventListener("click", (e) => { if (!e.target.closest(".notif-wrap") && notifOpen()) closeNotif(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && notifOpen()) { closeNotif(); $("notif-btn").focus(); } });
 setInterval(() => { if (document.visibilityState === "visible") loadNotifications(false); }, 10000);
 
 // Several people can work on the same client. When this tab comes back into view, re-read the client so a
@@ -2015,7 +2056,7 @@ function setAsk(open) {
 function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => $("ask-q").focus(), 120); }
 function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
 $("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
-$("tb-search").onclick = () => openAsk();
+// (the top-bar search box was removed on request; Ask opens from the floating button, the sidebar card and Ctrl+K)
 $("side-ask").onclick = () => openAsk();
 document.addEventListener("keydown", (e) => {   // Ctrl/Cmd+K opens Ask LedgerSight (only inside the app, not on the sign-in screen)
   if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k" && !$("app").classList.contains("hidden")) { e.preventDefault(); S.askOpen ? $("ask-q").focus() : openAsk(); }
