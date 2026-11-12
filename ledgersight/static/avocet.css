@@ -2082,7 +2082,7 @@ body:not(.side-mini) .rail-tip{display:none}
 .pcode{font-family:var(--font);font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
 .pname{font-size:15px;font-weight:650;letter-spacing:-.01em;color:var(--sk-ink);line-height:1.3;margin:3px 0 6px;min-height:0}
 .pline{margin:0;padding:0;border:0;font-size:13.5px;line-height:1.45;color:var(--muted)}
-.pnote{font-size:13px;color:var(--muted)}
+.pnote{font-size:13.5px;line-height:1.45;color:var(--muted);margin:0;padding:0;border:0;min-height:0}
 /* status: the circle says it. Only states that need words keep a short coloured line (no pill). */
 .pnode.s-done .pstate{display:none}
 .pstate,.pnode .pstate{background:none!important;border:0!important;padding:0;border-radius:0;font-size:13px;font-weight:650;gap:6px;margin:0 0 4px;align-items:center}
@@ -2119,3 +2119,70 @@ body:not(.side-mini) .rail-tip{display:none}
 .xtrail li{position:relative;padding-left:18px;font-size:13.5px;line-height:1.45}
 .xtrail li::before{content:"";position:absolute;left:2px;top:.55em;width:8px;height:8px;border-radius:50%;background:var(--accent)}
 .xtrail li.t-RETURN::before{background:var(--warn-solid)}.xtrail li.t-REJECT::before{background:var(--bad-solid)}.xtrail li.t-ACCEPT::before{background:var(--ok-solid)}
+
+/* ============ Agent workflow: motion (2026-11-12) ============
+   Header: status chip + Replay; a thin progress line under the title glides as steps finish.
+   Steps: done circles carry a soft halo; a finishing step pops, its tick draws itself, a ring ripples out and the
+   connector to the next step fills left to right. The working step has a spinning arc and a light pulse that
+   travels down its connector. The step that needs a person breathes an amber halo. All of it is off under
+   prefers-reduced-motion (global rule). */
+.pipe-head{margin-bottom:10px}
+.pipe-meta{gap:10px}
+.pipe-chip{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 13px;border-radius:999px;font-size:12.5px;font-weight:650;
+  background:var(--ds-inset,var(--subtle));color:var(--text-2);white-space:nowrap}
+.pipe-chip i{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+.pipe-chip.ok{background:var(--ok-bg);color:var(--ok)}.pipe-chip.ok i{background:var(--ok-solid)}
+.pipe-chip.run{background:var(--accent-soft);color:var(--accent)}.pipe-chip.run i{background:var(--accent);animation:lvPulseA 1.3s infinite}
+@keyframes lvPulseA{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.pipe-replay{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 14px;font-size:12.5px;border-width:1.5px}
+.pipe-replay svg{width:12px;height:12px;stroke-width:2.4;fill:currentColor}
+.pipe-prog{position:relative;height:4px;border-radius:4px;background:var(--ds-inset,var(--subtle));overflow:hidden;margin:0 0 26px}
+.pipe-prog>span{position:absolute;inset:0;transform-origin:left center;transform:scaleX(var(--p,0));border-radius:inherit;
+  background:linear-gradient(90deg,var(--ok-solid),color-mix(in srgb,var(--ok-solid) 70%,var(--accent)));transition:transform .55s cubic-bezier(.22,1,.36,1)}
+.pipe-prog.warn>span{background:linear-gradient(90deg,var(--ok-solid) 0 55%,var(--warn-solid))}
+.pipe.running .pipe-prog>span,.pipe-prog.busy>span{transform:none;background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:40% 100%;
+  background-repeat:no-repeat;animation:progSweep 1.1s ease-in-out infinite}
+@keyframes progSweep{from{background-position:-40% 0}to{background-position:140% 0}}
+/* circles */
+.pnode.s-done .pico{box-shadow:0 0 0 5px color-mix(in srgb,var(--ok-solid) 14%,transparent),0 6px 14px -6px color-mix(in srgb,var(--ok-solid) 70%,transparent)}
+.pnode.s-escalated .pico{box-shadow:0 0 0 5px color-mix(in srgb,var(--warn-solid) 16%,transparent);animation:escHalo 2.6s ease-in-out infinite}
+@keyframes escHalo{0%,100%{box-shadow:0 0 0 5px color-mix(in srgb,var(--warn-solid) 16%,transparent)}50%{box-shadow:0 0 0 10px color-mix(in srgb,var(--warn-solid) 6%,transparent)}}
+.pnode.s-queued .pico{background:var(--surface)}
+.pipe.running .pnode.s-queued .pico,.pnode.s-queued .pico{animation:qWait 1.8s ease-in-out infinite}
+.pipe-track .pnode:nth-child(2) .pico{animation-delay:.15s}.pipe-track .pnode:nth-child(3) .pico{animation-delay:.3s}
+.pipe-track .pnode:nth-child(4) .pico{animation-delay:.45s}.pipe-track .pnode:nth-child(5) .pico{animation-delay:.6s}.pipe-track .pnode:nth-child(6) .pico{animation-delay:.75s}
+@keyframes qWait{0%,100%{transform:none;opacity:.7}50%{transform:translateY(-3px);opacity:1}}
+/* finishing a step: pop, tick draws, ripple, connector fills, text rises */
+.pnode.fresh .pico{animation:pop .5s cubic-bezier(.34,1.56,.64,1)}
+.pnode.fresh .pico path{stroke-dasharray:1;stroke-dashoffset:1;animation:tickDraw .42s .12s cubic-bezier(.65,0,.35,1) forwards}
+@keyframes tickDraw{to{stroke-dashoffset:0}}
+.pico::after{content:"";position:absolute;inset:0;border-radius:50%;pointer-events:none;opacity:0}
+.pnode.fresh.s-done .pico::after{border:2px solid var(--ok-solid);animation:ripple .7s ease-out}
+.pnode.fresh.s-escalated .pico::after{border:2px solid var(--warn-solid);animation:ripple .7s ease-out}
+.pnode.fresh.s-blocked .pico::after{border:2px solid var(--bad-solid);animation:ripple .7s ease-out}
+@keyframes ripple{from{opacity:.8;transform:scale(1)}to{opacity:0;transform:scale(1.9)}}
+.prail::after{transform-origin:left center}
+.pnode.fresh .prail::after{animation:railFill .5s .18s cubic-bezier(.22,1,.36,1) both}
+@keyframes railFill{from{scale:0 1}to{scale:1 1}}
+.pnode.fresh .pbody>*{animation:rise .38s cubic-bezier(.22,1,.36,1) both}
+.pnode.fresh .pbody>*:nth-child(2){animation-delay:.04s}.pnode.fresh .pbody>*:nth-child(3){animation-delay:.08s}.pnode.fresh .pbody>*:nth-child(4){animation-delay:.12s}
+/* working step: pulse travelling down the connector */
+.prail::before{content:none}
+.pnode.s-working .prail::before{content:"";position:absolute;z-index:2;top:50%;left:52px;width:10px;height:10px;margin-top:-5px;border-radius:50%;
+  background:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent),0 0 14px 2px color-mix(in srgb,var(--accent) 50%,transparent);
+  animation:comet 1.1s cubic-bezier(.45,0,.55,1) infinite}
+.pipe-track .pnode:last-child .prail::before{display:none}
+@keyframes comet{0%{left:52px;opacity:0}15%{opacity:1}85%{opacity:1}100%{left:calc(100% - 4px);opacity:0}}
+.pnode.s-working .pname{color:var(--accent)}
+/* the "sent to a person" line: arrow follows the last word, never pushed to the edge */
+.pnode .pstate{display:flex;align-items:baseline;gap:7px}
+.pnode .pstate i{flex:0 0 7px;width:7px;height:7px;transform:translateY(-1px)}
+.pnode[data-go-review] .pstate::after{content:none}
+.pnode[data-go-review] .pst::after{content:"→";display:inline-block;margin-left:5px;transition:transform .2s}
+.pnode[data-go-review]:hover .pst::after,.pnode[data-go-review]:focus-visible .pst::after{transform:translateX(3px)}
+@container (max-width:520px){
+  .pnode.s-working .prail::before{display:none}
+  .pnode.fresh .prail::after{animation-name:railFillV}
+  .prail::after{transform-origin:center top}
+}
+@keyframes railFillV{from{scale:1 0}to{scale:1 1}}
