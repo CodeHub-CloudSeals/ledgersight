@@ -17,16 +17,22 @@ Local mode turns the authenticator-code step off (`AVOCET_REQUIRE_MFA=0`); hoste
 
 ## Flow
 
-1. **Import**: computer, saved email (.eml) or Google Drive (optional). CSV, Excel, TSV, OFX/QFX/QBO, text PDF.
-2. **Agent 1 Intake**: type/size/macro/formula checks, control totals, SHA-256 fingerprint.
-3. **Agent 2 Mapping / Agent 3 Document**: propose columns / read PDF fields with cited source lines. ✋ Person confirms.
-4. **Agent 4 Reconciliation** (core): exact rules, abstains when unsure, typed exceptions.
-5. **Agent 5 Exception**: reason + suggested next step. ✋ Owner/reviewer accepts or rejects (maker ≠ checker).
-6. **Agent 6 Counterparty**: links transactions to customers/vendors with evidence. ✋ Person confirms weak links.
-7. **Trace / Audit trail / Review pack**: per-transaction lineage, Ed25519 hash-chained evidence, offline verifier.
+1. **Import**: computer, saved email (.eml) or Google Drive (optional). CSV, Excel, TSV, JSON, OFX/QFX/QBO, text PDF.
+   The file's type is worked out from its content; anything that is not a finance record is refused with the reason.
+2. **AG-01 Intake & Validation**: type/size/macro/formula checks, control totals, SHA-256 fingerprint; reads text-PDF
+   receipts and invoices with cited source lines. ✋ Person confirms PDF fields.
+3. **AG-02 Canonical Mapper**: proposes column mappings and checks every row is in the standard format. ✋ Person confirms.
+4. **AG-03 Reconciliation** (core): fixed, explainable rules; abstains when unsure; typed exceptions. Cannot post anything.
+5. **AG-04 Exception Triage**: asks TrustOps how each exception must be handled (ALLOW / ESCALATE / DENY) and routes it.
+   ✋ A preparer proposes; a CPA reviewer who did not propose it approves, rejects or returns it (maker-checker, POL-06).
+6. **AG-05 Report Composer**: Finance Reconciliation Report + TrustOps Governance Report for the same run (PDF/XLSX/CSV/JSON).
+7. **AG-06 Query Assistant**: Ask LedgerSight, read-only questions with citations; other clients, SQL and write requests refused.
+8. **Counterparties / Trace / Audit trail / Review pack**: links to customers/vendors with evidence, per-transaction lineage,
+   Ed25519 hash-chained evidence, offline verifier (`python -m ledgersight.verify_pack`).
 
-TrustOps gate (`ledgersight/core/policy.py`): deny-by-default; forbidden actions, client scope, role,
-data class, model route and maker-checker are checked before every action; ALLOW and DENY are both signed.
+The six agents and their tools are configured in `ledgersight/config/agents.json`; policies POL-01…12 in
+`config/policies.json`. TrustOps gate (`ledgersight/core/policy.py`): deny-by-default; forbidden actions, client scope,
+role, data class, model route and maker-checker are checked before every action; ALLOW, ESCALATE and DENY are all signed.
 
 ## Layout
 
@@ -46,7 +52,9 @@ tests/             acceptance tests (G-D01..G-D12 + negative paths)
 ## Test
 
 ```bash
-python -m pytest -q
+pip install -r requirements-dev.txt     # runtime pins (requirements.txt) + test tools
+python -m pytest -q                     # API, engine, governance and security tests
+bash tests/e2e/run_all.sh               # browser checks incl. DESIGN_RULES.md (needs Playwright, see tests/e2e/README.md)
 ```
 
 ## Optional settings
@@ -57,4 +65,13 @@ python -m pytest -q
 | `AVOCET_CLIENTS` | comma list of client books to show, e.g. `client-a` |
 | `AVOCET_SIGNING_KEY_PEM` | Ed25519 private key from the secret store (otherwise generated at start-up) |
 | `AVOCET_REGION_DECLARED` | region shown on the Data & security page |
+| `AVOCET_DATA_DIR`, `AVOCET_PERSIST` | where the SQLite database, uploads and signing key live; `AVOCET_PERSIST=0` = memory only |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_API_KEY` | enable the Google Drive picker (read-only, drive.file scope) |
+| `AVOCET_GOOGLE_LOGIN_DOMAIN` | with `GOOGLE_CLIENT_ID`: "Sign in with Google" for verified accounts on this one domain |
+| `AVOCET_GOOGLE_DEFAULT_ROLE` | role for a first-time Google sign-in: `preparer` (default) or `owner_reviewer`; accounts already on file keep theirs |
+| `AVOCET_GOOGLE_REVIEWERS` | comma list of emails; when set, only these Google accounts become CPA reviewers, everyone else a preparer |
+| `AVOCET_TRUST_PROXY` | `1` behind Cloud Run / a trusted load balancer: rate-limit sign-in by the client address the proxy appends to `X-Forwarded-For` (set by `deploy/cloudrun.sh`; leave unset locally) |
+| `AVOCET_PUBLIC_URL` | base URL used in invitation links |
+| `AVOCET_STORAGE_DURABLE` | `1` only when the data folder is on durable storage (shown on Data & security and `/readyz`) |
+
+Design rules for the UI are in `DESIGN_RULES.md`; production status in `PRODUCTION.md`.

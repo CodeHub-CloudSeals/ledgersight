@@ -215,3 +215,16 @@ def test_r12_duplicate_wording_matches_what_the_ledger_holds(cpa):
     # the golden case (HB004: its twin is booked) keeps the original wording
     hb004 = next(x for x in golden_run(cpa)["result"]["exceptions"] if x["bank_id"] == "HB004")
     assert hb004["type"] == "POSSIBLE_DUPLICATE" and "ledger has only one entry" in hb004["why"]
+
+
+# ---- #16 docs stay in step with configuration ----
+def test_r16_readme_lists_the_configured_agents_and_sign_in_settings():
+    import json
+    root = FIXTURES.parent.parent
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    for a in json.loads((root / "ledgersight" / "config" / "agents.json").read_text())["agents"]:
+        assert f"{a['code']} {a['name']}" in readme, a["code"]
+    for v in ("AVOCET_GOOGLE_LOGIN_DOMAIN", "AVOCET_GOOGLE_DEFAULT_ROLE", "AVOCET_GOOGLE_REVIEWERS", "AVOCET_TRUST_PROXY"):
+        assert v in readme and v in (root / "ledgersight" / "app.py").read_text() + (root / "ledgersight" / "auth.py").read_text()
+    prod = (root / "PRODUCTION.md").read_text(encoding="utf-8")
+    assert "Local accounts only" not in prod and "POL-01…12" in prod
