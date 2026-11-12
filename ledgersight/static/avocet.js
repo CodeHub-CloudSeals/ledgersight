@@ -1273,17 +1273,40 @@ function govLine(t) {
     el("span", {}, `${t.policy_id} ${nice(t.policy_name)}`), t.required_role ? el("span", {}, `· needs a ${t.required_role_label || t.required_role}`) : null,
     el("span", { class: "muted small" }, `· policy set ${t.policy_version}`));
 }
+// Who proposed, returned and decided this case, in order, with each step's note and signed id. Shown once a case has
+// more than one step (e.g. proposed -> returned -> proposed again -> approved), so the maker-checker story reads in one place.
+const TRAIL_WORD = { ACCEPT: "Approved", REJECT: "Rejected", RETURN: "Returned to preparer" };
+function reviewTrail(x) {
+  const steps = [...(x.proposals || []).map((p) => ({ at: p.at, by: p.by, what: "Proposed", note: p.note, id: p.proposal_id, k: "prop" })),
+    ...(x.history || []).map((h) => ({ at: h.at, by: h.by, what: TRAIL_WORD[h.decision] || nice(h.decision), note: h.note, id: h.approval_id, k: h.decision }))]
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  if (steps.length < 2) return null;
+  return el("div", { class: "xtrail" }, el("div", { class: "xs-k" }, "Review trail"),
+    el("ol", {}, steps.map((s) => el("li", { class: "t-" + s.k },
+      el("b", {}, s.what), ` by ${niceActor(s.by)}`, s.note ? ` · “${s.note}”` : "",
+      el("span", { class: "muted small" }, ` · ${new Date(s.at).toLocaleString()}${s.id ? " · " + s.id : ""}`)))));
+}
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
   if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
   const reviewer = S.me.role === "owner_reviewer";
-  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; }
+  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; S.excType = "all"; }
   const all = S.run.result.exceptions, isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
   const nOpen = all.filter(isOpen).length;
-  const shown = all.filter((x) => S.excFilter === "all" || (S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x)));
+  const typeOf = (x) => x.client_status || "APPROVAL_REQUIRED";
+  const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x));
+  const shown = all.filter((x) => inStatus(x) && (S.excType === "all" || typeOf(x) === S.excType));
   const chip = (k, label, n) => el("button", { class: "pl-chip" + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
     onclick: () => { S.excFilter = k; S.excSeen = new Set(); renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
-  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length));
+  // Case-type chips (Unmatched, Duplicate, Tax review, FX review...), counted within the status chosen on the left.
+  const types = [...new Set(all.map(typeOf))];
+  const tchip = (k, label, n) => el("button", { class: "pl-chip" + (S.excType === k ? " on" : ""), "aria-pressed": String(S.excType === k),
+    "data-type": k, onclick: () => { S.excType = S.excType === k ? "all" : k; renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
+  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length),
+    types.length > 1 ? [el("span", { class: "exc-sep", "aria-hidden": "true" }),   // el() flattens one level only
+      ...types.map((k) => [k, all.filter((x) => inStatus(x) && typeOf(x) === k).length])
+        .filter(([k, n]) => n > 0 || S.excType === k)            // nothing of that type in this view: no chip
+        .map(([k, n]) => tchip(k, CASE_STATUS[k] || nice(k), n))] : null);
   if (!shown.length) return put("exc-list", bar, S.excFilter === "open"
     ? el("div", { class: "empty" }, el("b", {}, "Every item has a decision"), el("span", {}, "This period is ready to report."),
         el("button", { class: "primary mt10", onclick: () => go("reports") }, "Download the reports →"))
@@ -1328,6 +1351,7 @@ function renderExceptions() {
       x.suggestion ? el("div", { class: "xs" }, el("div", { class: "xs-k" }, "Suggested next step"), el("div", {}, rich(x.suggestion))) : null,
       x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${x.proposed_by}`), el("div", {}, `“${x.proposal_note}”`)) : null,
       x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
+      reviewTrail(x),
       el("details", { class: "xd" }, el("summary", {}, "Details"),
         el("dl", {},
           el("dt", {}, "Rule"), el("dd", {}, el("span", { class: "rid" }, x.rule_id)),

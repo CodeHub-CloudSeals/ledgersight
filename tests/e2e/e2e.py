@@ -296,8 +296,29 @@ with sync_playwright() as pw:
         assert "REJECTED" in exc("DB04").inner_text()
         e = exc("DB10"); e.get_by_role("button", name="Return to preparer").click(); p.wait_for_timeout(700)
         assert "returned" in exc("DB10").inner_text().lower()
-        return "DB06 ACCEPTED, DB04 REJECTED, DB10 RETURNED"
+        # 2026-11-12: the card shows its review trail - DB06 was proposed by the preparer, then approved by the CPA
+        trail = [t.strip() for t in exc("DB06").locator(".xtrail li").all_inner_texts()]
+        assert len(trail) == 2 and trail[0].startswith("Proposed") and trail[1].startswith("Approved"), trail
+        exc("DB06").scroll_into_view_if_needed(); exc("DB06").screenshot(path=os.path.join(SHOTS, "07b-review-trail.png"))
+        return "DB06 ACCEPTED (trail: proposed → approved), DB04 REJECTED, DB10 RETURNED"
     check("Review decisions ACCEPT / REJECT / RETURN", "Acting as CPA Reviewer", t_decisions)
+
+    def t_queue_types():
+        # 2026-11-12: case-type chips narrow the queue; clicking the chip again shows everything again
+        tab(p, "exceptions"); p.click(".exc-filter .pl-chip:has-text('All')"); p.wait_for_timeout(300)
+        total = p.locator("#exc-list .exc").count()
+        chips = p.locator(".exc-filter .pl-chip[data-type]")
+        assert chips.count() >= 2, chips.count()
+        first = chips.first; n = int(first.locator(".pl-n").inner_text())
+        label = first.inner_text().replace(str(n), "").strip()
+        first.click(); p.wait_for_timeout(300)
+        cards = p.locator("#exc-list .exc")
+        assert cards.count() == n < total, (label, n, cards.count(), total)
+        p.locator(".exc-filter .pl-chip[data-type]").first.click(); p.wait_for_timeout(300)
+        assert p.locator("#exc-list .exc").count() == total
+        p.click(".exc-filter .pl-chip:has-text('Open')"); p.wait_for_timeout(300)
+        return f"{chips.count()} case types; '{label}' shows {n} of {total}; clicking again shows all"
+    check("Review queue: filter by case type", "click a type chip, then again", t_queue_types)
 
     def t_review_flow():
         tab(p, "exceptions")

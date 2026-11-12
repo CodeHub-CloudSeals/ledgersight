@@ -2112,3 +2112,10 @@ body:not(.side-mini) .rail-tip{display:none}
 .map-dates.ask{background:var(--warn-bg)}
 .map-dates .map-order{flex:0 0 auto;width:auto;min-width:240px}
 #mapping table td{vertical-align:middle}
+/* Review queue: case-type chips after the status chips; the review trail inside each card */
+.exc-sep{width:1px;align-self:stretch;margin:4px 4px;background:var(--line)}
+.xtrail{margin-top:14px;padding:12px 16px;border-radius:16px;background:var(--ds-inset)}
+.xtrail ol{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}
+.xtrail li{position:relative;padding-left:18px;font-size:13.5px;line-height:1.45}
+.xtrail li::before{content:"";position:absolute;left:2px;top:.55em;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.xtrail li.t-RETURN::before{background:var(--warn-solid)}.xtrail li.t-REJECT::before{background:var(--bad-solid)}.xtrail li.t-ACCEPT::before{background:var(--ok-solid)}
