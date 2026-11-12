@@ -703,16 +703,29 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
     b.title = b.ariaLabel = on ? "Expand menu" : "Collapse menu"; b.setAttribute("aria-expanded", String(!on)); };
   apply();
   const side = document.querySelector(".sidebar"), wide = matchMedia("(min-width:821px)");
-  let t = 0;
-  const peek = (v, ms) => { clearTimeout(t); t = setTimeout(() => side.classList.toggle("peek", v && on && wide.matches), ms); };
-  side.addEventListener("mouseenter", () => peek(true, 160));
-  side.addEventListener("mouseleave", () => peek(false, 120));
-  side.addEventListener("focusin", () => peek(true, 0));
-  side.addEventListener("focusout", (e) => { if (!side.contains(e.relatedTarget) && !side.matches(":hover")) peek(false, 0); });
-  // With a mouse the peeked rail stays open until the pointer leaves, so the active highlight can glide between items;
-  // on touch there is no "leave", so the rail closes after a tap.
-  side.addEventListener("click", (e) => { if (e.target.closest(".tab") && matchMedia("(pointer:coarse)").matches) peek(false, 0); });
-  $("side-toggle").onclick = () => { on = !on; peek(false, 0); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
+  // The collapsed rail never expands over the page: pages are opened straight from the icons, and a small dark label
+  // appears beside the icon under the pointer (or keyboard focus). Expanding is only via the toggle, and then the
+  // page content slides aside to make room (animated grid column, see avocet.css).
+  const tip = el("div", { class: "rail-tip", role: "tooltip", id: "rail-tip", "aria-hidden": "true" });
+  document.body.append(tip);
+  const hideTip = () => tip.classList.remove("on");
+  const showTip = (tab) => {
+    if (!on || !wide.matches || !tab) return hideTip();
+    const label = tab.querySelector(".lbl-t"); if (!label) return hideTip();
+    const count = tab.querySelector(".count"), n = count && count.textContent.trim();
+    tip.textContent = label.textContent.trim() + (n && n !== "0" ? ` · ${n}` : "");
+    const r = tab.getBoundingClientRect();
+    tip.style.left = `${Math.round(r.right + 14)}px`; tip.style.top = `${Math.round(r.top + r.height / 2)}px`;
+    tip.classList.add("on");
+  };
+  side.querySelectorAll(".tab").forEach((tb) => {
+    tb.addEventListener("mouseenter", () => showTip(tb));
+    tb.addEventListener("focus", () => { if (tb.matches(":focus-visible")) showTip(tb); });
+    tb.addEventListener("mouseleave", hideTip); tb.addEventListener("blur", hideTip);
+    tb.addEventListener("click", hideTip);
+  });
+  side.querySelector("nav").addEventListener("scroll", hideTip, { passive: true });
+  $("side-toggle").onclick = () => { on = !on; hideTip(); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
 $("period-chip").onclick = () => {
   go("trust"); const d = $("ov-profile");

@@ -216,20 +216,21 @@ with sync_playwright() as pw:
     check("Decision buttons share one style", "Review queue: compare height and corner radius", t_decision_buttons)
 
     def t_page_motion():
-        # 2026-11-12: page entrance (title rises from a mask, content follows) + liquid sidebar glide; nothing left behind.
+        # 2026-11-12: page entrance (title + subtitle rise word by word, content follows) + liquid sidebar glide;
+        # nothing left behind (word wrappers removed, no inline styles).
         tab(p, "home"); p.wait_for_timeout(600)
         if not p.evaluate("!!window.Motion"): return "motion library absent; static pages (fallback)"
         p.click('.sidebar nav .tab[data-tab="reports"]'); p.wait_for_timeout(60)
-        mid = p.evaluate("""() => { const t = document.querySelector('#p-reports h2 .ls-rise'); const pl = document.querySelector('.nav-pill').getBoundingClientRect();
-            return [t ? getComputedStyle(t).transform : 'none', Math.round(pl.height)]; }""")
-        assert mid[0] != "none", "page title is not animating in"
-        p.wait_for_timeout(2200)
-        left = p.evaluate("""() => [...document.querySelectorAll('.panel.active *')].filter(e => e.offsetParent && ((e.style.opacity && e.style.opacity !== '1') ||
-            e.style.filter || (e.style.transform && e.style.transform !== 'none'))).length""")
+        mid = p.evaluate("""() => { const w = [...document.querySelectorAll('#p-reports .ls-wi')], pl = document.querySelector('.nav-pill').getBoundingClientRect();
+            return [w.length, new Set(w.slice(0, 8).map(e => Math.round(new DOMMatrix(getComputedStyle(e).transform).m42))).size, Math.round(pl.height)]; }""")
+        assert mid[0] >= 5 and mid[1] > 1, f"words are not rising one after another: {mid}"
+        p.wait_for_timeout(2400)
+        left = p.evaluate("""() => document.querySelectorAll('.ls-w, .ls-wrun, [data-ls-split]').length + [...document.querySelectorAll('.panel.active *')].filter(e => e.offsetParent &&
+            ((e.style.opacity && e.style.opacity !== '1') || e.style.filter || (e.style.transform && e.style.transform !== 'none'))).length""")
         pill = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(), A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect();
             return Math.max(Math.abs(P.top - A.top), Math.abs(P.height - A.height)); }""")
         assert left == 0 and pill <= 1, (left, pill)
-        return f"title rising mid-way ({mid[0][:24]}…), sidebar highlight {mid[1]}px tall mid-glide; settles exactly, no leftover styles"
+        return f"{mid[0]} words rising in sequence, sidebar highlight {mid[2]}px tall mid-glide; settles exactly, wrappers removed"
     check("Page entrance + sidebar glide", "switch Overview → Reports, sample mid-animation and after", t_page_motion)
 
     def t_design_rules():
@@ -462,8 +463,12 @@ with sync_playwright() as pw:
         p.wait_for_timeout(500)
         if not p.locator(".nav-pill").count(): return "no sliding highlight (motion library absent); nothing to check"
         seen = []
+        rail_w = p.evaluate("document.querySelector('.sidebar').getBoundingClientRect().width")
         for t in ("reports", "agents", "evidence", "home"):
             el = p.locator(f'.sidebar nav .tab[data-tab="{t}"]'); el.hover(); p.wait_for_timeout(450)
+            # 2026-11-12: the rail no longer expands over the page on hover; a label appears beside the icon instead
+            w, tip = p.evaluate("[document.querySelector('.sidebar').getBoundingClientRect().width, document.getElementById('rail-tip').classList.contains('on')]")
+            assert abs(w - rail_w) < 1 and tip, (t, w, rail_w, tip)
             el.click(); p.mouse.move(900, 500); p.wait_for_timeout(1200)
             d = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(),
                 A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect(),
@@ -472,7 +477,7 @@ with sync_playwright() as pw:
             assert d[0] <= 1 and d[1], (t, d); seen.append(t)
         if not was_mini: p.click("#side-toggle"); p.mouse.move(900, 500); p.wait_for_timeout(500)
         p.set_viewport_size({"width": 1280, "height": 900})
-        return f"collapsed rail: hover-peek + click {', '.join(seen)} → highlight sits exactly on the active item inside the rail"
+        return f"collapsed rail: hover shows a label (rail stays {round(rail_w)}px), click {', '.join(seen)} → highlight sits exactly on the active item"
     def t_tiles_aligned():
         # Regression (2026-11-12): wrapped tile labels pushed some numbers lower than others; 1280px left a 5+1 row.
         tab(p, "recon"); p.wait_for_timeout(1800); out = []  # let the page entrance finish before measuring
@@ -506,7 +511,7 @@ with sync_playwright() as pw:
 
     check("Reconciliation number tiles line up", "measure tile values per row at 1440/1280/390px", t_tiles_aligned)
 
-    check("Sidebar highlight after hover-peek click", "collapse rail, hover, click tab, move away, compare boxes", t_pill_after_peek)
+    check("Collapsed rail: label on hover, highlight after click", "collapse rail, hover (no expand), click tab, compare boxes", t_pill_after_peek)
 
     def t_back():
         tab(p, "home"); tab(p, "reports"); tab(p, "rules")

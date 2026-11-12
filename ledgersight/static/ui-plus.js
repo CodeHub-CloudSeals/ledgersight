@@ -96,43 +96,89 @@
     clearTimeout(qTimer); qTimer = setTimeout(flush, 16);
   }
   // Page entrance, in three beats (about 0.5s in all, so it never slows work down):
-  //  1. the page title slides up from under an invisible line (text-mask reveal),
-  //  2. the subtitle and header actions rise with a short blur-to-sharp,
+  //  1. the title, then the subtitle, rise word by word, each word from under its own clip line,
+  //  2. the header actions rise with a short blur-to-sharp,
   //  3. the content blocks, then the cards inside them, rise one after another.
   const HEAD = ".page-head, .ov-head";
-  function maskTitle(h) {
-    let inner = h.querySelector(":scope > .ls-rise");
-    if (!inner) {
-      inner = document.createElement("span"); inner.className = "ls-rise";
-      while (h.firstChild) inner.appendChild(h.firstChild);
-      h.appendChild(inner); h.classList.add("ls-mask");
+  const TEXT = "h2, .sub, .greet, .hero-meta";
+  const UNIT = ".badge, code, kbd, svg, button, input, select, img, .mono, .pill, .chip";  // never split inside these
+  // Wrap every word in <span.ls-w><span.ls-wi>word</span></span> (bold/links are split too; badges stay whole).
+  function splitWords(node) {
+    if (node.dataset.lsSplit) unsplit(node);
+    const inners = [];
+    const flexLike = /flex|grid/.test(getComputedStyle(node).display);
+    const wrapUnit = (n) => {
+      const w = document.createElement("span"), i = document.createElement("span");
+      w.className = "ls-w"; i.className = "ls-wi"; n.replaceWith(w); i.appendChild(n); w.appendChild(i); inners.push(i);
+    };
+    const walk = (parent) => {
+      for (const n of [...parent.childNodes]) {
+        if (n.nodeType === 3) {
+          const parts = n.textContent.split(/(\s+)/);
+          if (parts.every((s) => !s.trim())) continue;
+          const frag = document.createDocumentFragment();
+          for (const s of parts) {
+            if (!s) continue;
+            if (!s.trim()) { frag.appendChild(document.createTextNode(s)); continue; }
+            const w = document.createElement("span"), i = document.createElement("span");
+            w.className = "ls-w"; i.className = "ls-wi"; i.textContent = s; w.appendChild(i); frag.appendChild(w); inners.push(i);
+          }
+          n.replaceWith(frag);
+        } else if (n.nodeType === 1) {
+          if (n.matches(UNIT)) wrapUnit(n); else walk(n);
+        }
+      }
+    };
+    if (flexLike) {
+      // In a flex/grid heading, loose text runs become one inline item each so spaces and wrapping stay as they were.
+      for (const n of [...node.childNodes]) if (n.nodeType === 3 && n.textContent.trim()) {
+        const run = document.createElement("span"); run.className = "ls-wrun"; n.replaceWith(run); run.appendChild(n);
+      }
     }
-    return inner;
+    walk(node);
+    node.dataset.lsSplit = "1";
+    return inners;
+  }
+  function unsplit(node) {
+    if (!node || !node.dataset.lsSplit) return;
+    node.querySelectorAll(".ls-w").forEach((w) => { const i = w.firstChild; w.replaceWith(...(i ? i.childNodes : [])); });
+    node.querySelectorAll(".ls-wrun").forEach((r) => r.replaceWith(...r.childNodes));
+    delete node.dataset.lsSplit; node.normalize();
+  }
+  function revealWords(nodes, startDelay) {
+    let t = startDelay;
+    nodes.forEach((node) => {
+      const words = splitWords(node);
+      if (!words.length) return;
+      const step = Math.min(0.045, 0.42 / words.length);   // long subtitles still finish quickly
+      words.forEach((w) => { w.style.transform = "translateY(110%)"; });
+      const anim = M.animate(words, { y: ["110%", "0%"] }, { duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: M.stagger(step, { startDelay: t }) });
+      const done = () => unsplit(node);
+      (anim.finished || anim).then(done, done);
+      setTimeout(() => { if (node.dataset.lsSplit) done(); }, (t + step * words.length + 0.6) * 1000 + 400);
+      t += Math.min(0.18, step * words.length * 0.5);
+    });
   }
   function enterPanel(p) {
     if (!motionOn || !p) return;
     windowUntil = performance.now() + 1500;
     const head = p.querySelector(HEAD);
-    const title = head && head.querySelector("h2");
-    const headRest = head ? [...head.querySelectorAll(".sub, .greet, .hero-meta, .mprog, .row, .next-btns, .next")]
-      .filter((e) => e.offsetParent && !e.closest("h2") && !e.parentElement.closest(".next, .row, .next-btns")) : [];
+    const texts = head ? [...head.querySelectorAll(TEXT)].filter((e) => e.offsetParent && !e.parentElement.closest(TEXT)) : [];
+    const headRest = head ? [...head.querySelectorAll(".mprog, .row, .next-btns, .next")]
+      .filter((e) => e.offsetParent && !e.parentElement.closest(".next, .row, .next-btns")) : [];
     const blocks = [...p.children].filter((e) => e.offsetParent && !e.matches(HEAD));
     const cards = [...p.querySelectorAll(".card .card, .grid > .card, .tiles > .tile, #ov-kpis > *, #ov-charts > *, .exc, .pfc, .ag-card, .agent, #rep-cards > .card, #ev-summary > .card, #attack-grid > .card")]
       .filter((e) => e.offsetParent).slice(0, 18);
     const nested = new Set(cards);
     const outer = blocks.filter((b) => !nested.has(b));
     const all = [...headRest, ...outer, ...cards];
-    if (title) {
-      const t = maskTitle(title); all.push(t);
-      t.style.transform = "translateY(105%)";
-      settle([t], M.animate(t, { y: ["105%", "0%"] }, { duration: 0.6, ease: [0.22, 1, 0.36, 1] }));
-    }
-    headRest.forEach((e) => { e.style.opacity = "0"; });
+    revealWords(texts, 0);                                      // 1. title, then subtitle, word by word
+    headRest.forEach((e) => { e.style.opacity = "0"; });          // 2. header actions
     settle(headRest, M.animate(headRest, { opacity: [0, 1], y: [14, 0], filter: ["blur(6px)", "blur(0px)"] },
-      { duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: M.stagger(0.06, { startDelay: 0.08 }) }));
-    [...outer, ...cards].forEach((e) => { e.style.opacity = "0"; });
-    settle(outer, M.animate(outer, { opacity: [0, 1], y: [28, 0] }, { ...spring(0.55, 0.1), delay: M.stagger(0.06, { startDelay: 0.14 }) }));
-    if (cards.length) settle(cards, M.animate(cards, { opacity: [0, 1], y: [22, 0], scale: [0.985, 1] }, { ...spring(0.55, 0.1), delay: M.stagger(0.04, { startDelay: 0.2 }) }));
+      { duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: M.stagger(0.06, { startDelay: 0.22 }) }));
+    [...outer, ...cards].forEach((e) => { e.style.opacity = "0"; });   // 3. blocks, then the cards inside them
+    settle(outer, M.animate(outer, { opacity: [0, 1], y: [28, 0] }, { ...spring(0.55, 0.1), delay: M.stagger(0.06, { startDelay: 0.24 }) }));
+    if (cards.length) settle(cards, M.animate(cards, { opacity: [0, 1], y: [22, 0], scale: [0.985, 1] }, { ...spring(0.55, 0.1), delay: M.stagger(0.04, { startDelay: 0.3 }) }));
     p.querySelectorAll(ENTER).forEach((e) => { e.dataset.entered = "1"; });
     settle(all.filter((e) => e.style), null);
   }

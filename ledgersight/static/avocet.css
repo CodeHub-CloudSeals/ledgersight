@@ -2047,7 +2047,22 @@ html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none!important;width:0
 /* status icons and proof boxes share the .ok/.no names with buttons; they never take button padding */
 .cr-ico{padding:0}.cr-ico svg{flex:none}
 .tj .proof,.tj .proof.ok{border:0;border-radius:14px}
-/* Page entrance: the title slides up from under an invisible line. The clip margin keeps descenders (g, q, y) uncut without changing layout. */
-.ls-mask{overflow:clip;overflow-clip-margin:.2em}
-.ls-rise{display:block}
-.ov-head h2 .ls-rise{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* Sidebar: collapsed rail stays a rail (no hover-expand over the page). Toggling it slides the page content aside. */
+@media (min-width:821px){
+  .shell{transition:grid-template-columns .45s cubic-bezier(.22,1,.36,1)}
+  body.side-mini .shell{grid-template-columns:76px minmax(0,1fr)}
+  body.side-mini .sidebar{width:auto}
+}
+@media (min-width:821px) and (prefers-reduced-motion:reduce){.shell{transition:none}}
+/* label beside a rail icon (pointer or keyboard focus) */
+.rail-tip{position:fixed;left:0;top:0;z-index:300;transform:translate(-6px,-50%);opacity:0;pointer-events:none;
+  background:var(--sk-ink);color:var(--sk-card);font-size:13px;font-weight:650;letter-spacing:.005em;padding:7px 12px;border-radius:10px;
+  white-space:nowrap;box-shadow:0 10px 24px -10px rgba(23,43,77,.55);transition:opacity .16s ease,transform .2s cubic-bezier(.22,1,.36,1)}
+.rail-tip.on{opacity:1;transform:translate(0,-50%)}
+body:not(.side-mini) .rail-tip{display:none}
+/* Page entrance: words of the title and subtitle rise one after another from under their own clip line.
+   The wrappers exist only during the entrance and are removed after, so the settled page is the original markup. */
+.ls-w{display:inline-block;overflow:clip;overflow-clip-margin:.25em;vertical-align:baseline}
+.ls-wi{display:inline-block}
+.ls-wrun{display:inline}
