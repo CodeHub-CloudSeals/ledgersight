@@ -1431,12 +1431,13 @@ function renderExceptions() {
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
-            el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
-            el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
-            !reviewer ? el("button", { class: "primary", onclick: propose }, "Propose resolution for reviewer") : null,
-            el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")),
+            // Decisions are the CPA reviewer's: a staff preparer only proposes (the server refuses a preparer decision anyway, POL-02/POL-06).
+            reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
+              el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
+              el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
+              : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
           el("div", { class: "xa-hint" }, reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
-            : "You propose. A CPA reviewer who didn't propose it decides."), out)
+            : "You propose. A CPA reviewer approves, rejects or returns it."), out)
         : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
             (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")));
   }));
@@ -1471,8 +1472,8 @@ async function renderProof() {
       catch (e) { toast(denyText(e, "ACCEPT"), "bad"); }
       renderProof(); renderEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
     if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin
-      ? "To see it: switch “Acting as” to Staff Preparer, then click Approve on a review item. The refusal appears here."
-      : "To see it: sign in as a staff preparer, then click Approve on a review item. The refusal appears here.");
+      ? "A staff preparer has no Approve button; if one asks the server directly, it is refused and the refusal appears here."
+      : "A staff preparer has no Approve button; if one asks the server directly, it is refused and the refusal appears here.");
     if (c.key === "deny_cross_client") return el("button", { class: "danger", onclick: async () => {
       const q = "Show bank transactions for another client";
       try { const a = await api(W("/ask"), { method: "POST", json: { question: q } }); S.asks.push({ q, a, ws: S.ws }); renderAskLog(); } catch (_) { /* refusal is the point */ }

@@ -287,20 +287,21 @@ with sync_playwright() as pw:
         p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200); tab(p, "exceptions")
         e = exc("DB06"); e.locator("textarea").fill("Vendor bill PK-3302 supports it")
         e.get_by_role("button", name="Propose resolution for reviewer").click(); p.wait_for_timeout(700)
-        e = exc("DB06"); e.get_by_role("button", name="Approve").click(); p.wait_for_timeout(700)
-        out = exc("DB06").inner_text(); assert "MAKER_CHECKER" in out or "maker-checker" in out.lower(), out[-300:]
-        assert "can't approve it yourself" in out, out[-300:]
+        # 2026-11-12 (user decision): the preparer has no Approve / Reject / Return buttons; only Propose.
+        for name in ("Approve", "Reject", "Return to preparer"):
+            assert p.locator("#exc-list").get_by_role("button", name=name, exact=True).count() == 0, name
+        assert "A CPA reviewer approves, rejects or returns it" in exc("DB06").inner_text()
         shot(p, "06-maker-checker")
-        # 2026-11-12: each button gets its own refusal text (it used to say "approve" for Reject and Return too)
-        exc("DB06").get_by_role("button", name="Reject").click(); p.wait_for_timeout(700)
-        out = exc("DB06").inner_text(); assert "can't reject it yourself" in out and "approve it" not in out, out[-300:]
-        exc("DB06").get_by_role("button", name="Return to preparer").click(); p.wait_for_timeout(700)
-        out = exc("DB06").inner_text(); assert "Return to preparer is how a CPA reviewer" in out and "approve it" not in out, out[-300:]
-        other = p.locator("#exc-list .exc").filter(has_not_text="DB06").filter(has=p.get_by_role("button", name="Reject")).first
-        other.get_by_role("button", name="Reject").click(); p.wait_for_timeout(700)
-        out = other.inner_text(); assert "Only a CPA reviewer can reject" in out and "you proposed" not in out.lower(), out[-300:]
-        return "Preparer: own proposal DB06 → Approve/Reject/Return each refused by maker-checker in their own words; another case → 'Only a CPA reviewer can reject'"
-    check("Maker-checker (preparer cannot approve own proposal)", "Acting as Staff Preparer → Propose → Approve", t_maker_checker)
+        # ...and the server still refuses a preparer decision sent directly: own proposal -> POL-06, any other -> POL-02
+        mine, other = exc("DB06").get_attribute("data-exc"), p.locator("#exc-list .exc.OPEN").filter(has_not_text="DB06").first.get_attribute("data-exc")
+        post = """async ([x, d]) => { const r = await fetch(`/v1/workspaces/${S.ws}/runs/${S.run.id}/exceptions/${x}/decisions`,
+            {method: 'POST', credentials: 'same-origin', headers: {'x-ledgersight': '1', 'content-type': 'application/json'}, body: JSON.stringify({decision: d, note: ''})});
+            return [r.status, (await r.json()).detail]; }"""
+        r1 = p.evaluate(post, [mine, "ACCEPT"]); r2 = p.evaluate(post, [other, "REJECT"])
+        assert r1[0] == 403 and r1[1]["reason_code"] == "MAKER_CHECKER_SELF_APPROVAL" and r1[1]["policy_id"] == "POL-06", r1
+        assert r2[0] == 403 and r2[1]["reason_code"] == "ROLE_NOT_AUTHORISED", r2
+        return "Preparer: only 'Propose' (no Approve/Reject/Return); direct decision on own proposal → 403 POL-06, on another → 403 ROLE_NOT_AUTHORISED"
+    check("Maker-checker (preparer cannot approve own proposal)", "Acting as Staff Preparer → Propose; no decision buttons; direct request refused", t_maker_checker)
 
     def t_preparer_view():
         # 2026-11-12: the staff preparer sees their own work; governance and admin pages are the CPA reviewer's.

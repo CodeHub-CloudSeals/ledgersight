@@ -58,8 +58,8 @@ to propose / returned to me / waiting for a CPA reviewer), Sources, Reconciliati
 Counterparties, Trace, Reports (draft note while items are open; no whole-audit-trail download) and Rulebooks.
 Agents, Guardrails, Audit trail, Data & security and People are hidden AND refused on the server (POL-02,
 governance.read): /evidence, /trustops/proof, /audit-trail.*, /evidence/tamper-check, /actions/attempt, /v1/trust.
-/agents stays open (the Reconciliation workflow card). Approve/Reject/Return stay visible to the preparer on purpose
-(live POL-06 refusal in the demo).
+/agents stays open (the Reconciliation workflow card). Approve/Reject/Return are shown to the CPA reviewer only
+(user decision 2026-11-12); the preparer proposes. The server still refuses a preparer decision (POL-06/POL-02).
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
