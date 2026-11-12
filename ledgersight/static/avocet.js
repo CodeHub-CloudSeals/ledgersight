@@ -1009,7 +1009,7 @@ async function uploadOne(f) {
     const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, `Checking ${f.name}`, api(W("/uploads"), { method: "POST", form: fd }));
     S.upload = r;
     if (r.routed === "document") { msg("up-msg", `${f.name} is a receipt or invoice. Fields extracted; check them, then confirm${left}.`, "good"); return renderDocConfirm(); }
-    msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Confirm the mapping below${left}.`, "good"); renderMapping();
+    msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Check the columns at the top of the page, then confirm${left}.`, "good"); renderMapping();
   } catch (e) { refused(f, e.message); msg("up-msg", ""); nextInQueue(); }
 }
 // "File 2 of 7" while a batch is being confirmed one by one.

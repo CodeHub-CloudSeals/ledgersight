@@ -941,7 +941,7 @@ main{padding-bottom:96px} /* room so the floating Ask button never hides the las
 @media(max-width:640px){.pf-note{margin-left:0}}
 
 /* ============ Upload: confirm bar stays in reach ============ */
-#mapping{overflow:visible;scroll-margin-top:76px;border-color:var(--accent-line, var(--line));box-shadow:0 0 0 4px var(--accent-soft),var(--shadow-xs)}
+#mapping{overflow:visible;scroll-margin-top:76px;margin:0 0 var(--sp-5);border-color:var(--accent-line, var(--line));box-shadow:0 0 0 4px var(--accent-soft),var(--shadow-xs)}
 .map-bar{position:sticky;top:60px;z-index:4;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
   margin:calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5)) 4px;padding:14px var(--sp-5);background:var(--surface);
   border-bottom:1px solid var(--line);border-radius:var(--r-lg) var(--r-lg) 0 0}
