@@ -15,7 +15,7 @@
 
   // Motion leaves inline transform/opacity behind; clear it so cards never become containing blocks for popups.
   const settle = (els, anim) => {
-    const clear = () => els.forEach((e) => { e.style.transform = ""; e.style.opacity = ""; });
+    const clear = () => els.forEach((e) => { e.style.transform = ""; e.style.opacity = ""; e.style.filter = ""; });
     const t = setTimeout(clear, 1400);
     if (anim && anim.finished) anim.finished.then(() => { clearTimeout(t); clear(); }, () => {});
     else if (anim && anim.then) anim.then(() => { clearTimeout(t); clear(); }, () => {});
@@ -23,11 +23,19 @@
 
   /* ---------- 1. sliding active pill in the sidebar (Framer "layoutId" style) ---------- */
   const nav = document.querySelector(".sidebar nav");
-  let pill = null, pillAnim = null;
+  let pill = null, pillAnims = [];
   const side = nav && nav.closest(".sidebar");
-  // While the collapsed rail is peeking open (or animating shut) the menu has a different geometry; a spring
-  // started then would finish on stale coordinates, so the pill only slides when the rail is settled.
-  const railMoving = () => !!(side && (side.classList.contains("peek") || side.dataset.railMoving));
+  // While the rail is opening or closing the menu geometry is changing under the pill; a glide started then would
+  // finish on stale coordinates, so during that ~0.3s the pill snaps instead.
+  const railMoving = () => !!(side && side.dataset.railMoving);
+  // Liquid glide: the pill's top and bottom edges are separate springs. The edge in the direction of travel leads,
+  // the other follows, so the pill stretches toward the new item and settles into it (iOS / Linear style).
+  const cur = { x: 0, top: 0, bottom: 0, w: 0 };
+  const paint = () => {
+    pill.style.transform = `translate(${cur.x}px, ${cur.top}px)`;
+    pill.style.width = `${cur.w}px`; pill.style.height = `${Math.max(0, cur.bottom - cur.top)}px`;
+  };
+  const stopPill = () => { pillAnims.forEach((a) => { try { a.stop(); } catch (_) {} }); pillAnims = []; };
   function placePill(instant) {
     if (!pill) return;
     const a = nav.querySelector(".tab.active");
@@ -35,13 +43,18 @@
     pill.style.opacity = "1";
     const box = { x: a.offsetLeft, y: a.offsetTop, width: a.offsetWidth, height: a.offsetHeight };
     pill.style.setProperty("--pl", `${a.offsetLeft}px`);
-    if (!motionOn || instant || railMoving()) {
-      if (pillAnim) { try { pillAnim.stop(); } catch (_) {} pillAnim = null; }
-      pill.style.transform = `translate(${box.x}px, ${box.y}px)`; pill.style.width = `${box.width}px`; pill.style.height = `${box.height}px`;
+    const same = Math.abs(cur.top - box.y) < 0.5 && Math.abs(cur.bottom - (box.y + box.height)) < 0.5 && Math.abs(cur.x - box.x) < 0.5 && Math.abs(cur.w - box.width) < 0.5;
+    if (!motionOn || instant || railMoving() || !cur.w) {
+      stopPill(); Object.assign(cur, { x: box.x, top: box.y, bottom: box.y + box.height, w: box.width }); paint();
       return;
     }
-    if (pillAnim) { try { pillAnim.stop(); } catch (_) {} }
-    pillAnim = M.animate(pill, { x: box.x, y: box.y, width: box.width, height: box.height }, spring(0.42, 0.22));
+    if (same) return;
+    stopPill();
+    const down = box.y >= cur.top, lead = spring(0.3, 0.12), trail = spring(0.5, 0.16);
+    const go = (k, to, opts) => pillAnims.push(M.animate(cur[k], to, { ...opts, onUpdate: (v) => { cur[k] = v; paint(); } }));
+    go("top", box.y, down ? trail : lead);
+    go("bottom", box.y + box.height, down ? lead : trail);
+    go("x", box.x, lead); go("w", box.width, lead);
   }
   if (nav) {
     pill = document.createElement("span");
@@ -82,15 +95,54 @@
     el.dataset.entered = "1"; el.style.opacity = "0"; queue.push(el);
     clearTimeout(qTimer); qTimer = setTimeout(flush, 16);
   }
+  // Page entrance, in three beats (about 0.5s in all, so it never slows work down):
+  //  1. the page title slides up from under an invisible line (text-mask reveal),
+  //  2. the subtitle and header actions rise with a short blur-to-sharp,
+  //  3. the content blocks, then the cards inside them, rise one after another.
+  const HEAD = ".page-head, .ov-head";
+  function maskTitle(h) {
+    let inner = h.querySelector(":scope > .ls-rise");
+    if (!inner) {
+      inner = document.createElement("span"); inner.className = "ls-rise";
+      while (h.firstChild) inner.appendChild(h.firstChild);
+      h.appendChild(inner); h.classList.add("ls-mask");
+    }
+    return inner;
+  }
   function enterPanel(p) {
     if (!motionOn || !p) return;
     windowUntil = performance.now() + 1500;
-    const kids = [...p.children].filter((e) => e.offsetParent);
-    const anim = M.animate(kids, { opacity: [0, 1], y: [18, 0] }, { ...spring(0.55, 0.12), delay: M.stagger(0.05) });
-    settle(kids, anim);
+    const head = p.querySelector(HEAD);
+    const title = head && head.querySelector("h2");
+    const headRest = head ? [...head.querySelectorAll(".sub, .greet, .hero-meta, .mprog, .row, .next-btns, .next")]
+      .filter((e) => e.offsetParent && !e.closest("h2") && !e.parentElement.closest(".next, .row, .next-btns")) : [];
+    const blocks = [...p.children].filter((e) => e.offsetParent && !e.matches(HEAD));
+    const cards = [...p.querySelectorAll(".card .card, .grid > .card, .tiles > .tile, #ov-kpis > *, #ov-charts > *, .exc, .pfc, .ag-card, .agent, #rep-cards > .card, #ev-summary > .card, #attack-grid > .card")]
+      .filter((e) => e.offsetParent).slice(0, 18);
+    const nested = new Set(cards);
+    const outer = blocks.filter((b) => !nested.has(b));
+    const all = [...headRest, ...outer, ...cards];
+    if (title) {
+      const t = maskTitle(title); all.push(t);
+      t.style.transform = "translateY(105%)";
+      settle([t], M.animate(t, { y: ["105%", "0%"] }, { duration: 0.6, ease: [0.22, 1, 0.36, 1] }));
+    }
+    headRest.forEach((e) => { e.style.opacity = "0"; });
+    settle(headRest, M.animate(headRest, { opacity: [0, 1], y: [14, 0], filter: ["blur(6px)", "blur(0px)"] },
+      { duration: 0.5, ease: [0.22, 1, 0.36, 1], delay: M.stagger(0.06, { startDelay: 0.08 }) }));
+    [...outer, ...cards].forEach((e) => { e.style.opacity = "0"; });
+    settle(outer, M.animate(outer, { opacity: [0, 1], y: [28, 0] }, { ...spring(0.55, 0.1), delay: M.stagger(0.06, { startDelay: 0.14 }) }));
+    if (cards.length) settle(cards, M.animate(cards, { opacity: [0, 1], y: [22, 0], scale: [0.985, 1] }, { ...spring(0.55, 0.1), delay: M.stagger(0.04, { startDelay: 0.2 }) }));
     p.querySelectorAll(ENTER).forEach((e) => { e.dataset.entered = "1"; });
+    settle(all.filter((e) => e.style), null);
   }
-  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => enterPanel(document.getElementById("p-" + t.dataset.tab))));
+  // Animate whenever a page becomes active, however it was opened (sidebar, links, Back/Forward, Ctrl+K results).
+  // A MutationObserver fires after the click handler has finished rendering the page, before the browser paints.
+  document.querySelectorAll(".panel").forEach((pnl) => {
+    let was = pnl.classList.contains("active");
+    new MutationObserver(() => { const now = pnl.classList.contains("active"); if (now && !was) enterPanel(pnl); was = now; })
+      .observe(pnl, { attributes: true, attributeFilter: ["class"] });
+  });
   window.LSMotion = { enter: enterPanel };
   // UI-8: hide the floating Ask button while the page scrolls down; bring it back on scroll up or at the end
   (function () {

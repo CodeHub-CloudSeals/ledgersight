@@ -709,7 +709,9 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
   side.addEventListener("mouseleave", () => peek(false, 120));
   side.addEventListener("focusin", () => peek(true, 0));
   side.addEventListener("focusout", (e) => { if (!side.contains(e.relatedTarget) && !side.matches(":hover")) peek(false, 0); });
-  side.addEventListener("click", (e) => { if (e.target.closest(".tab")) peek(false, 0); });
+  // With a mouse the peeked rail stays open until the pointer leaves, so the active highlight can glide between items;
+  // on touch there is no "leave", so the rail closes after a tap.
+  side.addEventListener("click", (e) => { if (e.target.closest(".tab") && matchMedia("(pointer:coarse)").matches) peek(false, 0); });
   $("side-toggle").onclick = () => { on = !on; peek(false, 0); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
 $("period-chip").onclick = () => {

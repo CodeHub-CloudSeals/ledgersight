@@ -215,6 +215,23 @@ with sync_playwright() as pw:
         return f"{len(st)} decision buttons, one height ({st[0][1]}px), all pill-shaped: " + ", ".join(t for t, _, _ in st)
     check("Decision buttons share one style", "Review queue: compare height and corner radius", t_decision_buttons)
 
+    def t_page_motion():
+        # 2026-11-12: page entrance (title rises from a mask, content follows) + liquid sidebar glide; nothing left behind.
+        tab(p, "home"); p.wait_for_timeout(600)
+        if not p.evaluate("!!window.Motion"): return "motion library absent; static pages (fallback)"
+        p.click('.sidebar nav .tab[data-tab="reports"]'); p.wait_for_timeout(60)
+        mid = p.evaluate("""() => { const t = document.querySelector('#p-reports h2 .ls-rise'); const pl = document.querySelector('.nav-pill').getBoundingClientRect();
+            return [t ? getComputedStyle(t).transform : 'none', Math.round(pl.height)]; }""")
+        assert mid[0] != "none", "page title is not animating in"
+        p.wait_for_timeout(2200)
+        left = p.evaluate("""() => [...document.querySelectorAll('.panel.active *')].filter(e => e.offsetParent && ((e.style.opacity && e.style.opacity !== '1') ||
+            e.style.filter || (e.style.transform && e.style.transform !== 'none'))).length""")
+        pill = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(), A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect();
+            return Math.max(Math.abs(P.top - A.top), Math.abs(P.height - A.height)); }""")
+        assert left == 0 and pill <= 1, (left, pill)
+        return f"title rising mid-way ({mid[0][:24]}…), sidebar highlight {mid[1]}px tall mid-glide; settles exactly, no leftover styles"
+    check("Page entrance + sidebar glide", "switch Overview → Reports, sample mid-animation and after", t_page_motion)
+
     def t_design_rules():
         # DESIGN_RULES.md: pill buttons, no edge stripes, borderless insets/cards, 42px fields, frameless tables
         js = "\n".join(l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "design_rules.js"), encoding="utf-8").read().splitlines()
@@ -458,7 +475,7 @@ with sync_playwright() as pw:
         return f"collapsed rail: hover-peek + click {', '.join(seen)} → highlight sits exactly on the active item inside the rail"
     def t_tiles_aligned():
         # Regression (2026-11-12): wrapped tile labels pushed some numbers lower than others; 1280px left a 5+1 row.
-        tab(p, "recon"); out = []
+        tab(p, "recon"); p.wait_for_timeout(1800); out = []  # let the page entrance finish before measuring
         for w in (1440, 1280, 390):
             p.set_viewport_size({"width": w, "height": 900}); p.wait_for_timeout(400)
             rows = p.evaluate("""() => { const m = {}; document.querySelectorAll('#tiles .tile').forEach(t => {

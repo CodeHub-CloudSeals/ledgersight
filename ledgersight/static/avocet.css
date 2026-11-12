@@ -2047,3 +2047,7 @@ html::-webkit-scrollbar,html *::-webkit-scrollbar{display:none!important;width:0
 /* status icons and proof boxes share the .ok/.no names with buttons; they never take button padding */
 .cr-ico{padding:0}.cr-ico svg{flex:none}
 .tj .proof,.tj .proof.ok{border:0;border-radius:14px}
+/* Page entrance: the title slides up from under an invisible line. The clip margin keeps descenders (g, q, y) uncut without changing layout. */
+.ls-mask{overflow:clip;overflow-clip-margin:.2em}
+.ls-rise{display:block}
+.ov-head h2 .ls-rise{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
