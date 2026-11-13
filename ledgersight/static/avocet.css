@@ -2706,3 +2706,15 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .xa-tro .xa-row .grow{flex:1 1 auto}
 @media (max-width:700px){.xa-tro .xa-row{flex-wrap:wrap}.tro-bar .tro-assign{min-width:0;width:100%}.tro-bar .tro-rev{flex:1 1 100%}}
 @media (prefers-reduced-motion:reduce){.tro-dot{animation:none}}
+
+/* TrustOps status bar v2: "Sent to ..." with a send glyph, a round refresh icon instead of a "Check now" button */
+.tro-sent{display:inline-flex;align-items:center;gap:6px;color:var(--text-2)}
+.tro-sent b{color:var(--text);font-weight:600}
+.tro-send-ico svg{width:14px;height:14px;color:var(--accent)}
+.tro-refresh{width:36px;height:36px;border-radius:50%;border:0;background:var(--surface);display:inline-grid;place-items:center;flex:none}
+.tro-refresh svg{width:16px;height:16px}
+.tro-refresh:hover{color:var(--accent);background:var(--accent-soft)}
+.tro-refresh.spin svg{animation:troSpin .8s linear infinite}
+@keyframes troSpin{to{transform:rotate(360deg)}}
+.tro-open:empty{display:none}
+@media (prefers-reduced-motion:reduce){.tro-refresh.spin svg{animation:none}}

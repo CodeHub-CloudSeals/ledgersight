@@ -73,6 +73,10 @@ def test_page_confirms_the_send_and_lays_out_the_trustops_controls():
     assert "tropsSentNote(S.run)" in JS and "sent to TrustOps for approval" in JS
     assert 'SENT: "sent"' in JS and 'it.via === "TrustOps"' in JS
     body = JS.split("function tropsStatus(x, tops)", 1)[1].split("\n}\n", 1)[0]
-    assert "bar: el(\"div\", { class: \"tro-bar\" }" in body and "actions: [check, open]" in body
+    assert "bar: el(\"div\", { class: \"tro-bar\" }" in body and "actions: [open]" in body
+    # 2026-11-13: no "Check now" button (a refresh icon in the bar); the TrustOps link only for approvers there
+    assert '"Check now"' not in body and "tro-refresh" in body and '"Approve in TrustOps ↗"' in body
+    assert "items.some((r) => String(r.email" in body and '"Open TrustOps ↗"' not in body
+    assert '"Sent to ", el("b", {}, to)' in body
     assert "tro ? tro.bar : null" in JS and "tro ? tro.actions" in JS
     assert "#ag-grid{align-items:stretch}" in CSS and "#ag-grid>.card.agent{display:flex;flex-direction:column;height:100%}" in CSS

@@ -1694,25 +1694,40 @@ function tropsReviewer(x, tr) {
   tropsReviewers().then((items) => { for (const r of items) if (r.email !== cur) sel.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
   return el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Reviewer "), sel);
 }
-// 2026-11-13 layout: one status bar (state, when it was sent, reviewer) above one row of buttons.
+// 2026-11-13 (user feedback): LedgerSight SENDS items to the approvers in TrustOps. The status bar says where it
+// went and when; a small refresh icon asks TrustOps for the latest answer (the bell also checks every 10 s).
+// "Approve in TrustOps" is shown only to someone who is an approver there; nobody else has access to TrustOps.
+const REFRESH_D = "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7";
 function tropsStatus(x, tops) {
   const tr = x.trustops_review || {};
-  const check = el("button", { class: "secondary", title: "Ask TrustOps for the latest decision", onclick: (ev) => withBusy(ev.currentTarget, async () => {
-    try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults();
-      const now = S.run.result.exceptions.find((e) => e.id === x.id);
-      toast(now && now.status !== x.status ? `${x.case_id || x.id}: ${now.status === "ACCEPTED" ? "approved" : "rejected"} in TrustOps.` : "Still waiting for a decision in TrustOps.", "good");
-    } catch (e) { toast(e.message, "bad"); } }, "Checking…") }, "Check now");
-  const open = tops.approvals_url ? el("a", { class: "primary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Open TrustOps ↗") : null;
+  const refresh = el("button", { type: "button", class: "iconbtn tro-refresh", title: "Get the latest status from TrustOps", "aria-label": "Get the latest status from TrustOps",
+    onclick: async (ev) => {
+      const b = ev.currentTarget; b.classList.add("spin"); b.disabled = true;
+      try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults();
+        const now = S.run.result.exceptions.find((e) => e.id === x.id);
+        toast(now && now.status !== x.status ? `${x.case_id || x.id}: ${now.status === "ACCEPTED" ? "approved" : "rejected"} in TrustOps.` : "No decision yet. The approver hasn't answered in TrustOps.", "good");
+      } catch (e) { toast(e.message, "bad"); b.classList.remove("spin"); b.disabled = false; } } }, icon(REFRESH_D));
+  // only approvers in TrustOps (Admins / Approvers from Team & access) get the link; it fills in once the list is known
+  const open = el("span", { class: "tro-open" });
+  if (tops.approvals_url && tr.status === "PENDING") tropsReviewers().then((items) => {
+    const me = String((S.me && S.me.user_id) || "").toLowerCase();
+    if (items.some((r) => String(r.email || "").toLowerCase() === me))
+      put(open, el("a", { class: "primary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Approve in TrustOps ↗"));
+  });
   const sentAt = tr.submitted_at ? new Date(tr.submitted_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+  const to = tr.assigned_to ? tr.assigned_to : "TrustOps approvers";
   if (tr.status === "PENDING") return {
     bar: el("div", { class: "tro-bar" },
-      el("span", { class: "tro-pill" }, el("span", { class: "tro-dot", "aria-hidden": "true" }), "Waiting for approval in TrustOps"),
-      el("span", { class: "tro-sent muted small" }, sentAt ? `Sent ${sentAt}` : "Sent"), el("span", { class: "grow" }), tropsReviewer(x, tr)),
-    actions: [check, open] };
+      el("span", { class: "tro-pill" }, el("span", { class: "tro-dot", "aria-hidden": "true" }), "Waiting for approval"),
+      el("span", { class: "tro-sent small" }, el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")),
+        "Sent to ", el("b", {}, to), sentAt ? ` · ${sentAt}` : ""),
+      el("span", { class: "grow" }), tropsReviewer(x, tr), refresh),
+    actions: [open] };
   if (tr.status === "NOT_SENT") return {
-    bar: el("div", { class: "tro-bar bad" }, el("span", { class: "tro-pill bad" }, "Not sent to TrustOps"), el("span", { class: "muted small" }, tr.reason || "TrustOps could not be reached")),
-    actions: [check] };
-  return { bar: el("div", { class: "tro-bar" }, el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes")), actions: [check] };
+    bar: el("div", { class: "tro-bar bad" }, el("span", { class: "tro-pill bad" }, "Not sent to TrustOps"),
+      el("span", { class: "muted small" }, tr.reason || "TrustOps could not be reached"), el("span", { class: "grow" }), refresh),
+    actions: [] };
+  return { bar: el("div", { class: "tro-bar" }, el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes"), el("span", { class: "grow" }), refresh), actions: [] };
 }
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
@@ -1810,7 +1825,7 @@ function renderExceptions() {
               el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
               el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
               : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
-          el("div", { class: "xa-hint" }, tops ? "An approver in TrustOps approves or rejects it. The result appears here and in your notifications."
+          el("div", { class: "xa-hint" }, tops ? "The approver decides in TrustOps. Their answer appears here and in your notifications."
             : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer approves, rejects or returns it."), out)
         : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
