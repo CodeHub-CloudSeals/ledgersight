@@ -924,6 +924,16 @@ class Service:
                 facts.append({"label": k.replace("_", " "), "value": str(v)})
         if exc.get("proposal_note"):
             facts.append({"label": f"Note from {exc.get('proposed_by')}", "value": exc["proposal_note"]})
+        hist = exc.get("trustops_history") or []
+        if hist:   # 2026-11-13: sent again after a rejection in TrustOps; the approver sees what changed
+            last = hist[-1]
+            facts.insert(0, {"label": "Resubmitted", "value": f"Attempt {len(hist) + 1}. Rejected earlier by {last.get('resolved_by') or 'an approver'}"
+                                                         f"{': “' + last['reason'] + '”' if last.get('reason') else ''}"})
+            new = [a["filename"] for a in exc.get("attachments") or [] if a.get("at", "") > (last.get("closed_at") or "")]
+            if new:
+                facts.insert(1, {"label": "New proof since the rejection", "value": ", ".join(new)[:500]})
+        if exc.get("attachments"):
+            facts.append({"label": "Proof attached in LedgerSight", "value": ", ".join(a["filename"] for a in exc["attachments"])[:500]})
         base = os.environ.get("LEDGERSIGHT_URL", "").rstrip("/")
         return {"title": f"{exc['type'].replace('_', ' ').title()} · {money(abs(exc['amount_cents']))} · {exc['id']}",
                 "summary": exc.get("why") or "", "compare": compare, "lines": lines,
@@ -934,7 +944,9 @@ class Service:
     def _submit_one(self, user, w, run, exc) -> dict:
         """Send one review item to TrustOps for approval (approval happens only in TrustOps)."""
         ref = f"{w.id}|{run['id']}|{exc['id']}"
-        t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref,
+        hist = exc.get("trustops_history") or []
+        context = {"resubmission": len(hist), "resubmission_of": hist[-1].get("decision_id")} if hist else None
+        t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref, context=context,
                                 amount_minor=abs(int(exc["amount_cents"])), currency="USD", **self.review_details(w, run, exc))
         if t.get("decision_id"):
             exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
@@ -961,21 +973,62 @@ class Service:
             raise ValueError("This item already has a decision")
         if (exc.get("trustops_review") or {}).get("status") == "PENDING":
             raise ValueError("Already sent to TrustOps. Waiting for the approver.")
+        # 2026-11-13 (user request): no "any approver"; the sender names the person who must approve it in TrustOps.
+        to = str(to or "").strip().lower()
+        if not to:
+            raise ValueError("Choose who to send it to")
+        revs = trustops_api.reviewers()
+        if revs is not None and to not in {str(r.get("email") or "").lower() for r in revs}:
+            raise ValueError(f"{to} is not an approver in TrustOps")
         note = " ".join(str(note or "").split())[:1000]
         if note:   # what the sender says goes to the approver with the item (review_details shows it)
             exc["proposal_note"], exc["proposed_by"] = note, user.user_id
         tr = self._submit_one(user, w, run, exc)
+        missed = None   # 2026-11-13 action items: the sender is told (bell) when the approver did not receive it
         if tr["status"] == "PENDING" and to:
             try:
                 tr["assigned_to"] = trustops_api.assign(tr["decision_id"], to, user.user_id).get("assigned_to")
-            except ValueError:
-                pass   # sent to any approver; the reviewer can still be changed on the item
+            except ValueError as e:
+                missed = f"TrustOps received it, but {to} could not be made the approver ({e}). Choose the approver again on the item."
+        if tr["status"] != "PENDING":
+            missed = f"{to} did not receive it: {tr.get('reason') or 'TrustOps could not be reached'}. Press Try again on the item."
+        if missed:
+            tr["missed"] = missed
+            tr["missed_ref"] = f"missed:{exc_id}:{uuid.uuid4().hex[:8]}"
+            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="system", actor_id="trustops", run_id=run_id,
+                         action="exception.trustops_not_received", policy_decision="ERROR:TRUSTOPS_NOT_RECEIVED", policy_id="TRUSTOPS",
+                         approval_id=tr["missed_ref"], delegated_by=user.user_id, source_line_refs=exc.get("evidence_refs") or [],
+                         matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         if tr["status"] == "PENDING":
             w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=user.user_id, run_id=run_id,
                          action="exception.sent_to_trustops", policy_decision="ALLOW:TRUSTOPS_SUBMITTED", policy_id="TRUSTOPS",
                          approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
                          matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return {"exception_id": exc_id, "trustops_review": tr}
+
+    def resend_to_trustops(self, user, wid: str, run_id: str, exc_id: str, note: str = "", to: str | None = None) -> dict:
+        """2026-11-13 action items: an item rejected in TrustOps can be sent again once new proof is attached. The
+        rejection is kept in the item's history and sent along, so the approver sees it is a resubmission."""
+        w = self.gate(user, wid, "workspace.read", run_id=run_id)
+        if not ({"exception.propose", "exception.decide"} & policy.ROLE_ACTIONS.get(user.role, set())):
+            raise Denied("ROLE_NOT_AUTHORISED", policy_id="POL-02")
+        try:
+            run, exc = self._exc(w, run_id, exc_id)
+        except KeyError:
+            raise ValueError("Review item not found") from None
+        tr = exc.get("trustops_review") or {}
+        if exc["status"] != "REJECTED" or tr.get("status") != "REJECTED":
+            raise ValueError("Only items rejected in TrustOps can be sent again")
+        if not str(to or "").strip():
+            raise ValueError("Choose who to send it to")
+        closed = exc.get("reviewed_at") or ""
+        if not any(a.get("at", "") > closed for a in exc.get("attachments") or []):
+            raise ValueError("Attach new proof first, then send it again")
+        exc.setdefault("trustops_history", []).append({**tr, "closed_at": closed, "reviewer": exc.get("reviewer"), "review_note": exc.get("review_note")})
+        for k in ("reviewer", "reviewed_at", "review_note", "approval_id", "approval_policy", "effect", "carried_from"):
+            exc.pop(k, None)
+        exc.update(status="OPEN", trustops_review=None, resubmitted=len(exc["trustops_history"]))
+        return self.send_to_trustops(user, wid, run_id, exc_id, note, to)
 
     def sync_trustops(self, w, run):
         """Pick up approvals made in TrustOps and apply them to the review queue (signed into the evidence log)."""
@@ -1011,7 +1064,9 @@ class Service:
         tr = (exc or {}).get("trustops_review") or {}
         if not exc or tr.get("status") != "PENDING":
             raise ValueError("This item is not waiting for review in TrustOps")
-        out = trustops_api.assign(tr["decision_id"], to or None, user.user_id)
+        if not to:   # 2026-11-13 (user request): an item always has a named approver
+            raise ValueError("Choose who should approve it")
+        out = trustops_api.assign(tr["decision_id"], to, user.user_id)
         tr["assigned_to"] = out.get("assigned_to")
         w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=user.user_id, run_id=run_id,
                      action="exception.assign_reviewer", policy_decision="ALLOW:TRUSTOPS_ASSIGN", policy_id="TRUSTOPS",
@@ -1091,7 +1146,8 @@ class Service:
         w, d = self._gate(user, wid, "exception.attach", run_id=run_id, batch_sha=sha,
                           refs=((exc0 or {}).get("evidence_refs") or []) + [f"proof:{ext[1:]}"])
         run, exc = self._exc(w, run_id, exc_id)
-        if exc["status"] not in ("OPEN", "RETURNED"):
+        rejected_in_tops = exc["status"] == "REJECTED" and (exc.get("trustops_review") or {}).get("status") == "REJECTED"
+        if exc["status"] not in ("OPEN", "RETURNED") and not rejected_in_tops:   # 2026-11-13: rejected items can be resent
             raise ValueError(f"already {exc['status']}: proof can only be added before the decision")
         same = next((a for a in exc.get("attachments") or [] if a["sha256"] == sha), None)
         if same:
@@ -1128,15 +1184,19 @@ class Service:
     # rejects or returns an item. Your own actions never notify you. Only "seen" is stored (per person, per book).
     NOTIFY_ACTIONS = {"exception.proposed": "PROPOSED", "exception.accept": "APPROVED",
                       "exception.reject": "REJECTED", "exception.return": "RETURNED", "exception.attachment_added": "ATTACHED",
-                      "exception.sent_to_trustops": "SENT"}
+                      "exception.sent_to_trustops": "SENT", "exception.trustops_not_received": "NOT_RECEIVED"}
 
     def notifications(self, user, wid, limit: int = 30):
         w = self.gate(user, wid, "workspace.read", record=False)
         if trustops_api.configured() and w.runs:   # pick up approvals made in TrustOps, so the bell shows them
-            try:
-                self.sync_trustops(w, w.runs[list(w.runs)[-1]])
-            except Exception:   # noqa: BLE001 - TrustOps unreachable: the bell still answers
-                pass
+            # every run with an item still waiting in TrustOps, not only the latest (2026-11-13 cross-check)
+            for run in w.runs.values():
+                if not any((x.get("trustops_review") or {}).get("status") == "PENDING" for x in run.get("result", {}).get("exceptions", [])):
+                    continue
+                try:
+                    self.sync_trustops(w, run)
+                except Exception:   # noqa: BLE001 - TrustOps unreachable: the bell still answers
+                    break
         decides = "exception.decide" in policy.ROLE_ACTIONS.get(user.role, set())
         want = ({"exception.proposed"} if decides else {"exception.accept", "exception.reject", "exception.return"}) \
             | {"exception.attachment_added"}   # proof added by the other person is news for both roles
@@ -1152,9 +1212,19 @@ class Service:
                 tr = x.get("trustops_review") or {}
                 if tr.get("decision_id"):
                     by_id[tr["decision_id"]] = (x, tr.get("reason"))
+                if tr.get("missed_ref"):
+                    by_id[tr["missed_ref"]] = (x, tr.get("missed"))
         items = []
         for seq, e in enumerate(w.log.events):
             pd = str(e.get("policy_decision") or "")
+            if e.get("action") == "exception.trustops_not_received":   # only for the person who sent it
+                if e.get("delegated_by") != user.user_id:
+                    continue
+                x, note = by_id.get(e.get("approval_id"), ({}, None))
+                items.append({"seq": seq, "kind": "NOT_RECEIVED", "by": "TrustOps", "at": e.get("timestamp_utc"), "run_id": e.get("run_id"),
+                              "ref": e.get("approval_id"), "exception_id": x.get("id"), "case_id": x.get("case_id"), "type": x.get("type"),
+                              "note": note or "", "lines": e.get("source_line_refs") or [], "via": "TrustOps"})
+                continue
             # TrustOps news (items sent, approved or rejected there) is for both roles (2026-11-13)
             via_tops = pd.startswith("ALLOW:TRUSTOPS_") and e.get("action") in self.NOTIFY_ACTIONS
             if (e.get("action") not in want and not via_tops) or e.get("actor_id") == user.user_id or not pd.startswith("ALLOW"):

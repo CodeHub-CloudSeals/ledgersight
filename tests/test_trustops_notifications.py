@@ -26,6 +26,9 @@ def tops(monkeypatch):
     monkeypatch.setattr(trustops_client, "status", fake.status)
     fake.access = {"tops-notify@demo.test": "reviewer", "tops-prep@demo.test": "preparer"}
     monkeypatch.setattr(trustops_client, "app_access", lambda email, max_age=60: fake.access.get(email))
+    # 2026-11-13: every item is sent to a named approver in TrustOps
+    monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: [{"email": "approver@firm.test", "role": "Approver"}])
+    monkeypatch.setattr(trustops_client, "assign", lambda did, to, by: {"decision_id": did, "assigned_to": to})
     return fake
 
 
@@ -46,6 +49,7 @@ def _items(c):
 
 
 def _send(c, run, e, **body):
+    body.setdefault("to", "approver@firm.test")
     return c.post(f"{WS}/runs/{run['id']}/exceptions/{e['id']}/send-to-trustops", headers=H, json=body)
 
 
@@ -109,10 +113,119 @@ def test_page_confirms_the_send_and_lays_out_the_trustops_controls():
     assert '"Send to TrustOps"' in JS and "/send-to-trustops`" in JS and "x._noteEl = note;" in JS
     assert 'SENT: "sent"' in JS and 'it.via === "TrustOps"' in JS
     body = JS.split("function tropsStatus(x, tops)", 1)[1].split("\n}\n", 1)[0]
-    assert "bar: el(\"div\", { class: \"tro-bar\" }" in body and "actions: [open]" in body
+    assert "bar: el(\"div\", { class: \"tro-bar\" }" in body and "actions: [open]" not in body
     # 2026-11-13: no "Check now" button (a refresh icon in the bar); the TrustOps link only for approvers there
-    assert '"Check now"' not in body and "tro-refresh" in body and '"Approve in TrustOps ↗"' in body
-    assert "items.some((r) => String(r.email" in body and '"Open TrustOps ↗"' not in body
+    # 2026-11-13 (user request): no "Approve in TrustOps" button and no "Any approver"; a person must be chosen
+    assert '"Check now"' not in body and "tro-refresh" in body and "Approve in TrustOps" not in body
+    assert '"Open TrustOps ↗"' not in body and '"Any approver"' not in JS and '"Choose an approver"' in body
+    assert "send.disabled = !pick.value" in body
     assert '"Sent to ", el("b", {}, to)' in body
     assert "tro ? tro.bar : null" in JS and "tro ? tro.actions" in JS
     assert "#ag-grid{align-items:stretch}" in CSS and "#ag-grid>.card.agent{display:flex;flex-direction:column;height:100%}" in CSS
+
+
+def test_send_needs_a_named_approver_in_trustops(tops, cpa):
+    """2026-11-13 (user request): no "any approver"; the sender chooses the person, who must be an approver there."""
+    run = pack_run(cpa)
+    e0 = run["result"]["exceptions"][0]
+    for to in ("", None):
+        r = _send(cpa, run, e0, to=to)
+        assert r.status_code == 422 and "Choose who to send it to" in r.text
+    r = _send(cpa, run, e0, to="someone@else.test")
+    assert r.status_code == 422 and "not an approver" in r.text
+    assert not [c for c in tops.calls if c[2] == "submit_for_review"]               # nothing reached TrustOps
+    r = _send(cpa, run, e0)
+    assert r.status_code == 200 and r.json()["trustops_review"]["assigned_to"] == "approver@firm.test"
+    url = f"{WS}/runs/{run['id']}/exceptions/{e0['id']}/reviewer"
+    assert cpa.post(url, headers=H, json={"to": None}).status_code == 422          # cannot go back to "any approver"
+
+
+def test_sources_and_reconciliation_pages_are_simpler():
+    """2026-11-13 (user request): no Connections card, no "Already reconciled" card, no step IDs beside the agents."""
+    html = (ROOT / "ledgersight" / "static" / "index.html").read_text(encoding="utf-8")
+    assert 'id="connectors"' not in html and '"callout gap ran"' not in JS and "`Already reconciled as" not in JS
+    assert "(s.step_ids || []).join" not in JS
+
+
+def test_review_queue_splits_decided_into_approved_and_rejected():
+    """2026-11-13 (user request): Approved and Rejected chips instead of one "Decided" chip."""
+    body = JS.split("function renderExceptions()", 1)[1].split(chr(10) + "}" + chr(10), 1)[0]
+    assert 'chip("approved", "Approved"' in body and 'chip("rejected", "Rejected"' in body and '"Decided"' not in body
+    assert 'S.excFilter === "approved" ? x.status === "ACCEPTED"' in body and 'S.excFilter === "rejected" ? x.status === "REJECTED"' in body
+
+
+def test_bell_picks_up_trustops_decisions_from_older_runs_too(tops, cpa, prep):
+    """2026-11-13 cross-check: an approval in TrustOps for an item from an older run still rings the bell."""
+    from test_audit_fixes_p1 import PACK, upload_confirm
+    old = pack_run(cpa)
+    e0 = old["result"]["exceptions"][0]
+    did = _send(cpa, old, e0).json()["trustops_review"]["decision_id"]
+    # a corrected bank file and a new run, without resetting the workspace: the old run is no longer the latest
+    fixed = (PACK / "01_bank_statement_October.csv").read_bytes().replace(b"RENT OCT LANDLORD", b"RENT OCTOBER LANDLORD", 1)
+    upload_confirm(cpa, "01_bank_statement_October_v2.csv", fixed)
+    new = cpa.post(WS + "/reconciliation-runs", headers=H).json()
+    assert new["id"] != old["id"]
+    tops.final[did] = ("REJECTED", "approver@firm.test", "wrong period")
+    hit = [it for it in _items(prep) if it["kind"] == "REJECTED" and it["exception_id"] == e0["id"] and it["run_id"] == old["id"]]
+    assert hit and hit[0]["via"] == "TrustOps" and hit[0]["note"] == "wrong period"
+
+
+def test_sender_is_told_when_the_approver_did_not_receive_it(tops, cpa, prep, monkeypatch):
+    """2026-11-13 action items: when TrustOps does not get the item, or the chosen approver cannot be assigned, the
+    person who sent it gets a NOT_RECEIVED notification (only them) and the item says what happened."""
+    run = pack_run(cpa)
+    e0, e1 = run["result"]["exceptions"][:2]
+    real = tops.decide
+    monkeypatch.setattr(trustops_client, "decide", lambda *a, **k: {"decision": "DENY", "reason": "TrustOps is down"}
+                        if a[2] == "submit_for_review" else real(*a, **k))
+    r = _send(prep, run, e0)
+    assert r.status_code == 200 and r.json()["trustops_review"]["status"] == "NOT_SENT"
+    mine = [it for it in _items(prep) if it["kind"] == "NOT_RECEIVED" and it["exception_id"] == e0["id"]]
+    assert mine and "did not receive it" in mine[0]["note"] and "TrustOps is down" in mine[0]["note"] and mine[0]["by"] == "TrustOps"
+    assert not [it for it in _items(cpa) if it["kind"] == "NOT_RECEIVED"]          # only the sender is told
+    # TrustOps gets it, but the approver cannot be assigned
+    monkeypatch.setattr(trustops_client, "decide", real)
+
+    def no_assign(did, to, by):
+        raise ValueError("This person is not an Admin or Approver in TrustOps")
+    monkeypatch.setattr(trustops_client, "assign", no_assign)
+    r = _send(prep, run, e1)
+    assert r.status_code == 200 and r.json()["trustops_review"]["status"] == "PENDING"
+    hit = [it for it in _items(prep) if it["kind"] == "NOT_RECEIVED" and it["exception_id"] == e1["id"]]
+    assert hit and "could not be made the approver" in hit[0]["note"]
+    assert 'NOT_RECEIVED: "did not receive"' in JS and "k-NOT_RECEIVED" in CSS
+
+
+def test_sent_button_stays_greyed_out_after_sending():
+    """2026-11-13 action items: after sending, "Send to TrustOps" stays where it was (greyed out), never "Approve in TrustOps"."""
+    body = JS.split("function tropsStatus(x, tops)", 1)[1].split(chr(10) + "}" + chr(10), 1)[0]
+    pending = body.split('if (tr.status === "PENDING") return {', 1)[1]
+    assert '"Sent to TrustOps")' in pending and "disabled: true" in pending and "Approve in TrustOps" not in body
+
+
+def test_rejected_item_can_be_sent_again_with_new_proof(tops, cpa, prep):
+    """2026-11-13 action items: an item rejected in TrustOps can be sent again once new proof is attached; TrustOps
+    is told it is a resubmission (previous decision, earlier rejection, new proof)."""
+    run = pack_run(cpa)
+    e0 = run["result"]["exceptions"][0]
+    did = _send(prep, run, e0).json()["trustops_review"]["decision_id"]
+    url = f"{WS}/runs/{run['id']}/exceptions/{e0['id']}"
+    assert prep.post(url + "/resend-to-trustops", headers=H, json={"to": "approver@firm.test"}).status_code == 422   # not rejected yet
+    tops.final[did] = ("REJECTED", "approver@firm.test", "No receipt")
+    cpa.get(f"{WS}/runs/{run['id']}", headers=H)                                                                  # picks up the rejection
+    r = prep.post(url + "/resend-to-trustops", headers=H, json={"to": "approver@firm.test"})
+    assert r.status_code == 422 and "Attach new proof" in r.text
+    up = prep.post(url + "/attachments", headers=H, files={"file": ("receipt.pdf", b"%PDF-1.4 receipt", "application/pdf")}, data={"note": "receipt"})
+    assert up.status_code == 200, up.text                                                                         # proof allowed on a rejected item
+    assert prep.post(url + "/resend-to-trustops", headers=H, json={}).status_code == 422                           # approver required
+    r = prep.post(url + "/resend-to-trustops", headers=H, json={"to": "approver@firm.test", "note": "Receipt attached"})
+    assert r.status_code == 200, r.text
+    assert r.json()["trustops_review"]["status"] == "PENDING" and r.json()["trustops_review"]["decision_id"] != did
+    sub_calls = [c for c in tops.calls if c[2] == "submit_for_review"]
+    ctx = sub_calls[-1][3]
+    assert ctx["context"] == {"resubmission": 1, "resubmission_of": did}
+    facts = {f["label"]: f["value"] for f in ctx["facts"]}
+    assert "No receipt" in facts["Resubmitted"] and facts["New proof since the rejection"] == "receipt.pdf"
+    x = next(e for e in cpa.get(f"{WS}/runs/{run['id']}", headers=H).json()["result"]["exceptions"] if e["id"] == e0["id"])
+    assert x["status"] == "OPEN" and x["resubmitted"] == 1 and x["trustops_history"][0]["reason"] == "No receipt"
+    assert 'chip("rejected", "Rejected", all.filter((x) => x.status === "REJECTED").length, "pl-rej")' in JS and "function resendBox(" in JS

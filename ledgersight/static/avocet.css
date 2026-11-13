@@ -2212,6 +2212,7 @@ body:not(.side-mini) .rail-tip{display:none}
 .np-ico svg{width:16px;height:16px;stroke-width:2.2}
 .k-APPROVED .np-ico{background:var(--ok-bg);color:var(--ok)}.k-REJECTED .np-ico{background:var(--bad-bg);color:var(--bad)}
 .k-RETURNED .np-ico{background:var(--warn-bg);color:var(--warn)}
+.k-NOT_RECEIVED .np-ico{background:var(--bad-bg);color:var(--bad)}   /* 2026-11-13: the approver did not get it */
 .np-t{font-size:13.5px;font-weight:600;line-height:1.4}
 .np-note{font-size:13px;color:var(--text-2);margin-top:2px;overflow-wrap:anywhere}
 .np-m{font-size:12px;color:var(--muted);margin-top:3px}
@@ -2724,3 +2725,18 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .tro-send{display:inline-flex;align-items:center;gap:8px}
 .tro-send .tro-send-ico svg{width:15px;height:15px;color:currentColor}
 .tro-note{flex:1 1 100%;padding:2px 2px 0;color:var(--text)}
+
+/* 2026-11-13 action items: red "Rejected" chip, "Resubmitted" label, send-again box on items rejected in TrustOps */
+.pl-chip.pl-rej{color:var(--bad)}
+.pl-chip.pl-rej .pl-n{background:var(--bad-bg);color:var(--bad)}
+.pl-chip.pl-rej.on{background:var(--bad-bg)!important;color:var(--bad)!important;box-shadow:inset 0 0 0 1px var(--bad-line)}
+.pl-chip.pl-rej.on .pl-n{background:#fff;color:var(--bad)}
+.case-st.resub{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-line)}
+.resend{margin-top:12px}
+.resend .tro-bar.bad{background:var(--bad-bg)}
+
+/* chat watermark (2026-11-13): a faint CloudSeals mark behind the FinTwin conversation */
+#ask-drawer{isolation:isolate}
+#ask-drawer::before{content:"";position:absolute;left:0;right:0;top:80px;bottom:150px;z-index:-1;pointer-events:none;background:url(/static/logo.svg) center 46%/190px no-repeat;opacity:.07;filter:grayscale(.2)}
+#ask-drawer::after{content:"FinTwin";position:absolute;left:0;right:0;top:calc(50% + 70px);z-index:-1;pointer-events:none;text-align:center;font:700 22px var(--font);letter-spacing:.08em;color:var(--text);opacity:.06;text-transform:uppercase}
+#ask-drawer .drawer-body,#ask-drawer .qa{background:transparent}

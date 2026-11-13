@@ -574,6 +574,17 @@ def send_to_trustops(wid: str, run_id: str, exc_id: str, body: dict = Body(defau
         raise HTTPException(422, str(e)) from None
 
 
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/resend-to-trustops")
+def resend_to_trustops(wid: str, run_id: str, exc_id: str, body: dict = Body(default={}), u=Depends(current_user)):
+    """Send an item rejected in TrustOps again, with new proof attached (2026-11-13 action items)."""
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    try:
+        return handle(svc.resend_to_trustops, u, wid, run_id, exc_id, body.get("note") or "", body.get("to") or None)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
 @app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/reviewer")
 def trustops_reassign(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depends(current_user)):
     if not trustops_api.configured():

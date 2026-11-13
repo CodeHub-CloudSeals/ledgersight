@@ -115,7 +115,9 @@ def test_ui_handles_cleared_data_and_offers_the_run():
     body = js.split("async function refreshWs()", 1)[1].split("\n}\n", 1)[0]
     assert "staleUpload()" in body and "w.uploads.some((u) => u.id === S.upload.id)" in body
     assert "resetIntakeUi(); await switchWs();" in js  # clear all
-    assert '$("clear-all").disabled = !hasData' in js and '$("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData' in js
+    # 2026-11-13 action items: no "Clear all imported files" on Sources (each file has its own Clear)
+    assert 'id="clear-all"' not in html and '$("clear-all")' not in js
+    assert '$("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData' in js
     handler = js.split('$("run-btn").onclick', 1)[1][:400]   # 2026-11-13: the Agents page has no run button
     assert "await progress();" in handler and "if (readiness())" in handler
     # 2026-11-13: Sources only links to Reconciliation; the run is started there by the person

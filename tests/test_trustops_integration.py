@@ -29,7 +29,7 @@ def sent_run(c):
     automatically when the run completes any more)."""
     run = pack_run(c)
     for e in run["result"]["exceptions"]:
-        r = c.post(f"{WS}/runs/{run['id']}/exceptions/{e['id']}/send-to-trustops", headers=H, json={})
+        r = c.post(f"{WS}/runs/{run['id']}/exceptions/{e['id']}/send-to-trustops", headers=H, json={"to": "approver@firm.test"})
         assert r.status_code == 200, r.text
     r = c.get(f"{WS}/runs/{run['id']}", headers=H)
     return r.json()
@@ -44,6 +44,9 @@ def tops(monkeypatch):
     monkeypatch.setattr(trustops_client, "status", fake.status)
     fake.access = {"tops-owner@demo.test": "reviewer"}
     monkeypatch.setattr(trustops_client, "app_access", lambda email, max_age=60: fake.access.get(email))
+    # 2026-11-13: every item is sent to a named approver in TrustOps
+    monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: [{"email": "approver@firm.test", "role": "Approver"}])
+    monkeypatch.setattr(trustops_client, "assign", lambda did, to, by: {"decision_id": did, "assigned_to": to})
     return fake
 
 

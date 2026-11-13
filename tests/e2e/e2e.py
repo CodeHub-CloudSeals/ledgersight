@@ -151,7 +151,7 @@ with sync_playwright() as pw:
     check("Upload + column-mapping confirm (6 files)", "set files on #up-file, click Confirm mapping & import", t_uploads)
 
     def t_connectors():
-        c = p.inner_text("#connectors"); assert "planned" in c.lower()
+        assert p.locator("#connectors").count() == 0   # 2026-11-13 (user request): Connections card removed
         # 2026-11-13 Sources layout (user choice): a short upload strip on top, the 6 sources as cards in a 3x2 grid
         # below; planned connections as chips (not table rows)
         assert p.locator("#src-status .ss-tile").count() == 6 and p.locator("#src-status .ss-tile.on").count() >= 2
@@ -160,9 +160,8 @@ with sync_playwright() as pw:
             tops = [...document.querySelectorAll('#src-status .ss-tile')].map(t => Math.round(t.getBoundingClientRect().top));
             return [Math.round(up.bottom) <= Math.round(st.top), new Set(tops).size, Math.round(up.height), Math.round(st.height)]; }""")
         assert g[0] and g[1] == 2 and g[2] < g[3], g  # upload above status, tiles in 2 rows of 3, upload strip shorter than status
-        assert p.locator("#connectors .cn-chip").count() >= 3 and p.locator("#connectors table").count() == 0
-        return f"QuickBooks/Xero shown Planned (chips); upload strip {g[2]}px on top; 6 source cards in 3x2"
-    check("Connections status labels", "read #connectors", t_connectors)
+        return f"no Connections card; upload strip {g[2]}px on top; 6 source cards in 3x2"
+    check("Sources layout (no Connections card)", "read #p-import", t_connectors)
 
     def t_pdf():
         p.set_input_files("#up-file", str(M1 / "09_suspicious_invoice.pdf"))
@@ -460,11 +459,16 @@ with sync_playwright() as pw:
 
     def t_review_flow():
         tab(p, "exceptions")
-        p.click(".exc-filter .pl-chip:has-text('Decided')"); p.wait_for_timeout(300)
-        decided = p.locator("#exc-list .exc").count()
+        # 2026-11-13 (user request): "Decided" is split into Approved and Rejected
+        assert p.locator(".exc-filter .pl-chip:has-text('Decided')").count() == 0
+        p.click(".exc-filter .pl-chip:has-text('Approved')"); p.wait_for_timeout(300)
+        approved = p.locator("#exc-list .exc").count()
+        p.click(".exc-filter .pl-chip:has-text('Rejected')"); p.wait_for_timeout(300)
+        rejected = p.locator("#exc-list .exc").count()
+        decided = approved + rejected
         p.click(".exc-filter .pl-chip:has-text('Open')"); p.wait_for_timeout(300)
         opened = p.locator("#exc-list .exc").count()
-        assert decided == 2 and opened == 4, (decided, opened)  # DB06 accepted + DB04 rejected; DB10 returned is still open
+        assert (approved, rejected) == (1, 1) and opened == 4, (approved, rejected, opened)  # DB06 accepted + DB04 rejected; DB10 returned still open
         # Overview next step (reviewer) jumps to the first item that needs the reviewer, highlighted
         tab(p, "home"); nxt = p.inner_text("#next-step"); assert nxt.startswith("Review 3 items"), nxt
         p.click("#next-step"); p.wait_for_timeout(600)
@@ -474,7 +478,7 @@ with sync_playwright() as pw:
         p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200); tab(p, "home")
         prep = p.inner_text("#next-step"); assert prep.startswith("Propose resolutions for"), prep
         p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200)
-        return f"Open {opened} / Decided {decided}; reviewer next step '{nxt.strip()}' jumps + highlights; preparer sees '{prep.strip()}'"
+        return f"Open {opened} / Approved {approved} / Rejected {rejected}; reviewer next step '{nxt.strip()}' jumps + highlights; preparer sees '{prep.strip()}'"
     check("Review flow: filters, role-aware next step, jump to item", "filter chips, Overview next step as each role", t_review_flow)
 
     def t_finish_period():
@@ -518,10 +522,12 @@ with sync_playwright() as pw:
         # 2026-11-13: no run button on Agents; the same files are not run twice (Run is off and says why)
         assert p.locator("#ag-run").count() == 0 and "Run reconciliation now" not in p.inner_text("#p-agents")
         tab(p, "recon"); p.wait_for_timeout(500)
-        assert p.is_disabled("#run-btn") and "Already reconciled as RUN-" in p.inner_text("#recon-ready"), p.inner_text("#recon-ready")
+        # 2026-11-13 (user request): no "Already reconciled" card; the disabled Run button's tooltip says why
+        assert p.is_disabled("#run-btn") and "already reconciled as RUN-" in p.get_attribute("#run-btn", "title")
+        assert "Already reconciled" not in p.inner_text("#recon-ready")
         r = p.evaluate("async () => (await api(W('/reconciliation-runs'), {method: 'POST'}))")
         assert r["reused"] is True and r["id"] == p.evaluate("S.status.last_run"), (r["reused"], r["id"])
-        return f"no Agents run button; Run off with 'Already reconciled as {r['id']}'; a direct request returns the same run flagged reused"
+        return f"no Agents run button; Run off (tooltip: already reconciled as {r['id']}); a direct request returns the same run flagged reused"
     check("Run once per set of files (item 7/8)", "Agents page + Reconciliation Run button", t_run_once)
 
     # ---------- ask ----------
@@ -722,11 +728,13 @@ with sync_playwright() as pw:
     check("Browser Back / Forward between pages", "click pages, press Back twice, Forward", t_back)
 
     def t_reset():
-        tab(p, "import"); p.click("#clear-all"); p.click(".dialog button.danger"); p.wait_for_timeout(1500)
+        # 2026-11-13: Sources has no "Clear all imported files"; the client's data is cleared from its profile
+        assert p.locator("#clear-all").count() == 0
+        p.evaluate("document.getElementById('reset-btn').click()"); p.click(".dialog button.danger"); p.wait_for_timeout(1500)
         tab(p, "home"); assert p.locator("#ag-pipeline .pnode").count() == 6
         assert p.locator("#toasts .toast").count() <= 3
         assert "awaiting files" in p.inner_text("#ov-hero").lower(); return "confirm dialog → data cleared, back to empty state"
-    check("Clear client data (with confirm dialog)", "Clear all imported files → confirm", t_reset)
+    check("Clear client data (with confirm dialog)", "Clear this client's data → confirm", t_reset)
 
     def t_no_loader():
         tab(p, "import")

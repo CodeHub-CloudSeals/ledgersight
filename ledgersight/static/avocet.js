@@ -265,8 +265,7 @@ async function progress() {
   if (!running) { nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions); }
   // Nothing to clear -> the clear buttons are off (they come back as soon as a file is imported or a run exists).
   const hasData = st.uploads > 0 || st.runs > 0;
-  $("clear-all").disabled = !hasData; $("clear-all").title = hasData ? "" : "Nothing imported yet";
-  $("clear-all").classList.toggle("hidden", !isCPA());   // clearing the whole client is the CPA reviewer's (per-file Clear stays)
+  // 2026-11-13 action items: no "Clear all imported files" on Sources; each file has its own Clear
   $("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData; $("reset-btn").title = hasData ? "" : "Nothing to clear yet";
   $("page-sub").textContent = proper(w.period || "");  // top bar: client + period only
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = proper(w.name);
@@ -920,9 +919,9 @@ async function renderSources() {
   const ready = s.kinds.filter((k) => k.required).every((k) => k.status !== "NOT_CONNECTED");
   put("ss-sum", el("b", {}, `${nOn} of ${s.kinds.length}`), " imported", el("span", { class: "ss-dot2 " + (ready ? "is-ready" : "is-wait") }),
     ready ? "ready to reconcile" : "bank statement and ledger needed");
-  // Connections (2026-11-13): sources in use as short rows; planned ones as one line of chips.
+  // Connections card removed from Sources (2026-11-13, user request); kept only if a page still has the container.
   const live = s.connectors.filter((c) => c.status !== "PLANNED"), planned = s.connectors.filter((c) => c.status === "PLANNED");
-  put("connectors", el("div", { class: "cn-grid" },
+  if ($("connectors")) put("connectors", el("div", { class: "cn-grid" },
     el("div", { class: "cn-list" }, el("div", { class: "cn-h" }, "In use"), live.map((c) => el("div", { class: "cn-row" },
       el("div", { class: "cn-main" }, el("div", { class: "cn-name" }, c.name), el("div", { class: "cn-mean" }, s.status_labels[c.status])),
       el("span", { class: "badge " + c.status }, nice(c.status))))),
@@ -975,7 +974,6 @@ async function clearClient(btn, nextPeriod = false) {
   }, "Clearing…");
   await progress();  // withBusy re-enables the button when it finishes; re-apply "nothing to clear"
 }
-$("clear-all").onclick = (e) => clearClient(e.currentTarget);
 function renderHealth(uploads) {
   const done = uploads.filter((u) => u.health);
   if (!done.length) return put("health", el("div", { class: "muted" }, "Nothing imported yet."));
@@ -1270,7 +1268,7 @@ function staleUpload() {
 // return tells the staff preparer. Polled every 10 seconds while the page is visible (and on focus), so both
 // people stay in step; "seen" is stored on the server, so it is the same in every browser.
 S.notif = null;
-const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned", ATTACHED: "attached proof to", SENT: "sent" };
+const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned", ATTACHED: "attached proof to", SENT: "sent", NOT_RECEIVED: "did not receive" };
 // The run's confirmation that its review items went to TrustOps for approval (2026-11-13).
 function tropsSentNote(run) {
   if (!run || !run.trustops || !run.trustops.connected) return "";
@@ -1279,7 +1277,7 @@ function tropsSentNote(run) {
 }
 const NOTIF_ICON = { PROPOSED: "M4 20h4L19 9l-4-4L4 16z", APPROVED: "M5 12.5l4.5 4.5L19 7.5", REJECTED: "M7 7l10 10M17 7L7 17", RETURNED: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
   ATTACHED: "M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3",
-  SENT: "M22 2L11 13M22 2l-7 20-4-9-9-4z" };
+  SENT: "M22 2L11 13M22 2l-7 20-4-9-9-4z", NOT_RECEIVED: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" };
 async function loadNotifications(quiet) {
   if (!S.ws || !S.me) return;
   let n; try { n = await api(W("/notifications")); } catch (_) { return; }
@@ -1293,7 +1291,7 @@ async function loadNotifications(quiet) {
   if (n.unread > was) ringBell();
   $("notif-btn").setAttribute("aria-label", n.unread ? `Notifications, ${n.unread} new` : "Notifications");
   if (fresh) {
-    if (!quiet) toast(notifText(newest), "good");
+    if (!quiet) toast(notifText(newest), newest.kind === "NOT_RECEIVED" ? "bad" : "good");
     // the other person changed a case: bring this page's copy of the run up to date
     if (S.run) {
       try { S.run = await api(W(`/runs/${S.run.id}`)); } catch (_) { /* run withdrawn: the next sync handles it */ }
@@ -1304,6 +1302,8 @@ async function loadNotifications(quiet) {
 }
 function notifText(it) {
   const who = it.by === S.me.user_id ? "You" : (it.by_name || niceActor(it.by) || "Someone");
+  // 2026-11-13 action items: the approver did not get what this person sent (only the sender sees this)
+  if (it.kind === "NOT_RECEIVED") return `Not received: ${it.case_id ? "case " + it.case_id : it.exception_id || "your review item"} did not reach the approver in TrustOps`;
   if (it.kind === "SENT") return `${who} sent ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} to TrustOps for approval`;
   if (it.via === "TrustOps") return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} in TrustOps`;
   return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"}`;
@@ -1529,7 +1529,7 @@ function renderStages() {
         el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
           ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
         s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null),
-      el("div", { class: "sg-meta" }, el("span", {}, s.agents.join(" + ")), el("span", { class: "mono" }, (s.step_ids || []).join(", ")))))),
+      el("div", { class: "sg-meta" }, el("span", {}, s.agents.join(" + ")))))),   // step IDs stay in the audit log, not on screen
     el("div", { class: "muted small stl-foot" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
 }
 function renderRun() {
@@ -1684,10 +1684,11 @@ function tropsReviewer(x, tr) {
   const cur = tr.assigned_to || "";
   const sel = el("select", { class: "tro-assign", "aria-label": "Reviewer in TrustOps", onchange: async () => {
     sel.disabled = true;
-    try { const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/reviewer`), { method: "POST", json: { to: sel.value || null } });
-      tr.assigned_to = r.assigned_to; toast(r.assigned_to ? `Assigned to ${r.assigned_to} in TrustOps` : "Any approver in TrustOps can review this", "good"); }
+    if (!sel.value) return;
+    try { const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/reviewer`), { method: "POST", json: { to: sel.value } });
+      tr.assigned_to = r.assigned_to; toast(`Assigned to ${r.assigned_to} in TrustOps`, "good"); }
     catch (e) { sel.value = cur; toast(e.message, "bad"); } finally { sel.disabled = false; } } },
-    el("option", { value: "" }, "Any approver"), cur ? el("option", { value: cur, selected: true }, cur) : null);
+    cur ? el("option", { value: cur, selected: true }, cur) : el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
   tropsReviewers().then((items) => { for (const r of items) if (r.email !== cur) sel.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
   return el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Reviewer "), sel);
 }
@@ -1704,25 +1705,25 @@ function tropsStatus(x, tops) {
         const now = S.run.result.exceptions.find((e) => e.id === x.id);
         toast(now && now.status !== x.status ? `${x.case_id || x.id}: ${now.status === "ACCEPTED" ? "approved" : "rejected"} in TrustOps.` : "No decision yet. The approver hasn't answered in TrustOps.", "good");
       } catch (e) { toast(e.message, "bad"); b.classList.remove("spin"); b.disabled = false; } } }, icon(REFRESH_D));
-  // only approvers in TrustOps (Admins / Approvers from Team & access) get the link; it fills in once the list is known
-  const open = el("span", { class: "tro-open" });
-  if (tops.approvals_url && tr.status === "PENDING") tropsReviewers().then((items) => {
-    const me = String((S.me && S.me.user_id) || "").toLowerCase();
-    if (items.some((r) => String(r.email || "").toLowerCase() === me))
-      put(open, el("a", { class: "primary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Approve in TrustOps ↗"));
-  });
+  // No link to approve from here (2026-11-13, user request): the chosen approver is told in TrustOps.
   const sentAt = tr.submitted_at ? new Date(tr.submitted_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
   const to = tr.assigned_to ? tr.assigned_to : "TrustOps approvers";
   // Not sent yet (or sending failed): the person chooses who it goes to and presses "Send to TrustOps".
   if (!tr.status || tr.status === "NOT_SENT") {
-    const pick = el("select", { class: "tro-assign", "aria-label": "Send to" }, el("option", { value: "" }, "Any approver"));
-    tropsReviewers().then((items) => { for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
-    const send = el("button", { class: "primary tro-send", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+    // 2026-11-13 (user request): there is no "any approver"; a person must be chosen before Send is enabled.
+    const pick = el("select", { class: "tro-assign", "aria-label": "Send to", required: true,
+      onchange: () => { send.disabled = !pick.value; } }, el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+    tropsReviewers().then((items) => {
+      for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`));
+      if (!items.length) pick.firstChild.textContent = "No approvers in TrustOps yet";
+    });
+    const send = el("button", { class: "primary tro-send", disabled: true, title: "Choose who to send it to first", onclick: (ev) => withBusy(ev.currentTarget, async () => {
       const note = x._noteEl ? x._noteEl.value.trim() : "";
+      if (!pick.value) { toast("Choose who to send it to first.", "bad"); return; }
       try {
-        const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/send-to-trustops`), { method: "POST", json: { note, to: pick.value || null } });
+        const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/send-to-trustops`), { method: "POST", json: { note, to: pick.value } });
         if (r.trustops_review.status !== "PENDING") { toast(`Not sent: ${r.trustops_review.reason || "TrustOps could not be reached"}`, "bad"); }
-        else toast(`${x.case_id || x.id} sent to ${r.trustops_review.assigned_to || "the approvers"} in TrustOps for approval.`, "good");
+        else toast(`${x.case_id || x.id} sent to ${r.trustops_review.assigned_to || pick.value} in TrustOps for approval.`, "good");
         S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); loadNotifications(true);
       } catch (e) { toast(e.message, "bad"); } }, "Sending…") },
       el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), tr.status === "NOT_SENT" ? "Try again" : "Send to TrustOps");
@@ -1731,7 +1732,7 @@ function tropsStatus(x, tops) {
         tr.status === "NOT_SENT" ? el("span", { class: "tro-pill bad" }, "Not sent")
           : el("span", { class: "tro-pill idle" }, "Not sent yet"),
         el("span", { class: "muted small" }, tr.status === "NOT_SENT" ? (tr.reason || "TrustOps could not be reached")
-          : "Add a note if you like, then send it to the approvers in TrustOps."),
+          : "Choose the approver, add a note if you like, then send it to TrustOps."),
         el("span", { class: "grow" }), el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Send to "), pick)),
       actions: [send] };
   }
@@ -1742,8 +1743,38 @@ function tropsStatus(x, tops) {
         "Sent to ", el("b", {}, to), sentAt ? ` · ${sentAt}` : ""),
       el("span", { class: "grow" }), tropsReviewer(x, tr), refresh,
       x.proposal_note ? el("div", { class: "tro-note small" }, el("span", { class: "muted" }, `Note sent by ${niceActor(x.proposed_by) || x.proposed_by}: `), `“${x.proposal_note}”`) : null),
-    actions: [open] };
+    // 2026-11-13 action items: the button stays where it was (it does not turn into an approve link), greyed out
+    actions: [el("button", { class: "primary tro-send", type: "button", disabled: true, title: `Sent to ${to} in TrustOps. Waiting for their decision.` },
+      el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Sent to TrustOps")] };
   return { bar: el("div", { class: "tro-bar" }, el("span", { class: "tro-pill" }, nice(tr.status || "")), el("span", { class: "grow" }), refresh), actions: [] };
+}
+// 2026-11-13 action items: an item rejected in TrustOps can be sent again. Attach new proof (required), choose the
+// approver, add a note; TrustOps shows it as a resubmission with the earlier rejection.
+function resendBox(x, out, note) {
+  const closed = x.reviewed_at || "";
+  const fresh = (x.attachments || []).filter((a) => (a.at || "") > closed);
+  const pick = el("select", { class: "tro-assign", "aria-label": "Send to", onchange: () => sync() },
+    el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+  tropsReviewers().then((items) => { for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  const send = el("button", { class: "primary tro-send", type: "button", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+    try {
+      const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/resend-to-trustops`), { method: "POST", json: { note: note.value.trim(), to: pick.value } });
+      if (r.trustops_review.status !== "PENDING") toast(`Not sent: ${r.trustops_review.reason || "TrustOps could not be reached"}`, "bad");
+      else toast(`${x.case_id || x.id} sent again to ${r.trustops_review.assigned_to || pick.value} in TrustOps.`, "good");
+      S.run = await api(W(`/runs/${S.run.id}`)); S.excFilter = "open"; renderExceptions(); loadNotifications(true);
+    } catch (e) { toast(e.message, "bad"); } }, "Sending…") },
+    el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Send to TrustOps again");
+  const sync = () => { send.disabled = !fresh.length || !pick.value;
+    send.title = !fresh.length ? "Attach new proof first" : !pick.value ? "Choose who to send it to first" : ""; };
+  sync();
+  return el("div", { class: "xa xa-tro resend" },
+    el("div", { class: "tro-bar bad" }, el("span", { class: "tro-pill bad" }, "Rejected in TrustOps"),
+      el("span", { class: "muted small" }, fresh.length ? `New proof: ${fresh.map((a) => a.filename).join(", ")}. Choose the approver and send it again.`
+        : "To send it again, attach new proof (for example the missing receipt), then choose the approver."),
+      el("span", { class: "grow" }), el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Send to "), pick)),
+    note,
+    el("div", { class: "xa-row" }, el("span", { class: "grow" }), proofButton(x, out, note), send),
+    el("div", { class: "xa-hint" }, "The earlier rejection and your new proof go to the approver with the item."), out);
 }
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
@@ -1754,18 +1785,22 @@ function renderExceptions() {
   const nOpen = all.filter(isOpen).length;
   const typeOf = (x) => x.client_status || "APPROVAL_REQUIRED";
   if (S.excFilter === "returned" && isCPA()) S.excFilter = "open";
+  // 2026-11-13 (user request): one chip for decided items is split into Approved and Rejected (here or in TrustOps).
+  if (S.excFilter === "decided") S.excFilter = "approved";
   const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "returned" ? x.status === "RETURNED" || S.excSeen.has(x.id)
-    : S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x));
+    : S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id)
+    : S.excFilter === "approved" ? x.status === "ACCEPTED" : S.excFilter === "rejected" ? x.status === "REJECTED" : !isOpen(x));
   const nRet = all.filter((x) => x.status === "RETURNED").length;
   const shown = all.filter((x) => inStatus(x) && (S.excType === "all" || typeOf(x) === S.excType));
-  const chip = (k, label, n) => el("button", { class: "pl-chip" + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
+  const chip = (k, label, n, cls) => el("button", { class: "pl-chip" + (cls ? " " + cls : "") + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
     onclick: () => { S.excFilter = k; S.excSeen = new Set(); renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
   // Case-type chips (Unmatched, Duplicate, Tax review, FX review...), counted within the status chosen on the left.
   const types = [...new Set(all.map(typeOf))];
   const tchip = (k, label, n) => el("button", { class: "pl-chip" + (S.excType === k ? " on" : ""), "aria-pressed": String(S.excType === k),
     "data-type": k, onclick: () => { S.excType = S.excType === k ? "all" : k; renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
   const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), isCPA() ? null : chip("returned", "Returned to me", nRet),
-    chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length),
+    chip("approved", "Approved", all.filter((x) => x.status === "ACCEPTED").length),
+    chip("rejected", "Rejected", all.filter((x) => x.status === "REJECTED").length, "pl-rej"), chip("all", "All", all.length),
     types.length > 1 ? [el("span", { class: "exc-sep", "aria-hidden": "true" }),   // el() flattens one level only
       ...types.map((k) => [k, all.filter((x) => inStatus(x) && typeOf(x) === k).length])
         .filter(([k, n]) => n > 0 || S.excType === k)            // nothing of that type in this view: no chip
@@ -1774,7 +1809,9 @@ function renderExceptions() {
   if (!shown.length) return put("exc-list", bar, S.excFilter === "open"
     ? el("div", { class: "empty" }, el("b", {}, "Every item has a decision"), el("span", {}, "This period is ready to report."),
         el("button", { class: "primary mt10", onclick: () => go("reports") }, "Download the reports →"))
-    : empty("No decided items yet", "Decisions appear here once a reviewer approves, rejects or returns an item."));
+    : S.excFilter === "rejected" ? empty("Nothing rejected yet", "Items rejected here or in TrustOps appear here with the reason.")
+    : S.excFilter === "approved" ? empty("Nothing approved yet", "Items approved here or in TrustOps appear here.")
+    : empty("No items yet", "Review items appear here after a reconciliation run."));
   put("exc-list", bar, shown.map((x) => {
     const note = el("textarea", { rows: 2, placeholder: "Add a note (saved with your name in the audit trail)", "aria-label": "Review note" });
     x._noteEl = note;   // TrustOps "Send" takes this note to the approver
@@ -1798,7 +1835,9 @@ function renderExceptions() {
     return el("article", { class: "exc " + x.status, "data-exc": x.id },
       el("header", { class: "xh" },
         el("div", { class: "grow" }, el("div", { class: "xh-id" }, x.id, x.case_id && x.case_id !== x.id ? ` · Case ${x.case_id}` : "",
-            x.client_status ? el("span", { class: "case-st" }, caseStatus(x)) : null),
+            x.client_status ? el("span", { class: "case-st" }, caseStatus(x)) : null,
+            x.resubmitted ? el("span", { class: "case-st resub", title: "Rejected in TrustOps earlier and sent again with new proof" },
+              `Resubmitted${x.resubmitted > 1 ? " ×" + x.resubmitted : ""}`) : null),
           el("h3", { class: "xh-title" }, TYPE_LABEL[x.type] || nice(x.type)), el("p", { class: "xh-why" }, rich(x.why))),
         el("div", { class: "xh-right" }, el("div", { class: "xh-amt" }, usd(x.amount_cents)),
           el("span", { class: "badge " + x.status }, actionable ? nice(x.status) : x.status))),
@@ -1847,8 +1886,9 @@ function renderExceptions() {
               : "Nothing is sent until you press Send to TrustOps. The approver's answer then appears here and in your notifications.")
             : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer approves, rejects or returns it."), out)
-        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
-            (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")));
+        : [el("div", { class: "msg " + (x.status === "REJECTED" ? "bad" : "good") }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
+            (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")),
+          tops && x.status === "REJECTED" && (x.trustops_review || {}).status === "REJECTED" ? resendBox(x, out, note) : null]);
   }));
 }
 
@@ -2035,11 +2075,10 @@ function alreadyRun() {
 function renderReadiness() {
   const box = readiness(), done = !box && !(S.anim && S.anim.mode !== "upload") && alreadyRun();
   put("ag-ready", box);
-  put("recon-ready", box ? readiness() : done ? el("div", { class: "callout gap ran" }, el("div", {},
-    el("b", {}, `Already reconciled as ${done}.`),
-    el("div", { class: "small" }, "These exact files were reconciled already, so running again would give the same result. Upload a new or corrected file on Sources to run again.")),
-    el("div", { class: "row" }, el("button", { class: "secondary", onclick: () => go("import") }, "Go to Sources →"))) : null);
+  // "Already reconciled" card removed (2026-11-13, user request): Run stays off and its tooltip says why.
+  put("recon-ready", box ? readiness() : null);
   $("run-btn").disabled = !!box || !!done;
+  $("run-btn").title = done ? `These files were already reconciled as ${done}. Upload a new or corrected file on Sources to run again.` : "";
 }
 async function renderAgents() {
   renderReadiness();
@@ -2277,7 +2316,7 @@ function openCase(ref) {
   const x = all.find((e) => e.id === ref) || all.find((e) => e.case_id === ref) || all.find((e) => e.bank_id === ref || e.ledger_id === ref);
   if (!x) return toast(`${ref} is not a review item in run ${S.run.id}.`);
   const open = x.status === "OPEN" || x.status === "RETURNED";
-  S.excRun = S.run.id; S.excFilter = open ? "open" : "decided"; S.excSeen = new Set();
+  S.excRun = S.run.id; S.excFilter = open ? "open" : x.status === "REJECTED" ? "rejected" : "approved"; S.excSeen = new Set();
   go("exceptions"); renderExceptions();
   const n = document.querySelector(`#exc-list [data-exc="${x.id}"]`);
   if (!n) return;
