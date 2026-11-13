@@ -77,9 +77,9 @@
       <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span><span class="lbl-t">Data &amp; security</span></button>
     </nav>
     <div class="sidefoot">
-      <button type="button" id="ask-open" class="side-ask" aria-expanded="false" aria-controls="ask-drawer" aria-label="Ask LedgerSight (read-only)" title="Ask LedgerSight · Ctrl K">
+      <button type="button" id="ask-open" class="side-ask" aria-expanded="false" aria-controls="ask-drawer" aria-label="FinTwin - Your Financial Digital Twin (read-only)" title="FinTwin · Ctrl K">
         <span class="sa-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.4a7.6 7.6 0 0 1-11.3 6.6L4 19.6l1.6-4.4A7.6 7.6 0 1 1 20 11.4z"/><path class="sa-spark" d="M12.2 7.6l.85 2.15 2.15.85-2.15.85-.85 2.15-.85-2.15-2.15-.85 2.15-.85z" fill="currentColor" stroke="none"/></svg></span>
-        <span class="sa-t"><b>Ask LedgerSight</b><span>Answers with sources · read-only</span></span>
+        <span class="sa-t"><b>FinTwin</b><span>Your Financial Digital Twin</span></span>
         <kbd class="sa-k">Ctrl K</kbd>
       </button>
       <div id="app-version" class="small">LedgerSight</div>
@@ -345,15 +345,15 @@
 <aside id="ask-drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="ask-title" aria-hidden="true">
   <div class="drawer-head">
     <div class="drawer-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></div>
-    <div class="grow"><div class="drawer-title" id="ask-title">Ask LedgerSight</div>
-      <div class="small muted">Read-only answers about this client book, with sources. It cannot change anything or see other clients.</div></div>
-    <button id="ask-close" class="iconbtn" aria-label="Close Ask LedgerSight">✕</button>
+    <div class="grow"><div class="drawer-title" id="ask-title">FinTwin - Your Financial Digital Twin</div></div>
+    <button id="ask-close" class="iconbtn" aria-label="Close FinTwin">✕</button>
   </div>
-  <div class="drawer-body" id="ask-scroll"><div id="ask-out"></div>
-    <div id="ask-empty" class="ask-empty"><b>Ask about this client book</b><span>Unmatched items, why something was flagged, what is outstanding or who approved it.</span></div></div>
+  <div class="drawer-body" id="ask-scroll">
+    <div id="ask-welcome" class="qa ask-welcome"><div class="a-bubble">Hi, I'm FinTwin! How can I help you?</div></div>
+    <div id="ask-out"></div></div>
   <div class="drawer-foot">
     <div id="ask-chips" class="chips"></div>
-    <div class="ask-row"><input id="ask-q" placeholder="Ask a question…" maxlength="500" aria-label="Question"><button id="ask-btn" class="primary">Ask</button></div>
+    <div class="ask-row"><input id="ask-q" placeholder="Ask FinTwin a question…" maxlength="500" aria-label="Question"><button id="ask-btn" class="primary">Ask</button></div>
   </div>
 </aside>
 <div id="toasts" class="toasts" aria-live="polite"></div>

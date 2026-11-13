@@ -2135,7 +2135,7 @@ async function previewReport(kind) {
         : el("div", { class: "muted small" }, "None."))));
 }
 
-// ---------------- Ask LedgerSight (read-only, cited) ----------------
+// ---------------- FinTwin - Your Financial Digital Twin (was "Ask LedgerSight"; read-only, cited) ----------------
 async function renderAsk() {
   let s; try { s = await api(W("/ask/suggestions")); } catch (_) { return; }
   put("ask-chips", s.suggestions.map((q) => el("button", { class: "chip", onclick: () => { $("ask-q").value = q; askNow(); } }, q)));
@@ -2152,7 +2152,6 @@ async function askNow() {
 // The conversation, oldest first like a chat. Answers come only from the server; nothing is generated here.
 function renderAskLog() {
   const mine = S.asks.filter((x) => x.ws === S.ws);
-  $("ask-empty").classList.toggle("hidden", mine.length > 0);
   const chip = (t) => el("button", { class: "chip", onclick: () => { $("ask-q").value = t; askNow(); } }, t);
   put("ask-out", mine.map(({ q, a }) => el("div", { class: "qa" },
     el("div", { class: "q-bubble" }, q),

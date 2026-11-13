@@ -2561,3 +2561,7 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .msg{transition:opacity .45s ease}
 .msg.fading{opacity:0}
 .callout.ran{background:var(--ok-bg)}
+
+/* FinTwin (2026-11-13): the chat opens with one welcome message, like the first line of a conversation */
+.ask-welcome{margin:4px 0 6px}
+.ask-welcome .a-bubble{display:inline-block;margin-top:0;font-size:14px;font-weight:600;color:var(--text)}

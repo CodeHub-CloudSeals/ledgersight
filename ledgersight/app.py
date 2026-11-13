@@ -588,7 +588,7 @@ def sample_list(wid: str, u=Depends(current_user)):
 def report(wid: str, run_id: str, kind: str, fmt: str, preview: bool = False, u=Depends(current_user)):
     # preview=1: shown on screen only; recorded as a preview, so it does not complete the Report step
     rep, blob = handle(svc.report, u, wid, run_id, kind, fmt, preview)
-    if fmt == "json" and kind:
+    if fmt == "json" and preview:
         return Response(blob, media_type=REPORT_TYPES[fmt])
     return Response(blob, media_type=REPORT_TYPES[fmt],
                     headers={"Content-Disposition": f'attachment; filename="{rep["report_id"]}.{fmt}"'})

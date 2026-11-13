@@ -505,6 +505,9 @@ with sync_playwright() as pw:
     # ---------- ask ----------
     def t_ask():
         tab(p, "reports"); p.click("#ask-open"); p.wait_for_selector("#ask-drawer.open"); p.wait_for_selector("#ask-chips .chip")
+        # FinTwin (2026-11-13): new name; opens with only the welcome message
+        assert p.inner_text("#ask-title") == "FinTwin - Your Financial Digital Twin" and "FinTwin" in p.inner_text("#ask-open")
+        assert p.inner_text("#ask-welcome").strip() == "Hi, I'm FinTwin! How can I help you?" and p.inner_text("#ask-out").strip() == ""
         p.wait_for_function("document.activeElement && document.activeElement.id === 'ask-q'", timeout=3000)
         p.fill("#ask-q", "What is outstanding on INV-2105?"); p.click("#ask-btn"); p.wait_for_timeout(900)
         a1 = p.inner_text("#ask-out .qa >> nth=-1"); assert "750.00" in a1, a1[:300]
@@ -514,8 +517,8 @@ with sync_playwright() as pw:
         shot(p, "08-ask")
         p.keyboard.press("Escape"); p.wait_for_timeout(400)
         assert p.locator("#ask-drawer.open").count() == 0 and p.evaluate("document.querySelector('#ask-drawer').inert")
-        return "opened from top-right over Reports; INV-2105 → $750.00 with sources; other-client question refused; Esc closes"
-    check("Ask LedgerSight chat panel (top-right)", "click Ask button, ask, press Enter, Esc", t_ask)
+        return "FinTwin opens with 'Hi, I'm FinTwin! How can I help you?'; INV-2105 → $750.00 with sources; other-client question refused; Esc closes"
+    check("FinTwin chat panel", "click FinTwin in the sidebar, ask, press Enter, Esc", t_ask)
 
     # ---------- reports ----------
     def t_reports():
