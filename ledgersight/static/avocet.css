@@ -2621,3 +2621,26 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .cn-chip{padding:6px 12px;border-radius:999px;background:var(--ds-inset);font-size:12.5px;color:var(--text-2)}
 @media (max-width:1180px){#p-import .src-top,#p-import .src-bottom{grid-template-columns:1fr}}
 @media (max-width:560px){.ss-grid{grid-template-columns:1fr}#p-import .src-up .dropzone{min-height:0}}
+
+/* Sources v3 (2026-11-13, user choice): upload strip on top, sources as 3x2 vertical cards below */
+#p-import .src-top.stack{grid-template-columns:1fr;gap:20px}
+#p-import .src-top.stack .src-up{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:16px;align-items:center}
+#p-import .src-top.stack .src-up>*{grid-column:1/-1}
+#p-import .src-top.stack .src-up>.dz-connect{grid-column:1;margin-top:12px;align-self:stretch}
+#p-import .src-top.stack .src-up>.tpl-links{grid-column:2;margin-top:12px;align-self:center}
+#p-import .src-top.stack .src-up>.tpl-links:empty{display:none}
+#p-import .src-top.stack .dropzone{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"ico txt btn" "ico sub btn";
+  column-gap:18px;row-gap:2px;align-items:center;justify-items:start;text-align:left;min-height:0;padding:22px 26px}
+#p-import .src-top.stack .dropzone .dz-icon{grid-area:ico;margin:0}
+#p-import .src-top.stack .dropzone .dz-text{grid-area:txt;margin:0;font-size:16px}
+#p-import .src-top.stack .dropzone .small{grid-area:sub;max-width:80ch;margin:0}
+#p-import .src-top.stack .dropzone #choose-btn{grid-area:btn;margin:0}
+#p-import .src-top.stack .src-st .ss-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+#p-import .src-top.stack .src-st .ss-tile{min-height:150px;padding:16px 18px 14px}
+@media (max-width:1100px){#p-import .src-top.stack .src-st .ss-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){
+  #p-import .src-top.stack .src-up{grid-template-columns:1fr}
+  #p-import .src-top.stack .src-up>.dz-connect,#p-import .src-top.stack .src-up>.tpl-links{grid-column:1}
+  #p-import .src-top.stack .dropzone{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"ico txt" "sub sub" "btn btn";row-gap:8px}
+}
+@media (max-width:560px){#p-import .src-top.stack .src-st .ss-grid{grid-template-columns:1fr}}

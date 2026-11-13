@@ -138,8 +138,8 @@
         <p class="sub">Bring in the bank statement, general ledger, invoices and supporting documents. Each file is checked, fingerprinted and mapped to standard columns, and you confirm the mapping before anything is used.</p></div></div>
       <!-- The file being confirmed sits first, right under the heading: no jump past the upload and status cards. -->
       <div id="mapping" class="card map-card hidden"></div>
-      <!-- 2026-11-13 layout: upload and source status side by side at equal height; details below -->
-      <div class="src-top">
+      <!-- 2026-11-13 layout (user choice): a short upload strip on top, the 6 sources as cards in a 3x2 grid below -->
+      <div class="src-top stack">
         <div class="card src-up">
           <div class="card-title">Upload files</div>
           <select id="up-kind" aria-label="File type" class="hidden"><option value="auto">Detect file type automatically</option></select>
@@ -160,9 +160,9 @@
             <span class="small muted grow">Add files from Google Drive, Docs, Sheets and Slides</span>
             <button id="dz-drive-btn" class="ghost">Connect</button>
           </div>
+          <div id="tpl-links" class="tpl-links"></div>
           <div id="em-view"></div>
           <div id="drive-view"></div>
-          <div id="tpl-links" class="tpl-links"></div>
           <div id="up-msg" class="msg"></div>
           <div id="up-refused"></div>
           <div id="up-next"></div>

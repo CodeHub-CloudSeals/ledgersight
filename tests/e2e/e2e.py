@@ -152,13 +152,16 @@ with sync_playwright() as pw:
 
     def t_connectors():
         c = p.inner_text("#connectors"); assert "planned" in c.lower()
-        # 2026-11-13 Sources layout: upload and status side by side at equal height, sources as 6 tiles,
-        # planned connections as chips (not table rows)
+        # 2026-11-13 Sources layout (user choice): a short upload strip on top, the 6 sources as cards in a 3x2 grid
+        # below; planned connections as chips (not table rows)
         assert p.locator("#src-status .ss-tile").count() == 6 and p.locator("#src-status .ss-tile.on").count() >= 2
-        hs = p.evaluate("[...document.querySelectorAll('#p-import .src-top > .card')].map(c => [Math.round(c.getBoundingClientRect().top), Math.round(c.getBoundingClientRect().height)])")
-        assert len(hs) == 2 and hs[0] == hs[1], hs
+        g = p.evaluate("""() => { const up = document.querySelector('#p-import .src-up').getBoundingClientRect(),
+            st = document.querySelector('#p-import .src-st').getBoundingClientRect(),
+            tops = [...document.querySelectorAll('#src-status .ss-tile')].map(t => Math.round(t.getBoundingClientRect().top));
+            return [Math.round(up.bottom) <= Math.round(st.top), new Set(tops).size, Math.round(up.height), Math.round(st.height)]; }""")
+        assert g[0] and g[1] == 2 and g[2] < g[3], g  # upload above status, tiles in 2 rows of 3, upload strip shorter than status
         assert p.locator("#connectors .cn-chip").count() >= 3 and p.locator("#connectors table").count() == 0
-        return f"QuickBooks/Xero shown Planned (chips); 6 source tiles; upload + status cards aligned {hs[0]}"
+        return f"QuickBooks/Xero shown Planned (chips); upload strip {g[2]}px on top; 6 source cards in 3x2"
     check("Connections status labels", "read #connectors", t_connectors)
 
     def t_pdf():
