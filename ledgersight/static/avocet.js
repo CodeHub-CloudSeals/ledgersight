@@ -248,7 +248,9 @@ async function progress() {
     })),
     el("span", { class: "mp-cur" }, cur < 0 ? el("b", {}, "All 5 steps done") : [el("b", {}, STEPS[cur][0]), ` · step ${cur + 1} of ${STEPS.length}`]),
     el("span", { class: "mp-n" }, `${nDone}/${STEPS.length} done`));
-  const nr = $("nav-review"); nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions);
+  // the review count waits for the agents too (2026-11-13): it appears with the other figures when the replay ends
+  const nr = $("nav-review"), running = !!(S.anim && S.anim.mode !== "upload");
+  if (!running) { nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions); }
   // Nothing to clear -> the clear buttons are off (they come back as soon as a file is imported or a run exists).
   const hasData = st.uploads > 0 || st.runs > 0;
   $("clear-all").disabled = !hasData; $("clear-all").title = hasData ? "" : "Nothing imported yet";
@@ -1410,7 +1412,10 @@ $("run-btn").onclick = async (ev) => { await withBusy(ev.currentTarget, async ()
   await progress();  // re-read the client first: a colleague may have cleared it since this page loaded
   if (readiness()) { renderReadiness(); return msg("run-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
   if (alreadyRun()) { renderReadiness(); return; }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" }));
+  try { const run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" }));
+    await S.replaying;  // 2026-11-13: numbers, tables and the toast appear only once the agent workflow has finished
+    S.run = run;
+    progress();  // now the sidebar review count catches up
     toast(S.run.reused ? `These files were already reconciled as ${S.run.id}. Showing that run; nothing was run again.`
       : `Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
     renderRun(); renderExceptions(); renderResults(); }
@@ -1468,6 +1473,11 @@ function renderStages() {
 }
 function renderRun() {
   renderWorkflow(); renderReadiness(); renderStages();
+  if (S.anim && S.anim.mode !== "upload") {  // a run is being worked through: no figures until the last agent finishes
+    put("tiles", TILE_NAMES.map((k) => el("div", { class: "tile pending" }, el("div", { class: "k" }, k), el("div", { class: "v" }, el("span", { class: "skel" })))));
+    put("matches", empty("Matching…", "Matched bank and ledger lines appear when the agents finish."));
+    return;
+  }
   if (!S.run) { put("tiles"); put("matches", empty("No run yet", "Matched bank and ledger lines appear here after a run.")); return; }
   const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN" || e.status === "RETURNED").length;  // same rule as status and reports
   put("tiles",
@@ -1480,6 +1490,7 @@ function renderRun() {
       el("td", {}, el("span", { class: "rid" }, m.bank_id)), el("td", {}, el("span", { class: "rid" }, m.ledger_id)), el("td", { class: "num" }, usd(m.amount_cents)),
       el("td", { class: "small" }, el("span", { class: "rule-id" }, m.rule_id), rich(m.why))))));
 }
+const TILE_NAMES = ["Bank net movement", "Ledger net movement", "Variance", "Variance unexplained", "Matched automatically", "Exceptions to review"];
 const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), sub ? el("div", { class: "s" }, sub) : null);
 
 // ---------------- exceptions ----------------
@@ -1866,7 +1877,7 @@ function alreadyRun() {
   return st.bank && st.ledger && st.runs && !st.stale && st.last_run ? st.last_run : null;
 }
 function renderReadiness() {
-  const box = readiness(), done = !box && alreadyRun();
+  const box = readiness(), done = !box && !(S.anim && S.anim.mode !== "upload") && alreadyRun();
   put("ag-ready", box);
   put("recon-ready", box ? readiness() : done ? el("div", { class: "callout gap ran" }, el("div", {},
     el("b", {}, `Already reconciled as ${done}.`),
@@ -2063,10 +2074,11 @@ async function animateRun(promise) {
   if (!S.agents) await loadAgents();
   const codes = S.agents ? S.agents.agents.map((a) => a.code) : [];
   S.anim = { mode: "running", states: Object.fromEntries(codes.map((c) => [c, "queued"])), shown: {}, titles: {} }; renderPipelines();
+  S.replaying = null; renderRun();  // tiles and tables switch to "waiting for the agents" until the replay ends
   let run;
   try { run = await promise; } catch (e) { S.anim = null; loadAgents(); throw e; }
   if (run.reused) { S.anim = null; loadAgents(); return run; }  // an earlier run, not a new one: nothing to replay
-  replay(run);
+  S.replaying = replay(run);
   return run;
 }
 async function replay(run) {

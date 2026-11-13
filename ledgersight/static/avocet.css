@@ -2644,3 +2644,7 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
   #p-import .src-top.stack .dropzone{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"ico txt" "sub sub" "btn btn";row-gap:8px}
 }
 @media (max-width:560px){#p-import .src-top.stack .src-st .ss-grid{grid-template-columns:1fr}}
+
+/* Reconciliation tiles while the agents run (2026-11-13): labels stay, values wait with a soft shimmer */
+.tile.pending .v .skel{display:block;width:58%;height:26px;margin-top:6px;border-radius:10px}
+.tile.pending .k::before{background:var(--line-2)!important}

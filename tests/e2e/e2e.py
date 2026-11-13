@@ -181,6 +181,10 @@ with sync_playwright() as pw:
         # 2026-11-12: the workflow is updated in place while it animates. If its elements were rebuilt each step,
         # the browser would close a right-click menu opened on the card (the element under it disappears).
         p.evaluate("window.__keep = [...document.querySelectorAll('#rc-pipeline .pnode, #rc-pipeline .pname, #rc-pipeline .pipe-foot')]")
+        # 2026-11-13: no figures before the agents finish: tiles wait with placeholders, no amounts, no "already reconciled"
+        early = p.evaluate("[document.querySelectorAll('#tiles .tile.pending').length, document.querySelector('#tiles').innerText, document.querySelector('#recon-ready').innerText]")
+        assert early[0] == 6 and "$" not in early[1] and "Already reconciled" not in early[2], early
+        assert p.evaluate("document.querySelector('#nav-review').classList.contains('hidden')"), "review count shown before the agents finished"
         p.wait_for_timeout(700); shot(p, "03-recon-animating")
         kept = p.evaluate("[window.__keep.length, window.__keep.filter(n => n.isConnected).length]")
         assert kept[0] == 13 and kept[1] == 13, f"workflow elements were replaced during the run: {kept}"
