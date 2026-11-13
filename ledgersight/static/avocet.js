@@ -192,7 +192,7 @@ function applyRole() {
     lab.classList.toggle("hidden", !any);
   });
   const chip = $("period-chip");
-  chip.title = isCPA() ? "Reporting period. Change it in Data & security → Client profile" : "Reporting period. A CPA reviewer sets it.";
+  chip.title = isCPA() ? "Reporting period: click to choose the month" : "Reporting period. A CPA reviewer sets it.";
   chip.classList.toggle("ro", !isCPA());
   const how = document.querySelector('#ov-how a[data-go="agents"]');
   if (how) { how.dataset.go = isCPA() ? "agents" : "recon"; how.href = "#" + how.dataset.go; }
@@ -823,11 +823,50 @@ setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab")
   side.querySelector("nav").addEventListener("scroll", hideTip, { passive: true });
   $("side-toggle").onclick = () => { on = !on; hideTip(); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
 })();
-$("period-chip").onclick = () => {
-  if (!isCPA()) return;
-  go("trust"); const d = $("ov-profile");
-  setTimeout(() => { d.scrollIntoView({ behavior: REDUCE ? "auto" : "smooth", block: "center" }); $("pf-period").focus({ preventScroll: true }); }, 120);
+// Reporting period: the chip opens a month picker (2026-11-13; it used to jump to Data & security).
+// The period labels the client book, reports and downloads; matching always uses the uploaded files.
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function parsePeriod(v) {
+  const m = String(v || "").match(/(January|February|March|April|May|June|July|August|September|October|November|December)\D*?(\d{4})/i);
+  return m ? { month: MONTHS.findIndex((x) => x.toLowerCase() === m[1].toLowerCase()), year: +m[2] } : null;
+}
+const periodOpen = () => !$("period-panel").classList.contains("hidden");
+function closePeriod() { $("period-panel").classList.add("hidden"); $("period-chip").setAttribute("aria-expanded", "false"); }
+function renderPeriod(year) {
+  const cur = parsePeriod($("page-sub").textContent), now = new Date();
+  const nav = (d, label) => el("button", { type: "button", class: "pp-nav", "aria-label": label, onclick: (e) => { e.stopPropagation(); renderPeriod(year + d); } }, d < 0 ? "‹" : "›");
+  put("period-panel",
+    el("div", { class: "pp-head" }, el("b", {}, "Reporting period"),
+      el("div", { class: "pp-year" }, nav(-1, "Previous year"), el("span", { id: "pp-year" }, String(year)), nav(1, "Next year"))),
+    el("div", { class: "pp-grid", role: "grid" }, ...MONTHS.map((m, i) => {
+      const sel = cur && cur.year === year && cur.month === i, today = now.getFullYear() === year && now.getMonth() === i;
+      return el("button", { type: "button", class: "pp-m" + (sel ? " on" : "") + (today ? " now" : ""), "aria-pressed": sel ? "true" : "false",
+        title: `${m} ${year}`, onclick: (e) => { e.stopPropagation(); setPeriod(`${m} ${year}`, e.currentTarget); } }, m.slice(0, 3));
+    })),
+    el("p", { class: "pp-note" }, "Labels the client book, reports and downloads. Matching always uses the files you upload."));
+}
+async function setPeriod(period, btn) {
+  if (period === $("page-sub").textContent) { closePeriod(); return; }
+  btn.classList.add("busy");
+  try {
+    const r = await api(W("/profile"), { method: "POST", json: { period } });
+    S.wsMeta = r; $("page-sub").textContent = period; if ($("pf-period")) $("pf-period").value = period;
+    closePeriod(); toast(`Reporting period set to ${period}. The change is recorded in the audit trail.`, "good");
+    await progress(); if (isActive("trust")) await renderEvidence();
+  } catch (e) { btn.classList.remove("busy"); toast(e.message, "bad"); }
+}
+$("period-chip").onclick = (e) => {
+  if (!isCPA()) return;   // a staff preparer sees the period; a CPA reviewer sets it
+  e.stopPropagation();
+  if (periodOpen()) { closePeriod(); return; }
+  const cur = parsePeriod($("page-sub").textContent);
+  renderPeriod(cur ? cur.year : new Date().getFullYear());
+  $("period-panel").classList.remove("hidden"); $("period-chip").setAttribute("aria-expanded", "true");
+  const f = $("period-panel").querySelector(".pp-m.on") || $("period-panel").querySelector(".pp-m"); if (f) f.focus();
 };
+$("period-panel").addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", () => { if (periodOpen()) closePeriod(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && periodOpen()) { closePeriod(); $("period-chip").focus(); } });
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
 
 // ---------------- import ----------------

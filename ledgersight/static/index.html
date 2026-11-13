@@ -90,7 +90,8 @@
     <div class="tb-left">
       <label class="ws-pill" title="Client"><span class="ws-av" id="ws-av" aria-hidden="true">–</span><select id="ws-select" class="ws-title" aria-label="Client"></select></label>
       <span class="tb-sep" aria-hidden="true">/</span>
-      <button id="period-chip" class="period-chip" type="button" title="Reporting period. Change it in Data &amp; security → Client profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span class="page-sub" id="page-sub">–</span></button>
+      <div class="period-wrap"><button id="period-chip" class="period-chip" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="period-panel" title="Reporting period"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span class="page-sub" id="page-sub">–</span></button>
+      <div id="period-panel" class="period-panel hidden" role="dialog" aria-label="Choose the reporting period"></div></div>
       <span class="tb-sep" aria-hidden="true">/</span>
       <div class="crumb" aria-label="Current page"><span id="crumb-group" class="crumb-g"></span><b id="crumb-page">Overview</b></div>
     </div>

@@ -88,3 +88,15 @@ def test_chat_is_called_fintwin_and_opens_with_one_welcome_message():
     drawer = HTML.split('id="ask-drawer"', 1)[1].split("</aside>", 1)[0]
     assert "Ask LedgerSight" not in drawer and "Read-only answers about this client book" not in drawer and "ask-empty" not in drawer
     assert "Ask LedgerSight" not in HTML.split('id="ask-open"', 1)[1].split("</button>", 1)[0]
+
+
+def test_period_chip_opens_a_month_picker_and_saves_through_the_profile(cpa_run):
+    """2026-11-13: the date chip opens a calendar of months (CPA reviewer); picking one saves via /profile."""
+    assert 'id="period-panel"' in HTML and 'aria-haspopup="dialog"' in HTML.split('id="period-chip"', 1)[1][:200]
+    handler = JS.split('$("period-chip").onclick', 1)[1][:400]
+    assert 'go("trust")' not in handler and "if (!isCPA()) return;" in handler and "renderPeriod(" in handler
+    assert 'api(W("/profile"), { method: "POST", json: { period } })' in JS
+    c, _ = cpa_run
+    r = c.post(WS + "/profile", json={"period": "November 2026"}, headers={"x-ledgersight": "1"})
+    assert r.status_code == 200 and r.json()["period"] == "November 2026", r.text
+    c.post(WS + "/profile", json={"period": "October 2026"}, headers={"x-ledgersight": "1"})

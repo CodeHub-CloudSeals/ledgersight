@@ -2662,3 +2662,22 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 #ov-kpis .kw .ring{width:38px;height:38px}
 @media (max-width:1000px){#ov-kpis.kw-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){#ov-kpis.kw-row{grid-template-columns:1fr}}
+
+/* Reporting period month picker (2026-11-13): the date chip opens a calendar of months */
+.period-wrap{position:relative;flex:none}
+.period-panel{position:absolute;top:calc(100% + 10px);left:0;z-index:60;width:300px;background:var(--surface);border-radius:20px;padding:16px;
+  box-shadow:0 18px 48px -12px rgba(15,23,42,.28),0 2px 6px rgba(15,23,42,.06);transform-origin:top left;animation:npIn .22s cubic-bezier(.22,1,.36,1)}
+.period-panel.hidden{display:none}
+.pp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.pp-head>b{font-size:14px;color:var(--text)}
+.pp-year{display:flex;align-items:center;gap:4px;font-weight:650;font-variant-numeric:tabular-nums}
+.pp-year span{min-width:44px;text-align:center}
+.pp-nav{width:30px;height:30px;border-radius:50%;border:0;background:var(--subtle);color:var(--text);font-size:17px;line-height:1;cursor:pointer}
+.pp-nav:hover{background:var(--accent-soft);color:var(--accent)}
+.pp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.pp-m{height:38px;border:0;border-radius:999px;background:transparent;color:var(--text);font:inherit;font-size:13.5px;font-weight:550;cursor:pointer}
+.pp-m:hover{background:var(--hover,var(--subtle))}
+.pp-m.now{box-shadow:inset 0 0 0 1.5px var(--accent-line,var(--line))}
+.pp-m.on{background:var(--accent);color:#fff}
+.pp-m.busy{opacity:.6;pointer-events:none}
+.pp-note{margin:12px 2px 0;font-size:12px;line-height:1.4;color:var(--muted)}

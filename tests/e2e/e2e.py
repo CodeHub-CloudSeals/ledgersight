@@ -228,6 +228,11 @@ with sync_playwright() as pw:
         # 2026-11-13: the four headline cards stay compact, in one row at 1280px (user: cards were too big)
         box = p.evaluate("[...document.querySelectorAll('#ov-kpis .kw')].map(e => e.getBoundingClientRect()).map(r => [Math.round(r.top), Math.round(r.height)])")
         assert len(box) == 4 and len({t for t, _ in box}) == 1 and max(h for _, h in box) <= 200, box
+        # 2026-11-13: the period chip opens a month picker in place (it used to jump to Data & security)
+        p.click("#period-chip"); p.wait_for_timeout(300)
+        assert p.is_visible("#period-panel") and p.evaluate("location.hash") == "#home", p.evaluate("location.hash")
+        assert p.locator("#period-panel .pp-m").count() == 12 and p.inner_text("#period-panel .pp-m.on") == "Oct"
+        p.keyboard.press("Escape"); assert p.is_hidden("#period-panel")
         tab(p, "recon"); p.wait_for_timeout(400)
         assert p.locator("#rc-pipeline .pnode").count() == 6
         tops = p.eval_on_selector_all("#rc-pipeline .pnode", "n => new Set(n.map(x => Math.round(x.getBoundingClientRect().top))).size")
