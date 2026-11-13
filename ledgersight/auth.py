@@ -238,6 +238,24 @@ class AuthStore:
         return tok
 
     @_locked
+    def trustops_login(self, email: str, display_name: str, workspaces: set[str], role: str) -> str:
+        """Sign-in when people are managed in TrustOps: TrustOps decides who may enter and with which role."""
+        uid = email.lower()
+        u = self.users.get(uid)
+        if not u:
+            u = User(uid, display_name, role, set(workspaces), active=True,
+                     expires_at=now() + timedelta(days=365), terms_accepted_at=now())
+            self.users[uid] = u
+        u.role, u.revoked, u.active = role, False, True
+        u.workspaces = set(workspaces)
+        u.expires_at = max(u.expires_at, now() + timedelta(days=30))
+        u.display_name = display_name or u.display_name
+        self._prune_sessions()
+        tok = secrets.token_urlsafe(32)
+        self.sessions[tok] = (uid, now() + SESSION_TTL)
+        return tok
+
+    @_locked
     def resolve(self, token: str | None) -> User | None:
         if not token or token not in self.sessions:
             return None

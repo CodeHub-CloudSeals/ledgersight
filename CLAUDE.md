@@ -91,6 +91,13 @@ Every CSV download starts with `Report, <name>` + Report ID, client, period, run
 name (the on-screen ?preview=1 stays inline). The chat (Ask LedgerSight, AG-06) is now "FinTwin - Your Financial
 Digital Twin" and opens with only "Hi, I'm FinTwin! How can I help you?" (question chips stay at the bottom).
 
+## TrustOps integration (Naveen, merged 2026-11-13; tests in tests/test_trustops_integration.py)
+With TRUSTOPS_URL + TRUSTOPS_KEY set (`trustops_client.configured()`), governance lives in TrustOps: Agents, Rulebooks,
+Guardrails and Audit trail are hidden (one "TrustOps ↗" link instead), approvals happen only in TrustOps (review items
+show the TrustOps status + reviewer, no Approve/Reject), people are managed in TrustOps, Reports shows the finance
+report + a "Governance record" card. Our UI follows it: `canOpen` refuses those pages (`TROPS_TABS`), the Overview
+guide points to TrustOps, no suggested decision comments. Without the settings nothing changes (local demo, tests).
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.

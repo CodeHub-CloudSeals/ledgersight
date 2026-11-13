@@ -2681,3 +2681,9 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .pp-m.on{background:var(--accent);color:#fff}
 .pp-m.busy{opacity:.6;pointer-events:none}
 .pp-note{margin:12px 2px 0;font-size:12px;line-height:1.4;color:var(--muted)}
+/* TrustOps approval status in the review queue */
+.tro-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;font-weight:650;font-size:13px;background:#fffaeb;color:#93370d}
+.tro-pill.bad{background:#fef3f2;color:#b42318}
+
+.tro-rev{display:inline-flex;align-items:center;gap:6px;margin:0 8px}
+.tro-assign{padding:4px 8px;border-radius:8px;border:1px solid var(--line,#d6dbe6);background:var(--card,#fff);color:inherit;font:inherit;font-size:13px}

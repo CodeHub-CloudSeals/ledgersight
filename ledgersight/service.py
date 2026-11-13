@@ -27,6 +27,7 @@ from .auth import User
 from .config import load as load_config
 from .core import evidence, ingest, policy, query, recon, reports
 from .core.store import Store
+from . import trustops_client as trustops_api
 
 SOURCES = load_config("sources.json")
 SOURCE_KINDS = [k["kind"] for k in SOURCES["kinds"]]
@@ -237,6 +238,8 @@ class Service:
                        model_route=model_route, action=action, policy_decision=d.label(), policy_id=d.policy_id,
                        policy_version=d.policy_version, required_role=d.required_role, approval_id=approval_id,
                        trace_id=trace_id)
+        if d.decision != "ALLOW" and action in policy.FORBIDDEN and trustops_api.configured():
+            trustops_api.decide("human", user.user_id, action, client=wid)   # TrustOps records the blocked attempt too
         if d.decision != "ALLOW":
             raise Denied(d.reason_code, conceal=(d.reason_code == "WORKSPACE_SCOPE"), policy_id=d.policy_id)
         if wid not in self.ws:
@@ -254,6 +257,13 @@ class Service:
         req = {"actor_id": agent_actor, "role": agent_actor, "workspace_id": w.id, "tool_action": action,
                "data_class": data_class, "model_route": model_route, **extra}
         d = policy.evaluate(req, mem)
+        if trustops_api.configured():
+            if d.decision == "ALLOW":
+                t = trustops_api.decide("agent", agent_actor, action, client=w.id, resource=run_id)
+                if t.get("decision") != "ALLOW":     # agents cannot wait for a person: anything but ALLOW stops them
+                    d = policy.Decision("DENY", f"TRUSTOPS_{t.get('decision', 'DENY')}", t.get("policy_id") or "TRUSTOPS")
+            elif action in policy.FORBIDDEN:
+                trustops_api.decide("agent", agent_actor, action, client=w.id)   # record the blocked attempt in TrustOps
         w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="agent", actor_id=agent_actor,
                      agent_code=agent.get("code"), delegated_by=user.user_id, workflow_pack="cpa-bank-reconciliation",
                      run_id=run_id, trace_id=trace_id, source_batch_sha256=batch_sha, source_line_refs=refs or [],
@@ -774,10 +784,11 @@ class Service:
                "decisions": {}}
         self._carry_decisions(user, w, run)
         w.runs[rid] = run
+        self.submit_to_trustops(user, w, run)
         return run
 
     CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy", "proposal_id",
-                    "proposed_by", "proposal_note", "history", "proposals", "attachments")
+                    "proposed_by", "proposal_note", "history", "proposals", "attachments", "trustops_review")
 
     def _carry_decisions(self, user, w, run):
         """A re-run after an input change keeps the CPA's decision on any case whose facts did not change
@@ -841,6 +852,8 @@ class Service:
     DECISIONS = {"ACCEPT": "ACCEPTED", "REJECT": "REJECTED", "RETURN": "RETURNED"}
 
     def decide(self, user, wid, run_id, exc_id, decision, note):
+        if trustops_api.configured():
+            raise ValueError("Approvals for this client happen in TrustOps. Open the item in TrustOps > Approvals.")
         if decision not in self.DECISIONS:
             raise ValueError("decision must be ACCEPT, REJECT or RETURN")
         w = self.ws.get(wid)
@@ -867,6 +880,123 @@ class Service:
                      approval_id=aid, source_line_refs=exc["evidence_refs"], matching_rule_id=exc["rule_id"],
                      workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return exc
+
+    # ---- TrustOps approvals -------------------------------------------------
+    def _line(self, w, line_id):
+        for k in ("bank", "ledger", "ar", "ap"):
+            for r in w.batches.get(k, {}).get("rows", []):
+                if r["id"] == line_id:
+                    return r
+        return None
+
+    def review_details(self, w, run, exc) -> dict:
+        """What a TrustOps approver needs to decide an exception, built from the source rows."""
+        money = lambda c: "" if c is None else f"{c / 100:,.2f}"
+        kinds = {"bank": "Bank line", "ledger": "Ledger line", "ar": "Invoice", "ap": "Bill"}
+        found = []
+        for rid in (exc.get("evidence_refs") or [exc.get("bank_id"), exc.get("ledger_id")]):
+            for k in ("bank", "ledger", "ar", "ap"):
+                r = next((r for r in w.batches.get(k, {}).get("rows", []) if r["id"] == rid), None) if rid else None
+                if r and all(r["id"] != f[1]["id"] for f in found):
+                    found.append((k, r))
+        val = lambda r, f: "" if not r else (money(r.get("amount_cents")) if f == "amount_cents" else str(r.get(f) or ""))
+        fields = [("Line", "id"), ("Date", "date"), ("Description", "description"), ("Reference", "reference"), ("Amount", "amount_cents")]
+        compare = lines = None
+        if len(found) >= 2:
+            (ka, ra), (kb, rb) = found[:2]
+            compare = {"left_title": f"{kinds[ka]} {ra['id']}", "right_title": f"{kinds[kb]} {rb['id']}",
+                       "rows": [[lab, val(ra, f), val(rb, f)] for lab, f in fields[1:]]}
+        elif found:
+            k, r = found[0]
+            lines = {"title": f"{kinds[k]} (no matching entry found)", "columns": [lab for lab, _ in fields],
+                     "rows": [[val(r, f) for _, f in fields]]}
+        facts = [{"label": "Exception type", "value": exc["type"].replace("_", " ").lower()},
+                 {"label": "Why it was flagged", "value": exc.get("why") or ""},
+                 {"label": "Matching rule", "value": exc.get("rule_id") or ""},
+                 {"label": "Client", "value": w.id}]
+        if exc.get("residual_cents") is not None:
+            facts.append({"label": "Still owed on invoice", "value": money(exc["residual_cents"])})
+        if exc.get("missing_inputs"):
+            facts.append({"label": "Missing inputs", "value": ", ".join(exc["missing_inputs"])})
+        for k, v in (exc.get("facts") or {}).items():
+            if v:
+                facts.append({"label": k.replace("_", " "), "value": str(v)})
+        if exc.get("proposal_note"):
+            facts.append({"label": f"Preparer proposal ({exc.get('proposed_by')})", "value": exc["proposal_note"]})
+        base = os.environ.get("LEDGERSIGHT_URL", "").rstrip("/")
+        return {"title": f"{exc['type'].replace('_', ' ').title()} · {money(abs(exc['amount_cents']))} · {exc['id']}",
+                "summary": exc.get("why") or "", "compare": compare, "lines": lines,
+                "recommendation": exc.get("suggestion") or None,
+                "consequence": "Local review decision only. Nothing is posted to any accounting system or bank.",
+                "facts": facts[:30], "link": f"{base}/#exceptions" if base.startswith("https://") else None}
+
+    def submit_to_trustops(self, user, w, run):
+        """Send every open exception of a run to TrustOps for approval (approval happens only in TrustOps)."""
+        if not trustops_api.configured():
+            return
+        for exc in run["result"]["exceptions"]:
+            if exc["status"] not in ("OPEN", "RETURNED") or (exc.get("trustops_review") or {}).get("status") == "PENDING":
+                continue
+            ref = f"{w.id}|{run['id']}|{exc['id']}"
+            t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref,
+                           amount_minor=abs(int(exc["amount_cents"])), currency="USD", **self.review_details(w, run, exc))
+            if t.get("decision_id"):
+                exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
+                                          "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref}
+            else:
+                exc["trustops_review"] = {"status": "NOT_SENT", "reason": t.get("reason")}
+
+    def sync_trustops(self, w, run):
+        """Pick up approvals made in TrustOps and apply them to the review queue (signed into the evidence log)."""
+        if not trustops_api.configured():
+            return
+        for exc in run["result"]["exceptions"]:
+            tr = exc.get("trustops_review") or {}
+            if tr.get("status") != "PENDING":
+                continue
+            st = trustops_api.status(tr["decision_id"])
+            if st and "assigned_to" in st:
+                tr["assigned_to"] = st.get("assigned_to")
+            if not st or st.get("final") not in ("APPROVED", "REJECTED"):
+                continue
+            final = st["final"]
+            tr.update(status=final, resolved_by=st.get("resolved_by"), resolved_at=st.get("resolved_at"),
+                      reason=st.get("resolution_reason"))
+            exc.update(status="ACCEPTED" if final == "APPROVED" else "REJECTED", reviewer=st.get("resolved_by"),
+                       reviewed_at=_ts(), review_note=st.get("resolution_reason") or "", approval_id=tr["decision_id"],
+                       approval_policy=tr.get("policy_id"),
+                       effect=f"{final.title()} in TrustOps. Local review decision only; nothing posted to any accounting system or bank.")
+            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=st.get("resolved_by") or "trustops",
+                         run_id=run["id"], action=f"exception.{'accept' if final == 'APPROVED' else 'reject'}",
+                         policy_decision=f"ALLOW:TRUSTOPS_{final}", policy_id=tr.get("policy_id") or "TRUSTOPS",
+                         approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
+                         matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
+
+    def trustops_reassign(self, user, wid: str, run_id: str, exc_id: str, to: str | None) -> dict:
+        """Change who reviews a pending item in TrustOps. Recorded in the evidence log."""
+        w = self.gate(user, wid, "workspace.read", run_id=run_id)
+        run = w.runs.get(run_id)
+        exc = next((x for x in (run or {}).get("result", {}).get("exceptions", []) if x["id"] == exc_id), None) if run else None
+        tr = (exc or {}).get("trustops_review") or {}
+        if not exc or tr.get("status") != "PENDING":
+            raise ValueError("This item is not waiting for review in TrustOps")
+        out = trustops_api.assign(tr["decision_id"], to or None, user.user_id)
+        tr["assigned_to"] = out.get("assigned_to")
+        w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=user.user_id, run_id=run_id,
+                     action="exception.assign_reviewer", policy_decision="ALLOW:TRUSTOPS_ASSIGN", policy_id="TRUSTOPS",
+                     approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
+                     matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
+        return {"exception_id": exc_id, "assigned_to": tr["assigned_to"]}
+
+    def trustops_item(self, ref: str) -> dict:
+        """Details for TrustOps 'Load details' (the request is authenticated by the TrustOps key in app.py)."""
+        wid, run_id, exc_id = (ref.split("|") + ["", "", ""])[:3]
+        w = self.ws.get(wid)
+        run = w.runs.get(run_id) if w else None
+        exc = next((e for e in (run or {}).get("result", {}).get("exceptions", []) if e["id"] == exc_id), None)
+        if not exc:
+            raise KeyError(ref)
+        return self.review_details(w, run, exc)
 
     def propose(self, user, wid, run_id, exc_id, note):
         """Preparer proposes a resolution; becomes the maker, so cannot also approve.
@@ -1335,6 +1465,24 @@ class Service:
                 "generated_by": user.user_id, "generated_at": _ts()}
 
     # ---- reports (AG-05): finance + governance, same run id, several formats --------
+    @staticmethod
+    def _add_trustops_approvals(rep: dict, run: dict) -> None:
+        """Who approved each review item in TrustOps. The full governance record lives in TrustOps."""
+        rows = []
+        money = lambda c: f"{c / 100:,.2f}"
+        for e in run["result"]["exceptions"]:
+            tr = e.get("trustops_review") or {}
+            if not tr:
+                continue
+            rows.append([e["id"], e["type"], money(abs(e["amount_cents"])), tr.get("status"), tr.get("assigned_to") or "Any approver",
+                         tr.get("resolved_by") or "", tr.get("resolved_at") and datetime.fromtimestamp(tr["resolved_at"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC") or "",
+                         tr.get("reason") or "", tr.get("decision_id") or ""])
+        link = trustops_api.console_link("#/decisions") or ""
+        rep["summary"].append(["Approvals", f"Made in TrustOps. Full governance record: {link}"])
+        rep["sections"].insert(3, {"title": "Approvals in TrustOps", "columns": ["ID", "Type", "Amount", "Status", "Reviewer",
+                                   "Decided by", "Decided at", "Reason", "TrustOps decision"], "rows": rows,
+                                   "note": "Each review item was sent to TrustOps. Approve or reject happened there; this table shows the outcome."})
+
     def report(self, user, wid, run_id, kind, fmt="json", preview=False) -> tuple[dict, bytes]:
         if kind not in reports.KINDS or fmt not in reports.FORMATS:
             raise ValueError("report must be finance or governance; format json, csv, xlsx or pdf")
@@ -1362,6 +1510,8 @@ class Service:
             rep = reports.governance_report(events=w.log.events, verification=evidence.verify(w.log.events, self.public_key_pem()),
                                             policies=policy.POLICIES, policy_version=policy.POLICY_VERSION,
                                             key_id=w.log.key_id, **common)
+        if kind == "finance" and trustops_api.configured():
+            self._add_trustops_approvals(rep, run)
         return rep, reports.RENDER[fmt](rep)
 
     def audit_trail(self, user, wid, fmt="pdf") -> tuple[dict, bytes]:

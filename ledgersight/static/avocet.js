@@ -151,6 +151,7 @@ async function boot() {
   await authConfig;
   try { S.me = await api("/v1/me"); } catch (_) { showLogin(); return; }
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  applyTrustOpsNav();
   $("logout").classList.toggle("hidden", !!S.noLogin);
   $("me-name").parentElement.classList.toggle("hidden", !!S.noLogin);
   $("act-as-wrap").classList.toggle("hidden", !S.noLogin);
@@ -179,7 +180,11 @@ const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", 
 // pages. The server refuses those views for a preparer too (POL-02, governance.read); hiding them is not the control.
 const GOV_TABS = new Set(["agents", "controls", "evidence", "trust", "team"]);
 const isCPA = () => !!(S.me && S.me.role === "owner_reviewer");
-const canOpen = (tab) => isCPA() || !GOV_TABS.has(tab);
+// With TrustOps connected (2026-11-13, Naveen's integration) rules, guardrails, agents and the audit trail live in
+// TrustOps: those pages are not opened here by anyone, and nothing links to them.
+const TROPS_TABS = new Set(["agents", "rules", "controls", "evidence"]);
+const tropsOn = () => !!(S.me && S.me.trustops && S.me.trustops.connected);
+const canOpen = (tab) => !(tropsOn() && TROPS_TABS.has(tab)) && (isCPA() || !GOV_TABS.has(tab));
 function applyRole() {
   document.body.classList.toggle("role-preparer", !isCPA());
   document.querySelectorAll(".sidebar nav .tab").forEach((t) => {
@@ -194,12 +199,18 @@ function applyRole() {
   const chip = $("period-chip");
   chip.title = isCPA() ? "Reporting period: click to choose the month" : "Reporting period. A CPA reviewer sets it.";
   chip.classList.toggle("ro", !isCPA());
-  const how = document.querySelector('#ov-how a[data-go="agents"]');
-  if (how) { how.dataset.go = isCPA() ? "agents" : "recon"; how.href = "#" + how.dataset.go; }
-  const decideStep = document.querySelector('#ov-how a[data-go="exceptions"] .tx');
-  if (decideStep) put(decideStep, el("b", {}, isCPA() ? "You decide the problems" : "You propose resolutions"),
-    el("span", {}, isCPA() ? "Approve, reject or return each flagged item." : "A CPA reviewer then approves, rejects or returns each one."),
-    el("em", { class: "who you" }, "YOU"));
+  const steps = document.querySelectorAll("#ov-how .how > a"), tro = tropsOn() ? S.me.trustops : null;
+  if (steps.length === 5) {
+    const agents = canOpen("agents") ? "agents" : "recon";
+    steps[1].dataset.go = agents; steps[1].href = "#" + agents;
+    // step 3: the rules live in TrustOps when it is connected (opens the TrustOps console)
+    if (tro) { delete steps[2].dataset.go; steps[2].href = tro.console_url || "#home"; steps[2].target = "_blank"; steps[2].rel = "noopener"; }
+    else { steps[2].dataset.go = "rules"; steps[2].href = "#rules"; steps[2].removeAttribute("target"); }
+    put(steps[3].querySelector(".tx"), el("b", {}, tro ? "An approver decides in TrustOps" : isCPA() ? "You decide the problems" : "You propose resolutions"),
+      el("span", {}, tro ? "Each flagged item is approved or rejected in TrustOps; the result shows here." : isCPA() ? "Approve, reject or return each flagged item." : "A CPA reviewer then approves, rejects or returns each one."),
+      el("em", { class: tro ? "who to" : "who you" }, tro ? "TRUSTOPS" : "YOU"));
+    put(steps[4].querySelector(".tx > span"), tro ? "Finance report here; the governance record is kept in TrustOps." : "Finance report and governance report, with proof.");
+  }
   const active = document.querySelector(".sidebar nav .tab.active");
   if (active && !canOpen(active.dataset.tab)) go("home");
 }
@@ -1637,6 +1648,47 @@ function proofButton(x, out, note) {
   }, "Uploading…");
   return [btn, input];
 }
+// When TrustOps is connected, governance (rules, guardrails, agents, audit trail, approvals) lives in TrustOps.
+function applyTrustOpsNav() {
+  const t = S.me && S.me.trustops;
+  if (!t || !t.connected) return;
+  ["agents", "rules", "controls", "evidence"].forEach((k) => { const b = document.querySelector(`#tabs .tab[data-tab="${k}"]`); if (b) { b.classList.add("hidden"); b.style.display = "none"; } });
+  const last = document.querySelector('#tabs .tab[data-tab="evidence"]');
+  if (last && !document.getElementById("trustops-link") && t.console_url) {
+    const a = el("a", { id: "trustops-link", class: "tab", href: t.console_url, target: "_blank", rel: "noopener" },
+      el("span", { class: "ico" }, "⛨"), "TrustOps ↗");
+    last.after(a);
+  }
+}
+// TrustOps approval status for one review item (approval happens in TrustOps, never here)
+// Who reviews this item in TrustOps. The list of Admins and Approvers comes from TrustOps Team & access.
+async function tropsReviewers() {
+  if (!S.trRevs || Date.now() - S.trRevs.at > 30000) {
+    try { S.trRevs = { at: Date.now(), items: (await api("/v1/trustops/reviewers")).items || [] }; }
+    catch (e) { S.trRevs = { at: Date.now(), items: [] }; }
+  }
+  return S.trRevs.items;
+}
+function tropsReviewer(x, tr) {
+  const cur = tr.assigned_to || "";
+  const sel = el("select", { class: "tro-assign", "aria-label": "Reviewer in TrustOps", onchange: async () => {
+    sel.disabled = true;
+    try { const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/reviewer`), { method: "POST", json: { to: sel.value || null } });
+      tr.assigned_to = r.assigned_to; toast(r.assigned_to ? `Assigned to ${r.assigned_to} in TrustOps` : "Any approver in TrustOps can review this", "good"); }
+    catch (e) { sel.value = cur; toast(e.message, "bad"); } finally { sel.disabled = false; } } },
+    el("option", { value: "" }, "Any approver"), cur ? el("option", { value: cur, selected: true }, cur) : null);
+  tropsReviewers().then((items) => { for (const r of items) if (r.email !== cur) sel.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  return el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Reviewer "), sel);
+}
+function tropsStatus(x, tops) {
+  const tr = x.trustops_review || {};
+  const check = el("button", { class: "secondary", onclick: async () => {
+    try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); } catch (e) { toast(e.message, "bad"); } } }, "Check now");
+  const open = tops.approvals_url ? el("a", { class: "secondary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Open TrustOps ↗") : null;
+  if (tr.status === "PENDING") return [el("span", { class: "tro-pill" }, "⏳ Waiting for approval in TrustOps"), tropsReviewer(x, tr), open, check];
+  if (tr.status === "NOT_SENT") return [el("span", { class: "tro-pill bad" }, `Not sent to TrustOps: ${tr.reason || "unavailable"}`), check];
+  return [el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes"), check];
+}
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
   if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
@@ -1681,6 +1733,7 @@ function renderExceptions() {
       catch (e) { fail(e); }
     };
     const actionable = x.status === "OPEN" || x.status === "RETURNED";
+    const tops = S.run && S.run.trustops && S.run.trustops.connected ? S.run.trustops : null;
     const t = x.trustops;
     const rec = (id) => recCard(id);
     const refs = x.evidence_refs || [];
@@ -1718,17 +1771,20 @@ function renderExceptions() {
           refs.length ? [el("dt", {}, "Source rows"), el("dd", {}, rich(refs.map((id) => { const l = line(id); return l ? `${id}: row ${l.source_row}` : id; }).join(" · "), false))] : null,
           x.source_record_refs && x.source_record_refs.length ? [el("dt", {}, "Source files"), el("dd", {}, x.source_record_refs.join(" · "))] : null,
           x.run_id ? [el("dt", {}, "Run linkage"), el("dd", { class: "small" }, `Case ${x.case_id} · run ${x.run_id} · trace ${x.trace_id} · raised by ${x.agent_id}, routed by ${x.routed_by || "AG-04"} · rulebook ${x.rulebook_version}`)] : null)),
-      actionable ? el("div", { class: "xa" }, suggestChips(x, note, reviewer), note,
+      actionable ? el("div", { class: "xa" }, tops ? null : suggestChips(x, note, reviewer), note,   // decisions are made in TrustOps when connected
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
             proofButton(x, out, note),
+            // With TrustOps connected, approval happens only in TrustOps; LedgerSight shows the status.
+            tops ? tropsStatus(x, tops)
             // Decisions are the CPA reviewer's: a staff preparer only proposes (the server refuses a preparer decision anyway, POL-02/POL-06).
-            reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
+            : reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
               el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
               el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
               : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
-          el("div", { class: "xa-hint" }, reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
+          el("div", { class: "xa-hint" }, tops ? "Approved or rejected by an approver in TrustOps. The result appears here automatically."
+            : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer approves, rejects or returns it."), out)
         : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
             (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")));
@@ -1994,7 +2050,7 @@ function outcomeMetric(code, s) {
   if (code === "AG-01" && (x = m(/(\d+) sources present/))) return [x[1], `files checked${/unchanged/.test(t) ? " · unchanged" : ""}`];
   if (code === "AG-02" && (x = m(/(\d+) bank and ledger rows/))) return [x[1], "lines standardised"];
   if (code === "AG-03" && (x = m(/(\d+) matched automatically, (\d+) exception/))) return [x[1], `matched · ${x[2]} for review`];
-  if (code === "AG-04") { const n = escCount(s); return n ? [String(n), "sent to a CPA reviewer"] : ["0", "needed a person"]; }
+  if (code === "AG-04") { const n = escCount(s); return n ? [String(n), tropsOn() ? "sent to TrustOps for approval" : "sent to a CPA reviewer"] : ["0", "needed a person"]; }
   if (code === "AG-05" && /ready/.test(t)) return ["2", "reports ready"];
   if (code === "AG-06" && /available/.test(t)) return ["Ready", "for questions"];
   return [String(s.rows_out), "records out"];
@@ -2181,7 +2237,8 @@ function renderReports() {
   if (!S.run) { put("rep-cards"); put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first.")); return; }
   const cards = [
     ["finance", "Finance Reconciliation Report", "LEDGERSIGHT", "FIN-", "What happened to the financial records. Totals, matches, exceptions, outstanding balances and reviewer status."],
-    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]];
+    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]]
+    .filter(([k]) => !(k === "governance" && S.run.trustops?.connected));
   // Each report card also links the other downloads for this run, so nothing has to be hunted for on Audit trail.
   const link = (href, label, extra) => el("a", { class: "linkbtn", href, download: "", ...(extra || {}) }, label);
   const also = {
@@ -2191,11 +2248,15 @@ function renderReports() {
         target: "_blank", rel: "noopener", onclick: markExported }, "Printable review pack")]],
     governance: isCPA() ? ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]
       : ["The whole signed audit trail is downloaded by a CPA reviewer.", []]};
-  put("rep-cards", cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
+  const tops = S.run.trustops?.connected ? el("div", { class: "card" }, el("div", { class: "eyebrow2" }, "TRUSTOPS"),
+    el("div", { class: "card-title" }, "Governance record"),
+    el("div", { class: "muted small" }, "Approvals, blocked actions and the evidence chain are kept in TrustOps, across every connected application. Download the governance report there."),
+    S.run.trustops.approvals_url ? el("div", { class: "fmt" }, el("a", { class: "secondary btnlink", href: S.run.trustops.approvals_url.replace("#/approvals", "#/governance-reports"), target: "_blank", rel: "noopener" }, "Open TrustOps reports ↗")) : null) : null;
+  put("rep-cards", [...cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
     el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
     el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
       ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
-    el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))));
+    el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))), tops].filter(Boolean));
   const openN = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
   put("rep-draft", !isCPA() && openN ? el("div", { class: "msg rep-draft" }, el("b", {}, "Draft. "),
     `${openN} review item${openN === 1 ? "" : "s"} still need${openN === 1 ? "s" : ""} a CPA reviewer's decision, so these reports are not final yet.`) : null);
@@ -2290,6 +2351,15 @@ async function renderRules() {
 
 // ---------------- team ----------------
 async function renderTeam() {
+  const tops = S.me && S.me.trustops;
+  if (tops && tops.connected) {
+    put("users", el("div", { class: "card" }, el("div", { class: "card-title" }, "People are managed in TrustOps"),
+      el("p", { class: "muted" }, "Add people, choose Preparer or Reviewer for LedgerSight, or remove access in TrustOps > Team & access. They sign in here with Google using the same work email."),
+      tops.console_url ? el("a", { class: "primary btnlink", href: tops.console_url + "#/governance-team", target: "_blank", rel: "noopener" }, "Open Team & access in TrustOps ↗") : null));
+    const add = document.getElementById("inv-btn"); const card = add && add.closest(".card"); if (card) card.style.display = "none";
+    const sub = document.querySelector("#p-team .page-head .sub"); if (sub) sub.textContent = "Who can use LedgerSight is set in TrustOps. Everyone signs in with Google using their work email.";
+    return;
+  }
   put("users-demo-note", S.noLogin ? el("div", { class: "callout users-note" }, el("b", {}, "Local demo: "),
     "this copy has no sign-in screen (switch people with “Acting as”). Users you add here sign in on the hosted version, with their password and authenticator code.") : null);
   put("inv-ws", S.wsList.map((w) => el("label", { class: "ws-chip" }, el("input", { type: "checkbox", value: w.id, checked: w.id === S.ws }), el("span", {}, proper(w.name)))));
