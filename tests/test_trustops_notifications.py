@@ -229,3 +229,18 @@ def test_rejected_item_can_be_sent_again_with_new_proof(tops, cpa, prep):
     x = next(e for e in cpa.get(f"{WS}/runs/{run['id']}", headers=H).json()["result"]["exceptions"] if e["id"] == e0["id"])
     assert x["status"] == "OPEN" and x["resubmitted"] == 1 and x["trustops_history"][0]["reason"] == "No receipt"
     assert 'chip("rejected", "Rejected", all.filter((x) => x.status === "REJECTED").length, "pl-rej")' in JS and "function resendBox(" in JS
+
+
+def test_same_person_in_both_apps_still_hears_the_trustops_decision(tops, cpa, monkeypatch):
+    """Live issue 2026-11-13: one Google account sent an item to itself and approved / rejected it in TrustOps; the
+    LedgerSight bell hid the decision as 'your own action'. A decision made in TrustOps is always news here."""
+    monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: [{"email": "tops-notify@demo.test", "role": "Admin"}])
+    run = pack_run(cpa)
+    e0, e1 = run["result"]["exceptions"][:2]
+    d0 = _send(cpa, run, e0, to="tops-notify@demo.test").json()["trustops_review"]["decision_id"]
+    d1 = _send(cpa, run, e1, to="tops-notify@demo.test").json()["trustops_review"]["decision_id"]
+    assert not [it for it in _items(cpa) if it["kind"] == "SENT"]               # sending is still your own action
+    tops.final[d0] = ("APPROVED", "tops-notify@demo.test", "ok")
+    tops.final[d1] = ("REJECTED", "tops-notify@demo.test", "no receipt")
+    got = {(it["kind"], it["exception_id"]) for it in _items(cpa) if it["via"] == "TrustOps"}
+    assert ("APPROVED", e0["id"]) in got and ("REJECTED", e1["id"]) in got

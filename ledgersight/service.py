@@ -1227,7 +1227,10 @@ class Service:
                 continue
             # TrustOps news (items sent, approved or rejected there) is for both roles (2026-11-13)
             via_tops = pd.startswith("ALLOW:TRUSTOPS_") and e.get("action") in self.NOTIFY_ACTIONS
-            if (e.get("action") not in want and not via_tops) or e.get("actor_id") == user.user_id or not pd.startswith("ALLOW"):
+            # A decision made in TrustOps is news here even when the same person made it there (one Google account
+            # signed in to both apps sends an item to itself and approves it in TrustOps). Live issue 2026-11-13.
+            from_tops = via_tops and e.get("action") in ("exception.accept", "exception.reject")
+            if (e.get("action") not in want and not via_tops) or (e.get("actor_id") == user.user_id and not from_tops) or not pd.startswith("ALLOW"):
                 continue
             x, note = by_id.get(e.get("approval_id"), ({}, None))
             items.append({"seq": seq, "kind": self.NOTIFY_ACTIONS[e["action"]], "by": e.get("actor_id"),
