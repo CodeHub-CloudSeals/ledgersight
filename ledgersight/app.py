@@ -531,6 +531,27 @@ def get_run(wid: str, run_id: str, u=Depends(current_user)):
     return _run_view(w.runs[run_id])
 
 
+@app.get("/v1/trustops/reviewers")
+def trustops_reviewers(u=Depends(current_user)):
+    """Who can review in TrustOps (Admins and Approvers), managed in TrustOps Team & access."""
+    if not trustops_api.configured():
+        return {"items": [], "connected": False}
+    items = trustops_api.reviewers()
+    if items is None:
+        raise HTTPException(503, "TrustOps could not be reached")
+    return {"items": items, "connected": True}
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/reviewer")
+def trustops_reassign(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depends(current_user)):
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    try:
+        return handle(svc.trustops_reassign, u, wid, run_id, exc_id, body.get("to"))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
 @app.get("/trustops/items/{ref:path}")
 def trustops_item(ref: str, x_trustops_key: str | None = Header(default=None)):
     """TrustOps 'Load details' for an item it is asked to approve. Authenticated by the shared TrustOps key."""

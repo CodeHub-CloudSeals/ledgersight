@@ -113,3 +113,30 @@ def test_access_removed_in_trustops_signs_the_person_out(tops, owner):
     tops.access.pop("tops-owner@demo.test")
     r = owner.get("/v1/me", headers=H)
     assert r.status_code == 401 and "TrustOps" in r.text
+
+
+def test_reviewer_is_shown_and_can_be_changed(tops, monkeypatch):
+    tops.access["tops-rev@demo.test"] = "reviewer"
+    owner = make_user("tops-rev@demo.test", "owner_reviewer", ["client-a"])
+    revs = [{"email": "approver@firm.test", "role": "Approver"}, {"email": "admin@firm.test", "role": "Admin"}]
+    assigned = {}
+    monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: revs)
+
+    def fake_assign(did, to, by):
+        if to and to not in {r["email"] for r in revs}:
+            raise ValueError("This person is not an Admin or Approver in TrustOps")
+        assigned[did] = (to, by)
+        return {"decision_id": did, "assigned_to": to}
+    monkeypatch.setattr(trustops_client, "assign", fake_assign)
+    rv = owner.get("/v1/trustops/reviewers", headers=H)
+    assert rv.status_code == 200, rv.text
+    assert rv.json()["items"] == revs
+    run = pack_run(owner)
+    e0 = run["result"]["exceptions"][0]
+    url = f"{WS}/runs/{run['id']}/exceptions/{e0['id']}/reviewer"
+    r = owner.post(url, headers=H, json={"to": "approver@firm.test"})
+    assert r.status_code == 200 and r.json()["assigned_to"] == "approver@firm.test"
+    assert assigned[e0["trustops_review"]["decision_id"]] == ("approver@firm.test", "tops-rev@demo.test")
+    assert owner.post(url, headers=H, json={"to": "someone@else.test"}).status_code == 422
+    again = owner.get(f"{WS}/runs/{run['id']}", headers=H).json()
+    assert next(e for e in again["result"]["exceptions"] if e["id"] == e0["id"])["trustops_review"]["assigned_to"] == "approver@firm.test"

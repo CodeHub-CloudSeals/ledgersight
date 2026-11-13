@@ -955,6 +955,8 @@ class Service:
             if tr.get("status") != "PENDING":
                 continue
             st = trustops_api.status(tr["decision_id"])
+            if st and "assigned_to" in st:
+                tr["assigned_to"] = st.get("assigned_to")
             if not st or st.get("final") not in ("APPROVED", "REJECTED"):
                 continue
             final = st["final"]
@@ -969,6 +971,22 @@ class Service:
                          policy_decision=f"ALLOW:TRUSTOPS_{final}", policy_id=tr.get("policy_id") or "TRUSTOPS",
                          approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
                          matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
+
+    def trustops_reassign(self, user, wid: str, run_id: str, exc_id: str, to: str | None) -> dict:
+        """Change who reviews a pending item in TrustOps. Recorded in the evidence log."""
+        w = self.gate(user, wid, "workspace.read", run_id=run_id)
+        run = w.runs.get(run_id)
+        exc = next((x for x in (run or {}).get("result", {}).get("exceptions", []) if x["id"] == exc_id), None) if run else None
+        tr = (exc or {}).get("trustops_review") or {}
+        if not exc or tr.get("status") != "PENDING":
+            raise ValueError("This item is not waiting for review in TrustOps")
+        out = trustops_api.assign(tr["decision_id"], to or None, user.user_id)
+        tr["assigned_to"] = out.get("assigned_to")
+        w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=user.user_id, run_id=run_id,
+                     action="exception.assign_reviewer", policy_decision="ALLOW:TRUSTOPS_ASSIGN", policy_id="TRUSTOPS",
+                     approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
+                     matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
+        return {"exception_id": exc_id, "assigned_to": tr["assigned_to"]}
 
     def trustops_item(self, ref: str) -> dict:
         """Details for TrustOps 'Load details' (the request is authenticated by the TrustOps key in app.py)."""

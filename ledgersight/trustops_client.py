@@ -95,6 +95,35 @@ def app_access(email: str, max_age: float = 60.0) -> str | None:
     return role
 
 
+_rev_cache: list = [0.0, None]
+
+
+def reviewers(max_age: float = 30.0) -> list[dict] | None:
+    """Admins and Approvers in TrustOps who can review this application's items. None if TrustOps cannot be asked."""
+    if _rev_cache[1] is not None and time.monotonic() - _rev_cache[0] < max_age:
+        return _rev_cache[1]
+    try:
+        items = _call("GET", "/v1/reviewers").get("items") or []
+    except Exception:
+        return None
+    _rev_cache[:] = [time.monotonic(), items]
+    return items
+
+
+def assign(decision_id: str, to: str | None, by: str) -> dict:
+    """Change who reviews an item in TrustOps (None = any approver). Raises on failure with TrustOps' message."""
+    try:
+        out = _call("POST", f"/v1/decisions/{decision_id}/app-assign", {"to": to, "by": by})
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read() or b"{}").get("message")
+        except Exception:
+            msg = None
+        raise ValueError(msg or f"TrustOps answered HTTP {e.code}") from None
+    _status_cache.pop(decision_id, None)
+    return out
+
+
 def valid_key(presented: str | None) -> bool:
     """Requests from TrustOps (Load details) carry the same key."""
     return bool(key()) and bool(presented) and hmac.compare_digest(presented, key())

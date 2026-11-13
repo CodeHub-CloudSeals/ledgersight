@@ -1534,12 +1534,31 @@ function applyTrustOpsNav() {
   }
 }
 // TrustOps approval status for one review item (approval happens in TrustOps, never here)
+// Who reviews this item in TrustOps. The list of Admins and Approvers comes from TrustOps Team & access.
+async function tropsReviewers() {
+  if (!S.trRevs || Date.now() - S.trRevs.at > 30000) {
+    try { S.trRevs = { at: Date.now(), items: (await api("/v1/trustops/reviewers")).items || [] }; }
+    catch (e) { S.trRevs = { at: Date.now(), items: [] }; }
+  }
+  return S.trRevs.items;
+}
+function tropsReviewer(x, tr) {
+  const cur = tr.assigned_to || "";
+  const sel = el("select", { class: "tro-assign", "aria-label": "Reviewer in TrustOps", onchange: async () => {
+    sel.disabled = true;
+    try { const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/reviewer`), { method: "POST", json: { to: sel.value || null } });
+      tr.assigned_to = r.assigned_to; toast(r.assigned_to ? `Assigned to ${r.assigned_to} in TrustOps` : "Any approver in TrustOps can review this", "good"); }
+    catch (e) { sel.value = cur; toast(e.message, "bad"); } finally { sel.disabled = false; } } },
+    el("option", { value: "" }, "Any approver"), cur ? el("option", { value: cur, selected: true }, cur) : null);
+  tropsReviewers().then((items) => { for (const r of items) if (r.email !== cur) sel.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  return el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Reviewer "), sel);
+}
 function tropsStatus(x, tops) {
   const tr = x.trustops_review || {};
   const check = el("button", { class: "secondary", onclick: async () => {
     try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); } catch (e) { toast(e.message, "bad"); } } }, "Check now");
   const open = tops.approvals_url ? el("a", { class: "secondary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Open TrustOps ↗") : null;
-  if (tr.status === "PENDING") return [el("span", { class: "tro-pill" }, "⏳ Waiting for approval in TrustOps"), open, check];
+  if (tr.status === "PENDING") return [el("span", { class: "tro-pill" }, "⏳ Waiting for approval in TrustOps"), tropsReviewer(x, tr), open, check];
   if (tr.status === "NOT_SENT") return [el("span", { class: "tro-pill bad" }, `Not sent to TrustOps: ${tr.reason || "unavailable"}`), check];
   return [el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes"), check];
 }
