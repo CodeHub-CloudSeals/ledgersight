@@ -180,9 +180,10 @@ const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", 
 // pages. The server refuses those views for a preparer too (POL-02, governance.read); hiding them is not the control.
 const GOV_TABS = new Set(["agents", "controls", "evidence", "trust", "team"]);
 const isCPA = () => !!(S.me && S.me.role === "owner_reviewer");
-// With TrustOps connected (2026-11-13, Naveen's integration) rules, guardrails, agents and the audit trail live in
-// TrustOps: those pages are not opened here by anyone, and nothing links to them.
-const TROPS_TABS = new Set(["agents", "rules", "controls", "evidence"]);
+// With TrustOps connected (2026-11-13, Naveen's integration) rules, guardrails and the audit trail live in
+// TrustOps: those pages are not opened here by anyone, and nothing links to them. Agents stays (user request
+// 2026-11-13): it is LedgerSight's own live view of its six agents, read from /agents.
+const TROPS_TABS = new Set(["rules", "controls", "evidence"]);
 const tropsOn = () => !!(S.me && S.me.trustops && S.me.trustops.connected);
 const canOpen = (tab) => !(tropsOn() && TROPS_TABS.has(tab)) && (isCPA() || !GOV_TABS.has(tab));
 function applyRole() {
@@ -1652,7 +1653,7 @@ function proofButton(x, out, note) {
 function applyTrustOpsNav() {
   const t = S.me && S.me.trustops;
   if (!t || !t.connected) return;
-  ["agents", "rules", "controls", "evidence"].forEach((k) => { const b = document.querySelector(`#tabs .tab[data-tab="${k}"]`); if (b) { b.classList.add("hidden"); b.style.display = "none"; } });
+  ["rules", "controls", "evidence"].forEach((k) => { const b = document.querySelector(`#tabs .tab[data-tab="${k}"]`); if (b) { b.classList.add("hidden"); b.style.display = "none"; } });
   const last = document.querySelector('#tabs .tab[data-tab="evidence"]');
   if (last && !document.getElementById("trustops-link") && t.console_url) {
     const a = el("a", { id: "trustops-link", class: "tab", href: t.console_url, target: "_blank", rel: "noopener" },

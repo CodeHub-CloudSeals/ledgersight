@@ -105,7 +105,8 @@ def test_period_chip_opens_a_month_picker_and_saves_through_the_profile(cpa_run)
 def test_trustops_mode_never_links_to_pages_that_moved_to_trustops():
     """2026-11-13 merge of Naveen's TrustOps integration: with TrustOps connected, Agents, Rulebooks, Guardrails and
     Audit trail live in TrustOps. Our pages must not bring them back (links, guide steps, decision wording)."""
-    assert 'const TROPS_TABS = new Set(["agents", "rules", "controls", "evidence"]);' in JS
+    assert 'const TROPS_TABS = new Set(["rules", "controls", "evidence"]);' in JS   # Agents stays (user request)
+    assert '["rules", "controls", "evidence"].forEach((k) =>' in JS
     assert "const canOpen = (tab) => !(tropsOn() && TROPS_TABS.has(tab)) &&" in JS
     assert "applyTrustOpsNav();" in JS and '"TrustOps ↗"' in JS
     assert '"An approver decides in TrustOps"' in JS and "steps[2].href = tro.console_url" in JS
