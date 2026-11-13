@@ -934,6 +934,7 @@ class Service:
         """Send every open exception of a run to TrustOps for approval (approval happens only in TrustOps)."""
         if not trustops_api.configured():
             return
+        sent = []
         for exc in run["result"]["exceptions"]:
             if exc["status"] not in ("OPEN", "RETURNED") or (exc.get("trustops_review") or {}).get("status") == "PENDING":
                 continue
@@ -943,8 +944,14 @@ class Service:
             if t.get("decision_id"):
                 exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
                                           "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref}
+                sent.append(exc["id"])
             else:
                 exc["trustops_review"] = {"status": "NOT_SENT", "reason": t.get("reason")}
+        if sent:   # one signed record per run: the confirmation in the bell and the run's toast (2026-11-13)
+            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="agent", actor_id="AG-04", delegated_by=user.user_id,
+                         run_id=run["id"], action="exception.sent_to_trustops", policy_decision="ALLOW:TRUSTOPS_SUBMITTED",
+                         policy_id="TRUSTOPS", source_line_refs=sent, workflow_pack="cpa-bank-reconciliation",
+                         trace_id=run.get("trace_id"))
 
     def sync_trustops(self, w, run):
         """Pick up approvals made in TrustOps and apply them to the review queue (signed into the evidence log)."""
@@ -1096,10 +1103,16 @@ class Service:
     # A CPA reviewer is told when someone proposes a resolution; a staff preparer is told when a reviewer approves,
     # rejects or returns an item. Your own actions never notify you. Only "seen" is stored (per person, per book).
     NOTIFY_ACTIONS = {"exception.proposed": "PROPOSED", "exception.accept": "APPROVED",
-                      "exception.reject": "REJECTED", "exception.return": "RETURNED", "exception.attachment_added": "ATTACHED"}
+                      "exception.reject": "REJECTED", "exception.return": "RETURNED", "exception.attachment_added": "ATTACHED",
+                      "exception.sent_to_trustops": "SENT"}
 
     def notifications(self, user, wid, limit: int = 30):
         w = self.gate(user, wid, "workspace.read", record=False)
+        if trustops_api.configured() and w.runs:   # pick up approvals made in TrustOps, so the bell shows them
+            try:
+                self.sync_trustops(w, w.runs[list(w.runs)[-1]])
+            except Exception:   # noqa: BLE001 - TrustOps unreachable: the bell still answers
+                pass
         decides = "exception.decide" in policy.ROLE_ACTIONS.get(user.role, set())
         want = ({"exception.proposed"} if decides else {"exception.accept", "exception.reject", "exception.return"}) \
             | {"exception.attachment_added"}   # proof added by the other person is news for both roles
@@ -1112,15 +1125,21 @@ class Service:
                     by_id[h.get("approval_id")] = (x, h.get("note"))
                 for a in x.get("attachments") or []:
                     by_id[a.get("id")] = (x, a.get("filename"))
+                tr = x.get("trustops_review") or {}
+                if tr.get("decision_id"):
+                    by_id[tr["decision_id"]] = (x, tr.get("reason"))
         items = []
         for seq, e in enumerate(w.log.events):
-            if e.get("action") not in want or e.get("actor_id") == user.user_id                     or not str(e.get("policy_decision") or "").startswith("ALLOW"):
+            pd = str(e.get("policy_decision") or "")
+            # TrustOps news (items sent, approved or rejected there) is for both roles (2026-11-13)
+            via_tops = pd.startswith("ALLOW:TRUSTOPS_") and e.get("action") in self.NOTIFY_ACTIONS
+            if (e.get("action") not in want and not via_tops) or e.get("actor_id") == user.user_id or not pd.startswith("ALLOW"):
                 continue
             x, note = by_id.get(e.get("approval_id"), ({}, None))
             items.append({"seq": seq, "kind": self.NOTIFY_ACTIONS[e["action"]], "by": e.get("actor_id"),
                           "at": e.get("timestamp_utc"), "run_id": e.get("run_id"), "ref": e.get("approval_id"),
                           "exception_id": x.get("id"), "case_id": x.get("case_id"), "type": x.get("type"),
-                          "note": note or "", "lines": e.get("source_line_refs") or []})
+                          "note": note or "", "lines": e.get("source_line_refs") or [], "via": "TrustOps" if via_tops else None})
         seen = w.notif_seen.get(user.user_id, -1)
         for it in items:
             it["unread"] = it["seq"] > seen

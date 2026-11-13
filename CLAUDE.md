@@ -97,6 +97,10 @@ Guardrails and Audit trail are hidden (Agents stays: user request 2026-11-13) (o
 show the TrustOps status + reviewer, no Approve/Reject), people are managed in TrustOps, Reports shows the finance
 report + a "Governance record" card. Our UI follows it: `canOpen` refuses those pages (`TROPS_TABS`), the Overview
 guide points to TrustOps, no suggested decision comments. Without the settings nothing changes (local demo, tests).
+Feedback 2026-11-13 (tests/test_trustops_notifications.py): a run that sends items to TrustOps signs one
+`exception.sent_to_trustops` record (actor AG-04); the run toast says how many were sent; the bell shows "sent to
+TrustOps" and approvals/rejections made in TrustOps to both roles (the bell poll syncs the latest run). Review items
+show a status bar (state, sent time, reviewer) above one button row; agent cards are equal height.
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else

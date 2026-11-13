@@ -2687,3 +2687,22 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 
 .tro-rev{display:inline-flex;align-items:center;gap:6px;margin:0 8px}
 .tro-assign{padding:4px 8px;border-radius:8px;border:1px solid var(--line,#d6dbe6);background:var(--card,#fff);color:inherit;font:inherit;font-size:13px}
+
+/* Agents: every card in a row is the same height; "Last action" sits on the bottom line (2026-11-13) */
+#ag-grid{align-items:stretch}
+#ag-grid>.card.agent{display:flex;flex-direction:column;height:100%}
+#ag-grid .ag-does{flex:1 1 auto}
+#ag-grid .ag-last{margin-top:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Review item with TrustOps connected: a status bar, then one row of buttons (2026-11-13) */
+.tro-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding:10px 12px 10px 10px;border-radius:16px;background:var(--subtle)}
+.tro-bar .tro-pill{padding:6px 12px;font-size:13px}
+.tro-dot{width:7px;height:7px;border-radius:50%;background:currentColor;animation:troPulse 1.6s ease-in-out infinite}
+@keyframes troPulse{50%{opacity:.35}}
+.tro-bar .tro-rev{margin:0}
+.tro-bar .tro-assign{height:36px;min-width:200px;border-radius:999px;padding:0 14px;background:var(--surface)}
+.xa-tro .xa-row{flex-wrap:nowrap}
+.xa-tro .xa-row>*{flex:none}
+.xa-tro .xa-row .grow{flex:1 1 auto}
+@media (max-width:700px){.xa-tro .xa-row{flex-wrap:wrap}.tro-bar .tro-assign{min-width:0;width:100%}.tro-bar .tro-rev{flex:1 1 100%}}
+@media (prefers-reduced-motion:reduce){.tro-dot{animation:none}}

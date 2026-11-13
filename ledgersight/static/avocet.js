@@ -1270,9 +1270,17 @@ function staleUpload() {
 // return tells the staff preparer. Polled every 10 seconds while the page is visible (and on focus), so both
 // people stay in step; "seen" is stored on the server, so it is the same in every browser.
 S.notif = null;
-const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned", ATTACHED: "attached proof to" };
+const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned", ATTACHED: "attached proof to", SENT: "sent" };
+// The run's confirmation that its review items went to TrustOps for approval (2026-11-13).
+function tropsSentNote(run) {
+  if (!run || !run.trustops || !run.trustops.connected) return "";
+  const ex = run.result.exceptions, sent = ex.filter((x) => (x.trustops_review || {}).status === "PENDING").length;
+  const failed = ex.filter((x) => (x.trustops_review || {}).status === "NOT_SENT").length;
+  return (sent ? ` ${sent} review item${sent === 1 ? "" : "s"} sent to TrustOps for approval.` : "") + (failed ? ` ${failed} could not be sent to TrustOps.` : "");
+}
 const NOTIF_ICON = { PROPOSED: "M4 20h4L19 9l-4-4L4 16z", APPROVED: "M5 12.5l4.5 4.5L19 7.5", REJECTED: "M7 7l10 10M17 7L7 17", RETURNED: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
-  ATTACHED: "M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3" };
+  ATTACHED: "M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3",
+  SENT: "M22 2L11 13M22 2l-7 20-4-9-9-4z" };
 async function loadNotifications(quiet) {
   if (!S.ws || !S.me) return;
   let n; try { n = await api(W("/notifications")); } catch (_) { return; }
@@ -1296,7 +1304,10 @@ async function loadNotifications(quiet) {
   if (!$("notif-panel").classList.contains("hidden")) renderNotifPanel();
 }
 function notifText(it) {
+  if (it.kind === "SENT") { const n = (it.lines || []).length;
+    return `${n} review item${n === 1 ? "" : "s"} from ${it.run_id || "the run"} sent to TrustOps for approval`; }
   const who = it.by === S.me.user_id ? "You" : (it.by_name || niceActor(it.by) || "Someone");
+  if (it.via === "TrustOps") return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} in TrustOps`;
   return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"}`;
 }
 function renderNotifPanel() {
@@ -1304,7 +1315,7 @@ function renderNotifPanel() {
   const when = (t) => { const s = (Date.now() - new Date(t).getTime()) / 1000; return s < 86400 ? ago(Math.max(1, s)) : new Date(t).toLocaleDateString(); };
   put("notif-panel",
     el("div", { class: "np-head" }, el("b", {}, "Notifications"),
-      el("span", { class: "muted small" }, n.for === "reviewer" ? "Proposals and proof from staff preparers" : "Decisions and proof from CPA reviewers")),
+      el("span", { class: "muted small" }, tropsOn() ? "Items sent to TrustOps and its decisions" : n.for === "reviewer" ? "Proposals and proof from staff preparers" : "Decisions and proof from CPA reviewers")),
     n.items.length ? el("ul", { class: "np-list" }, groupNotifs(n.items).map((it) => el("li", { class: "np-item k-" + it.kind + (it.unread ? " unread" : ""),
         role: "button", tabindex: "0", title: "Open this case in the review queue",
         onclick: () => openNotif(it), onkeydown: (e) => { if (e.key === "Enter") openNotif(it); } },
@@ -1314,7 +1325,8 @@ function renderNotifPanel() {
         el("div", { class: "np-m" }, [when(it.at), it.times > 1 ? `${it.times} times` : null, it.ref].filter(Boolean).join(" · "))),
       it.unread ? el("i", { class: "np-dot", "aria-label": "new" }) : null)))
       : el("div", { class: "np-empty" }, el("b", {}, "Nothing yet"),
-        el("span", {}, n.for === "reviewer" ? "When a staff preparer proposes a resolution, it shows up here."
+        el("span", {}, tropsOn() ? "When review items are sent to TrustOps, or an approver decides one there, it shows up here."
+          : n.for === "reviewer" ? "When a staff preparer proposes a resolution, it shows up here."
           : "When a CPA reviewer approves, rejects or returns an item, it shows up here.")));
 }
 function groupNotifs(items) {
@@ -1468,7 +1480,8 @@ $("run-btn").onclick = async (ev) => { await withBusy(ev.currentTarget, async ()
     S.run = run;
     progress();  // now the sidebar review count catches up
     toast(S.run.reused ? `These files were already reconciled as ${S.run.id}. Showing that run; nothing was run again.`
-      : `Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
+      : `Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.` + tropsSentNote(S.run), "good");
+    if (!S.run.reused && S.run.trustops && S.run.trustops.connected) loadNotifications(true);
     renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
 }, "Running…"); renderReadiness(); };  // withBusy re-enables the button; keep it off if files are missing
@@ -1681,14 +1694,25 @@ function tropsReviewer(x, tr) {
   tropsReviewers().then((items) => { for (const r of items) if (r.email !== cur) sel.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
   return el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Reviewer "), sel);
 }
+// 2026-11-13 layout: one status bar (state, when it was sent, reviewer) above one row of buttons.
 function tropsStatus(x, tops) {
   const tr = x.trustops_review || {};
-  const check = el("button", { class: "secondary", onclick: async () => {
-    try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); } catch (e) { toast(e.message, "bad"); } } }, "Check now");
-  const open = tops.approvals_url ? el("a", { class: "secondary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Open TrustOps ↗") : null;
-  if (tr.status === "PENDING") return [el("span", { class: "tro-pill" }, "⏳ Waiting for approval in TrustOps"), tropsReviewer(x, tr), open, check];
-  if (tr.status === "NOT_SENT") return [el("span", { class: "tro-pill bad" }, `Not sent to TrustOps: ${tr.reason || "unavailable"}`), check];
-  return [el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes"), check];
+  const check = el("button", { class: "secondary", title: "Ask TrustOps for the latest decision", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+    try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults();
+      const now = S.run.result.exceptions.find((e) => e.id === x.id);
+      toast(now && now.status !== x.status ? `${x.case_id || x.id}: ${now.status === "ACCEPTED" ? "approved" : "rejected"} in TrustOps.` : "Still waiting for a decision in TrustOps.", "good");
+    } catch (e) { toast(e.message, "bad"); } }, "Checking…") }, "Check now");
+  const open = tops.approvals_url ? el("a", { class: "primary btnlink", href: tops.approvals_url, target: "_blank", rel: "noopener" }, "Open TrustOps ↗") : null;
+  const sentAt = tr.submitted_at ? new Date(tr.submitted_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+  if (tr.status === "PENDING") return {
+    bar: el("div", { class: "tro-bar" },
+      el("span", { class: "tro-pill" }, el("span", { class: "tro-dot", "aria-hidden": "true" }), "Waiting for approval in TrustOps"),
+      el("span", { class: "tro-sent muted small" }, sentAt ? `Sent ${sentAt}` : "Sent"), el("span", { class: "grow" }), tropsReviewer(x, tr)),
+    actions: [check, open] };
+  if (tr.status === "NOT_SENT") return {
+    bar: el("div", { class: "tro-bar bad" }, el("span", { class: "tro-pill bad" }, "Not sent to TrustOps"), el("span", { class: "muted small" }, tr.reason || "TrustOps could not be reached")),
+    actions: [check] };
+  return { bar: el("div", { class: "tro-bar" }, el("span", { class: "tro-pill" }, "Sent to TrustOps when the run completes")), actions: [check] };
 }
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
@@ -1735,6 +1759,7 @@ function renderExceptions() {
     };
     const actionable = x.status === "OPEN" || x.status === "RETURNED";
     const tops = S.run && S.run.trustops && S.run.trustops.connected ? S.run.trustops : null;
+    const tro = tops ? tropsStatus(x, tops) : null;
     const t = x.trustops;
     const rec = (id) => recCard(id);
     const refs = x.evidence_refs || [];
@@ -1772,19 +1797,20 @@ function renderExceptions() {
           refs.length ? [el("dt", {}, "Source rows"), el("dd", {}, rich(refs.map((id) => { const l = line(id); return l ? `${id}: row ${l.source_row}` : id; }).join(" · "), false))] : null,
           x.source_record_refs && x.source_record_refs.length ? [el("dt", {}, "Source files"), el("dd", {}, x.source_record_refs.join(" · "))] : null,
           x.run_id ? [el("dt", {}, "Run linkage"), el("dd", { class: "small" }, `Case ${x.case_id} · run ${x.run_id} · trace ${x.trace_id} · raised by ${x.agent_id}, routed by ${x.routed_by || "AG-04"} · rulebook ${x.rulebook_version}`)] : null)),
-      actionable ? el("div", { class: "xa" }, tops ? null : suggestChips(x, note, reviewer), note,   // decisions are made in TrustOps when connected
+      actionable ? el("div", { class: "xa" + (tops ? " xa-tro" : "") }, tops ? null : suggestChips(x, note, reviewer), note,   // decisions are made in TrustOps when connected
+          tro ? tro.bar : null,
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
             proofButton(x, out, note),
             // With TrustOps connected, approval happens only in TrustOps; LedgerSight shows the status.
-            tops ? tropsStatus(x, tops)
+            tro ? tro.actions
             // Decisions are the CPA reviewer's: a staff preparer only proposes (the server refuses a preparer decision anyway, POL-02/POL-06).
             : reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
               el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
               el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
               : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
-          el("div", { class: "xa-hint" }, tops ? "Approved or rejected by an approver in TrustOps. The result appears here automatically."
+          el("div", { class: "xa-hint" }, tops ? "An approver in TrustOps approves or rejects it. The result appears here and in your notifications."
             : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer approves, rejects or returns it."), out)
         : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
