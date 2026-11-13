@@ -2648,3 +2648,17 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 /* Reconciliation tiles while the agents run (2026-11-13): labels stay, values wait with a soft shimmer */
 .tile.pending .v .skel{display:block;width:58%;height:26px;margin-top:6px;border-radius:10px}
 .tile.pending .k::before{background:var(--line-2)!important}
+
+/* Overview cards compact (2026-11-13, user: "cards chaala pedhaga"): four in one row down to 1000px, shorter cards, smaller figures */
+#ov-kpis.kw-row{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:18px}
+#ov-kpis .kw{min-height:150px;padding:18px 20px;border-radius:20px}
+#ov-kpis .kw-k{font-size:14.5px}
+#ov-kpis .kw-v{font-size:clamp(28px,2.4vw,38px)}
+#ov-kpis .kw-v small{font-size:17px}
+#ov-kpis .kw-mid{margin-top:8px}
+#ov-kpis .kw-s{padding-top:10px;font-size:12.5px}
+#ov-kpis .kw-go{width:34px;height:34px;border-width:1.25px}
+#ov-kpis .kw-go svg{width:14px;height:14px}
+#ov-kpis .kw .ring{width:38px;height:38px}
+@media (max-width:1000px){#ov-kpis.kw-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){#ov-kpis.kw-row{grid-template-columns:1fr}}

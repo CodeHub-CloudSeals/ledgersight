@@ -225,6 +225,9 @@ with sync_playwright() as pw:
         tab(p, "home"); p.wait_for_timeout(600)
         k = p.inner_text("#ov-kpis") + " " + p.inner_text("#ov-var"); assert "9" in k and "$196.00" in k, k
         assert not p.is_visible("#ov-how"), "guide hidden once files are in"
+        # 2026-11-13: the four headline cards stay compact, in one row at 1280px (user: cards were too big)
+        box = p.evaluate("[...document.querySelectorAll('#ov-kpis .kw')].map(e => e.getBoundingClientRect()).map(r => [Math.round(r.top), Math.round(r.height)])")
+        assert len(box) == 4 and len({t for t, _ in box}) == 1 and max(h for _, h in box) <= 200, box
         tab(p, "recon"); p.wait_for_timeout(400)
         assert p.locator("#rc-pipeline .pnode").count() == 6
         tops = p.eval_on_selector_all("#rc-pipeline .pnode", "n => new Set(n.map(x => Math.round(x.getBoundingClientRect().top))).size")
