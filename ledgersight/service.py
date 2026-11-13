@@ -1450,6 +1450,24 @@ class Service:
                 "generated_by": user.user_id, "generated_at": _ts()}
 
     # ---- reports (AG-05): finance + governance, same run id, several formats --------
+    @staticmethod
+    def _add_trustops_approvals(rep: dict, run: dict) -> None:
+        """Who approved each review item in TrustOps. The full governance record lives in TrustOps."""
+        rows = []
+        money = lambda c: f"{c / 100:,.2f}"
+        for e in run["result"]["exceptions"]:
+            tr = e.get("trustops_review") or {}
+            if not tr:
+                continue
+            rows.append([e["id"], e["type"], money(abs(e["amount_cents"])), tr.get("status"), tr.get("assigned_to") or "Any approver",
+                         tr.get("resolved_by") or "", tr.get("resolved_at") and datetime.fromtimestamp(tr["resolved_at"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC") or "",
+                         tr.get("reason") or "", tr.get("decision_id") or ""])
+        link = trustops_api.console_link("#/decisions") or ""
+        rep["summary"].append(["Approvals", f"Made in TrustOps. Full governance record: {link}"])
+        rep["sections"].insert(3, {"title": "Approvals in TrustOps", "columns": ["ID", "Type", "Amount", "Status", "Reviewer",
+                                   "Decided by", "Decided at", "Reason", "TrustOps decision"], "rows": rows,
+                                   "note": "Each review item was sent to TrustOps. Approve or reject happened there; this table shows the outcome."})
+
     def report(self, user, wid, run_id, kind, fmt="json", preview=False) -> tuple[dict, bytes]:
         if kind not in reports.KINDS or fmt not in reports.FORMATS:
             raise ValueError("report must be finance or governance; format json, csv, xlsx or pdf")
@@ -1477,6 +1495,8 @@ class Service:
             rep = reports.governance_report(events=w.log.events, verification=evidence.verify(w.log.events, self.public_key_pem()),
                                             policies=policy.POLICIES, policy_version=policy.POLICY_VERSION,
                                             key_id=w.log.key_id, **common)
+        if kind == "finance" and trustops_api.configured():
+            self._add_trustops_approvals(rep, run)
         return rep, reports.RENDER[fmt](rep)
 
     def audit_trail(self, user, wid, fmt="pdf") -> tuple[dict, bytes]:

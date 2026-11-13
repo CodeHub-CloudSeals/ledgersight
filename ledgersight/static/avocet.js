@@ -2107,7 +2107,8 @@ function renderReports() {
   if (!S.run) { put("rep-cards"); put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first.")); return; }
   const cards = [
     ["finance", "Finance Reconciliation Report", "LEDGERSIGHT", "FIN-", "What happened to the financial records. Totals, matches, exceptions, outstanding balances and reviewer status."],
-    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]];
+    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]]
+    .filter(([k]) => !(k === "governance" && S.run.trustops?.connected));
   // Each report card also links the other downloads for this run, so nothing has to be hunted for on Audit trail.
   const link = (href, label, extra) => el("a", { class: "linkbtn", href, download: "", ...(extra || {}) }, label);
   const also = {
@@ -2117,11 +2118,15 @@ function renderReports() {
         target: "_blank", rel: "noopener", onclick: markExported }, "Printable review pack")]],
     governance: isCPA() ? ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]
       : ["The whole signed audit trail is downloaded by a CPA reviewer.", []]};
-  put("rep-cards", cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
+  const tops = S.run.trustops?.connected ? el("div", { class: "card" }, el("div", { class: "eyebrow2" }, "TRUSTOPS"),
+    el("div", { class: "card-title" }, "Governance record"),
+    el("div", { class: "muted small" }, "Approvals, blocked actions and the evidence chain are kept in TrustOps, across every connected application. Download the governance report there."),
+    S.run.trustops.approvals_url ? el("div", { class: "fmt" }, el("a", { class: "secondary btnlink", href: S.run.trustops.approvals_url.replace("#/approvals", "#/governance-reports"), target: "_blank", rel: "noopener" }, "Open TrustOps reports ↗")) : null) : null;
+  put("rep-cards", [...cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
     el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
     el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
       ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
-    el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))));
+    el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))), tops].filter(Boolean));
   const openN = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
   put("rep-draft", !isCPA() && openN ? el("div", { class: "msg rep-draft" }, el("b", {}, "Draft. "),
     `${openN} review item${openN === 1 ? "" : "s"} still need${openN === 1 ? "s" : ""} a CPA reviewer's decision, so these reports are not final yet.`) : null);

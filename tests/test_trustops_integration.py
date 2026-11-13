@@ -140,3 +140,18 @@ def test_reviewer_is_shown_and_can_be_changed(tops, monkeypatch):
     assert owner.post(url, headers=H, json={"to": "someone@else.test"}).status_code == 422
     again = owner.get(f"{WS}/runs/{run['id']}", headers=H).json()
     assert next(e for e in again["result"]["exceptions"] if e["id"] == e0["id"])["trustops_review"]["assigned_to"] == "approver@firm.test"
+
+
+def test_finance_report_shows_trustops_approvals(tops):
+    tops.access["tops-rep@demo.test"] = "reviewer"
+    owner = make_user("tops-rep@demo.test", "owner_reviewer", ["client-a"])
+    run = pack_run(owner)
+    e0 = run["result"]["exceptions"][0]
+    tops.final[e0["trustops_review"]["decision_id"]] = ("APPROVED", "controller@firm.test", "checked")
+    owner.get(f"{WS}/runs/{run['id']}", headers=H)
+    rep = owner.get(f"{WS}/runs/{run['id']}/reports/finance.json", headers=H).json()
+    sec = next(s for s in rep["sections"] if s["title"] == "Approvals in TrustOps")
+    row = next(r for r in sec["rows"] if r[0] == e0["id"])
+    assert row[3] == "APPROVED" and row[5] == "controller@firm.test"
+    assert any(k == "Approvals" and "trustops.example.test" in v for k, v in rep["summary"])
+    assert owner.get(f"{WS}/runs/{run['id']}/reports/finance.pdf", headers=H).status_code == 200
