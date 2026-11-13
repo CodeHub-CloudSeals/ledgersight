@@ -75,6 +75,15 @@ refused. Stored unopened as <id>.proof, SHA-256 fingerprinted, signed (exception
 card + review trail, downloadable as an attachment (nosniff, fingerprint re-checked). Carried to a re-run with the
 case. Attaching notifies the other person (bell). Never used by reconciliation.
 
+## Review feedback 2026-11-13 (tests in tests/test_feedback_1113.py)
+Review items offer "Suggested comments" (fixed wording by role and case type; a click fills the note, sends nothing).
+Every refused Google sign-in shows one plain message (GOOGLE_REFUSED); the page never shows a bare HTTP code.
+Wrong files: refusal names the columns found and what is missing; sample templates (GET /v1/templates/{kind}.csv,
+synthetic rows from the fixtures) are linked under the upload box and in the refusal. Sources only links to
+Reconciliation (the run starts there). Same files are not run twice: Run is off with "Already reconciled as RUN-x";
+a direct request returns that run flagged `reused` and the page does not replay it. No run button on Agents.
+Success messages fade after 8 s; errors stay.
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.

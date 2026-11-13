@@ -69,7 +69,13 @@ function niceActor(id) {
   return String(id ?? "").startsWith("agent:") ? `${nice(String(id).slice(6))} Agent` : id;
 }
 function niceDecision(d) { const [k, ...r] = String(d ?? "").split(":"); return r.length ? `${k} · ${nice(r.join(":"))}` : k; }
-const msg = (id, text, kind) => { const n = $(id); n.textContent = text || ""; n.className = "msg " + (kind || ""); };
+// Success messages ("good"/"ok") fade out after 8 s (2026-11-13); errors and notes stay until replaced.
+const msg = (id, text, kind) => {
+  const n = $(id); clearTimeout(n._fade); clearTimeout(n._gone);
+  n.textContent = text || ""; n.className = "msg " + (kind || "");
+  if (text && (kind === "good" || kind === "ok")) n._fade = setTimeout(() => { n.classList.add("fading");
+    n._gone = setTimeout(() => { n.textContent = ""; n.className = "msg"; }, 450); }, 8000);
+};
 
 async function api(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "x-ledgersight": "1" }, credentials: "same-origin" };
@@ -86,7 +92,8 @@ async function api(path, opts = {}) {
   if (r.status === 401 && path !== "/v1/login") { showLogin(); }
   if (!r.ok) {
     const d = body && body.detail;
-    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${nice(d.reason_code)}${d.policy_id ? " · " + d.policy_id : ""}` : `HTTP ${r.status}`;
+    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${nice(d.reason_code)}${d.policy_id ? " · " + d.policy_id : ""}`
+      : r.status === 403 ? "You don't have access to this." : r.status >= 500 ? "Something went wrong on the server. Please try again." : "That didn't work. Please try again.";
     const err = new Error(text); err.status = r.status; err.body = body; throw err;
   }
   if (o.method === "POST" && S.ws && path.startsWith("/v1/workspaces")) setTimeout(progress, 0);
@@ -113,7 +120,9 @@ async function onGoogleCredential(resp) {
   try {
     await api("/v1/login/google", { method: "POST", json: { credential: resp.credential } });
     await boot();
-  } catch (e) { msg("lg-msg", e.message, "err"); }
+  } catch (e) {  // one plain message for any refusal; the reason is in the server's security log, not on screen
+    msg("lg-msg", e.status === 0 ? e.message : "We couldn't sign you in with this Google account. Use your CloudSeals work account, or ask your administrator for access.", "err");
+  }
 }
 async function setUpGoogleSignIn(clientId) {
   try {
@@ -1041,8 +1050,8 @@ async function offerRun() {
   }
   put("up-next", el("div", { class: "callout gap next-run" },
     el("div", {}, el("b", {}, "Files imported. Bank statement and general ledger are ready."),
-      el("div", { class: "small" }, S.status.runs ? "Run again to include the files you just added." : "Next: match the bank statement to the ledger.")),
-    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); setTimeout(() => $("run-btn").click(), 250); } }, "Run reconciliation →")));
+      el("div", { class: "small" }, "Next: open Reconciliation and press Run reconciliation.")),
+    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); } }, "Go to Reconciliation →")));
 }
 function guessKind(name) {
   const n = name.toLowerCase();
@@ -1063,8 +1072,17 @@ const ACCEPTED_TEXT = "CSV, Excel (.xlsx), TSV, JSON, OFX/QFX/QBO bank downloads
 function refused(f, reason) {
   S.refusals = (S.refusals || []).concat([{ name: f.name, reason }]);
   put("up-refused", el("div", { class: "msg err" }, el("b", {}, "Not accepted"),
-    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`)))));
+    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`))),
+    templateLinks("Check the expected columns in a sample template:")));
 }
+// Sample templates (2026-11-13): one CSV per file type, with the column names the importer reads and a few synthetic rows.
+const TEMPLATES = [["bank", "Bank statement"], ["ledger", "General ledger"], ["ar", "Open invoices"], ["ap", "Vendor bills"],
+  ["documents", "Documents list"], ["parties", "Customers & vendors"]];
+function templateLinks(lead) {
+  return el("div", { class: "tpl-row" }, el("span", { class: "tpl-k" }, lead),
+    TEMPLATES.map(([k, l]) => el("a", { class: "tpl-a", href: `/v1/templates/${k}.csv`, download: `ledgersight-template-${k}.csv` }, l)));
+}
+put("tpl-links", templateLinks("Sample templates:"));
 const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 function renderHeld(held) {
   const list = held || [];
@@ -1365,7 +1383,10 @@ $("run-btn").onclick = async (ev) => { await withBusy(ev.currentTarget, async ()
   msg("run-msg", "");
   await progress();  // re-read the client first: a colleague may have cleared it since this page loaded
   if (readiness()) { renderReadiness(); return msg("run-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
+  if (alreadyRun()) { renderReadiness(); return; }
+  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" }));
+    toast(S.run.reused ? `These files were already reconciled as ${S.run.id}. Showing that run; nothing was run again.`
+      : `Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
     renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
 }, "Running…"); renderReadiness(); };  // withBusy re-enables the button; keep it off if files are missing
@@ -1436,6 +1457,26 @@ function renderRun() {
 const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), sub ? el("div", { class: "s" }, sub) : null);
 
 // ---------------- exceptions ----------------
+// Suggested comments (2026-11-13): fixed wording picked by the person's role and the case type, never generated.
+// A click adds the text to the note; nothing is sent until the person presses Propose / Approve / Reject / Return.
+const SUGGEST_PREP = {
+  MISSING_GL: ["The supporting bill is attached; please approve booking this entry.", "Paid from the wrong account; to be reclassified."],
+  POSSIBLE_DUPLICATE: ["Confirmed duplicate charge; refund requested from the vendor.", "Not a duplicate: two separate purchases."],
+  PARTIAL_RECEIPT: ["Customer paid part; the balance stays open on the invoice."],
+  MISSING_RECEIPT: ["Receipt requested from the cardholder."],
+  UNMATCHED_DEPOSIT: ["Deposit identified as a customer payment; to be applied to the invoice."],
+  MISSING_BANK: ["Payment still in transit; expected on next month's statement."],
+  TAX_REVIEW: ["Ship-to and taxability facts attached for CPA determination."],
+  FX_REVIEW: ["Approved FX rate source attached for this payment."],
+};
+const SUGGEST_PREP_ANY = ["Timing difference; clears next period.", "Proof attached for review."];
+const SUGGEST_CPA = ["Evidence checks out.", "Please attach the supporting document.", "Amount differs from the source; please recheck.", "Book this in the next period."];
+function suggestChips(x, note, reviewer) {
+  const list = reviewer ? SUGGEST_CPA : [...(SUGGEST_PREP[x.type] || []), ...SUGGEST_PREP_ANY];
+  return el("div", { class: "xsug" }, el("span", { class: "xsug-k" }, "Suggested comments"),
+    list.map((s) => el("button", { type: "button", class: "xsug-c", onclick: () => {
+      const v = note.value.trim(); note.value = !v ? s : v.includes(s) ? v : `${v} ${s}`; note.focus(); } }, s)));
+}
 const TYPE_LABEL = { POSSIBLE_DUPLICATE: "Possible duplicate charge", PARTIAL_RECEIPT: "Partial payment received", MISSING_GL: "Bank debit not in ledger",
   MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment",
   TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing",
@@ -1601,7 +1642,7 @@ function renderExceptions() {
           refs.length ? [el("dt", {}, "Source rows"), el("dd", {}, rich(refs.map((id) => { const l = line(id); return l ? `${id}: row ${l.source_row}` : id; }).join(" · "), false))] : null,
           x.source_record_refs && x.source_record_refs.length ? [el("dt", {}, "Source files"), el("dd", {}, x.source_record_refs.join(" · "))] : null,
           x.run_id ? [el("dt", {}, "Run linkage"), el("dd", { class: "small" }, `Case ${x.case_id} · run ${x.run_id} · trace ${x.trace_id} · raised by ${x.agent_id}, routed by ${x.routed_by || "AG-04"} · rulebook ${x.rulebook_version}`)] : null)),
-      actionable ? el("div", { class: "xa" }, note,
+      actionable ? el("div", { class: "xa" }, suggestChips(x, note, reviewer), note,
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
@@ -1793,10 +1834,19 @@ function readiness() {
       + "Test files are in the project's demo_files folder (for example demo_files/1_standard_month)."),
     el("div", { class: "row" }, el("button", { class: "primary", onclick: () => go("import") }, "Go to Sources →")))) : null;
 }
+// Same files as the last run: running again would only return that run, so Run is off and says why (2026-11-13).
+function alreadyRun() {
+  const st = S.status || {};
+  return st.bank && st.ledger && st.runs && !st.stale && st.last_run ? st.last_run : null;
+}
 function renderReadiness() {
-  const box = readiness();
-  put("ag-ready", box); put("recon-ready", readiness());
-  $("ag-run").disabled = !!box; $("run-btn").disabled = !!box;
+  const box = readiness(), done = !box && alreadyRun();
+  put("ag-ready", box);
+  put("recon-ready", box ? readiness() : done ? el("div", { class: "callout gap ran" }, el("div", {},
+    el("b", {}, `Already reconciled as ${done}.`),
+    el("div", { class: "small" }, "These exact files were reconciled already, so running again would give the same result. Upload a new or corrected file on Sources to run again.")),
+    el("div", { class: "row" }, el("button", { class: "secondary", onclick: () => go("import") }, "Go to Sources →"))) : null);
+  $("run-btn").disabled = !!box || !!done;
 }
 async function renderAgents() {
   renderReadiness();
@@ -1820,16 +1870,8 @@ async function renderAgents() {
     d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small mono" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + niceActor(e.actor_id)),
       el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, niceDecision(e.decision))),
       el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
-    : empty("No agent activity yet", "Import files or press “Run reconciliation now”."));
+    : empty("No agent activity yet", "Import files on Sources, then run reconciliation on the Reconciliation page."));
 }
-$("ag-run").onclick = async (ev) => { await withBusy(ev.currentTarget, async () => {
-  msg("ag-msg", "");
-  await progress();
-  if (readiness()) { renderReadiness(); return msg("ag-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
-    renderRun(); renderExceptions(); renderResults(); renderAgents(); }
-  catch (e) { msg("ag-msg", e.message, "err"); }
-}, "Running…"); renderReadiness(); };
 
 // ---------------- agent pipeline ----------------
 // Drawn only from GET /agents and the run's own `workflow` steps. Nothing here is invented:
@@ -1997,6 +2039,7 @@ async function animateRun(promise) {
   S.anim = { mode: "running", states: Object.fromEntries(codes.map((c) => [c, "queued"])), shown: {}, titles: {} }; renderPipelines();
   let run;
   try { run = await promise; } catch (e) { S.anim = null; loadAgents(); throw e; }
+  if (run.reused) { S.anim = null; loadAgents(); return run; }  // an earlier run, not a new one: nothing to replay
   replay(run);
   return run;
 }

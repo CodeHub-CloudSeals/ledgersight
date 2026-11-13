@@ -2545,3 +2545,19 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 #login .lg-ch{display:inline-block;white-space:pre}
 #login .login-copy h2 .ln-accent::after{content:none}
 .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* 2026-11-13 feedback: suggested comments, sample templates, fading success messages, "already reconciled" */
+.xsug{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:0 0 10px}
+.xsug-k{font-size:12px;font-weight:650;color:var(--muted);margin-right:2px}
+.xsug-c{height:30px;padding:0 12px;border:0;border-radius:999px;background:var(--ds-inset);color:var(--text-2);font:inherit;font-size:12.5px;cursor:pointer;
+  transition:background .2s,color .2s,transform .2s cubic-bezier(.34,1.56,.64,1)}
+.xsug-c:hover{background:var(--accent-soft);color:var(--accent);transform:translateY(-1px)}
+.xsug-c:active{transform:scale(.97)}
+.tpl-links{margin-top:12px}
+.tpl-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:13px;margin-top:8px}
+.tpl-k{color:var(--muted)}
+.tpl-a{color:var(--accent);font-weight:600;text-decoration:none}
+.tpl-a:hover{text-decoration:underline;text-underline-offset:3px}
+.msg{transition:opacity .45s ease}
+.msg.fading{opacity:0}
+.callout.ran{background:var(--ok-bg)}

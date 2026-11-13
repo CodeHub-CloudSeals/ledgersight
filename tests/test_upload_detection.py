@@ -116,10 +116,12 @@ def test_ui_handles_cleared_data_and_offers_the_run():
     assert "staleUpload()" in body and "w.uploads.some((u) => u.id === S.upload.id)" in body
     assert "resetIntakeUi(); await switchWs();" in js  # clear all
     assert '$("clear-all").disabled = !hasData' in js and '$("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData' in js
-    for btn in ('$("run-btn").onclick', '$("ag-run").onclick'):
-        handler = js.split(btn, 1)[1][:400]
-        assert "await progress();" in handler and "if (readiness())" in handler
-    assert 'id="up-next"' in html and "Run reconciliation →" in js and "offerRun();" in js
+    handler = js.split('$("run-btn").onclick', 1)[1][:400]   # 2026-11-13: the Agents page has no run button
+    assert "await progress();" in handler and "if (readiness())" in handler
+    # 2026-11-13: Sources only links to Reconciliation; the run is started there by the person
+    assert 'id="up-next"' in html and "Go to Reconciliation →" in js and "offerRun();" in js
+    offer = js.split("async function offerRun()", 1)[1].split("\n}\n", 1)[0]
+    assert 'go("recon")' in offer and "run-btn" not in offer
     assert 'window.addEventListener("focus", syncIfStale)' in js
 
 

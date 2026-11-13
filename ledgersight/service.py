@@ -617,7 +617,7 @@ class Service:
         key = tuple(w.batches[k]["sha256"] for k in sorted(w.batches))
         for r in w.runs.values():
             if r["batch_key"] == key:
-                return r  # idempotent: same inputs, same run
+                return {**r, "reused": True}  # idempotent: same inputs, same run (flagged so the page says so)
         b = w.batches
         rid = "RUN-" + uuid.uuid4().hex[:6]
         trace = "TR-" + uuid.uuid4().hex[:12]

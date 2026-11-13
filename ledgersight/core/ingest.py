@@ -368,8 +368,9 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
                           f"as a {KIND_LABEL[k]} it is missing {', '.join(m.replace('_', ' ') for m in miss)}")
                          for _, k, miss in near[:2])
         cols = ", ".join(h for h in header if h)[:200] or "(no column names)"
-        raise IngestError(f"Not accepted: this file is not a recognised finance record. Columns found: {cols}. "
-                          f"Closest matches: {best}.")
+        raise IngestError(f"Not accepted: this file doesn't look like a bank statement, ledger or other finance record LedgerSight can read. "
+                          f"Columns found: {cols}. Closest match: {best}. "
+                          f"Download a sample template on the Sources page to see the columns expected.")
     fits.sort(reverse=True)
     top = fits[0]
     return top[3], {"method": "detected from the file's columns and rows (file name not used)" if not top[2] or len(fits) == 1

@@ -67,7 +67,7 @@ def upload_and_map(p, fname):
     p.wait_for_timeout(300)
 
 def wait_idle(p):
-    p.wait_for_function("S.anim === null && !document.querySelector('#run-btn').disabled && !document.querySelector('#ag-run').disabled", timeout=20000)
+    p.wait_for_function("S.anim === null && !document.querySelector('#run-btn').classList.contains('busy')", timeout=20000)
     p.wait_for_timeout(300)
 
 def no_hscroll(p):
@@ -140,7 +140,14 @@ with sync_playwright() as pw:
         st = p.inner_text("#src-status"); assert st.lower().count("verified upload") >= 6, st
         h = p.inner_text("#health"); assert "balances" in h.lower()
         shot(p, "02-sources")
-        return f"6 files mapped + imported; AG-01 states seen {s.get('AG-01')}; 6 'Verified Upload'"
+        # 2026-11-13: sample templates under the upload box; success messages fade after ~8 s
+        links = p.eval_on_selector_all("#tpl-links a", "n => n.map(a => a.getAttribute('href'))")
+        assert len(links) == 6 and "/v1/templates/bank.csv" in links, links
+        assert p.evaluate("async () => (await fetch('/v1/templates/ledger.csv', {credentials: 'same-origin'})).status") == 200
+        p.evaluate("msg('up-msg', 'Imported.', 'good')"); assert p.inner_text("#up-msg") == "Imported."
+        p.wait_for_timeout(8800); assert p.inner_text("#up-msg") == "", "success message did not clear"
+        nxt = p.inner_text("#up-next"); assert "Go to Reconciliation" in nxt and "Run reconciliation →" not in nxt, nxt
+        return f"6 files mapped + imported; AG-01 states seen {s.get('AG-01')}; 6 'Verified Upload'; 6 templates; success note cleared; Sources links to Reconciliation"
     check("Upload + column-mapping confirm (6 files)", "set files on #up-file, click Confirm mapping & import", t_uploads)
 
     def t_connectors():
@@ -298,6 +305,18 @@ with sync_playwright() as pw:
     # ---------- review queue: maker-checker ----------
     def exc(id_):
         return p.locator("#exc-list .exc", has_text=id_).first
+    def t_suggest():
+        # 2026-11-13: suggested comments on each open review item; a click fills the note, nothing is sent
+        tab(p, "exceptions"); card = p.locator("#exc-list .exc.OPEN").first
+        chips = card.locator(".xsug-c"); assert chips.count() >= 3, chips.count()
+        before = p.evaluate("S.run.result.exceptions.filter(x => x.status !== 'OPEN').length")
+        txt = chips.first.inner_text(); chips.first.click()
+        assert card.locator("textarea").input_value() == txt
+        assert p.evaluate("S.run.result.exceptions.filter(x => x.status !== 'OPEN').length") == before
+        card.locator("textarea").fill("")
+        return f"{chips.count()} suggested comments; clicking '{txt}' fills the note only"
+    check("Suggested comments on review items", "Review queue: click a suggestion chip", t_suggest)
+
     def t_maker_checker():
         tab(p, "exceptions"); assert p.locator("#exc-list .exc").count() == 6
         p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200); tab(p, "exceptions")
@@ -473,12 +492,15 @@ with sync_playwright() as pw:
         return "6 cards (no More details), live feed polling"
     check("Agents tab cards + live feed", "Agents tab", t_agents_tab)
 
-    def t_agents_run():
-        reset_seen(p); p.click("#ag-run")
-        p.wait_for_function("S.anim !== null", timeout=10000); wait_idle(p)
-        s = seen(p); assert all("s-working" in s.get(c, []) for c in ["AG-01", "AG-06"]), s
-        return "Run from Agents tab animates the same pipeline"
-    check("Run reconciliation now (Agents tab)", "click #ag-run", t_agents_run)
+    def t_run_once():
+        # 2026-11-13: no run button on Agents; the same files are not run twice (Run is off and says why)
+        assert p.locator("#ag-run").count() == 0 and "Run reconciliation now" not in p.inner_text("#p-agents")
+        tab(p, "recon"); p.wait_for_timeout(500)
+        assert p.is_disabled("#run-btn") and "Already reconciled as RUN-" in p.inner_text("#recon-ready"), p.inner_text("#recon-ready")
+        r = p.evaluate("async () => (await api(W('/reconciliation-runs'), {method: 'POST'}))")
+        assert r["reused"] is True and r["id"] == p.evaluate("S.status.last_run"), (r["reused"], r["id"])
+        return f"no Agents run button; Run off with 'Already reconciled as {r['id']}'; a direct request returns the same run flagged reused"
+    check("Run once per set of files (item 7/8)", "Agents page + Reconciliation Run button", t_run_once)
 
     # ---------- ask ----------
     def t_ask():

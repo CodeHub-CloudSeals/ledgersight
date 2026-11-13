@@ -306,6 +306,11 @@ def login(request: Request, body: dict = Body(...)):
     return resp
 
 
+# 2026-11-13: every Google sign-in refusal (unverified token, wrong domain) gets the same plain message.
+GOOGLE_REFUSED = ("We couldn't sign you in with this Google account. Use your CloudSeals work account, "
+                  "or ask your administrator for access.")
+
+
 @app.post("/v1/login/google")
 def login_google(body: dict = Body(...)):
     if not _GL:
@@ -313,11 +318,11 @@ def login_google(body: dict = Body(...)):
     try:
         claims = google_id_token.verify_oauth2_token(body.get("credential", ""), google_requests.Request(), GOOGLE_LOGIN_CLIENT_ID)
     except Exception:
-        raise HTTPException(401, "Google sign-in could not be verified")
+        raise HTTPException(401, GOOGLE_REFUSED)
     email = (claims.get("email") or "").lower()
     domain = claims.get("hd") or email.rsplit("@", 1)[-1]
     if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
-        raise HTTPException(403, "Only the CloudSeals team can access this.")
+        raise HTTPException(403, GOOGLE_REFUSED)
     try:
         tok = auth.google_login(email, claims.get("name") or email, set(WORKSPACES))
     except PermissionError as e:
@@ -487,7 +492,23 @@ def _run_view(r: dict) -> dict:
 
 @app.post("/v1/workspaces/{wid}/reconciliation-runs")
 def create_run(wid: str, u=Depends(current_user)):
-    return _run_view(handle(svc.run, u, wid))
+    r = _run_view(handle(svc.run, u, wid))
+    r["reused"] = bool(r.get("reused"))  # same files as an earlier run: that run is returned, nothing is recomputed
+    return r
+
+
+# 2026-11-13: sample templates users can download before uploading (synthetic rows from the fixtures).
+TEMPLATE_KINDS = ("bank", "ledger", "ar", "ap", "documents", "parties")
+
+
+@app.get("/v1/templates/{kind}.csv")
+def template(kind: str, u=Depends(current_user)):
+    if kind not in TEMPLATE_KINDS:
+        raise HTTPException(404, "not found")
+    lines = (Path(__file__).parent / "fixtures" / f"client-a_{kind}.csv").read_text(encoding="utf-8").splitlines()[:4]
+    body = "\n".join(lines) + "\n"
+    return Response(body, media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="ledgersight-template-{kind}.csv"', "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/v1/workspaces/{wid}/runs/{run_id}")
