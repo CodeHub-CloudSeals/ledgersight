@@ -2718,3 +2718,9 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 @keyframes troSpin{to{transform:rotate(360deg)}}
 .tro-open:empty{display:none}
 @media (prefers-reduced-motion:reduce){.tro-refresh.spin svg{animation:none}}
+
+/* Send to TrustOps (2026-11-13): items are sent by a person, not when the run completes */
+.tro-pill.idle{background:var(--surface);color:var(--text-2);box-shadow:inset 0 0 0 1px var(--line)}
+.tro-send{display:inline-flex;align-items:center;gap:8px}
+.tro-send .tro-send-ico svg{width:15px;height:15px;color:currentColor}
+.tro-note{flex:1 1 100%;padding:2px 2px 0;color:var(--text)}

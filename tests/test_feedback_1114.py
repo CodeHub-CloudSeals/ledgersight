@@ -111,4 +111,4 @@ def test_trustops_mode_never_links_to_pages_that_moved_to_trustops():
     assert "applyTrustOpsNav();" in JS and '"TrustOps ↗"' in JS
     assert '"An approver decides in TrustOps"' in JS and "steps[2].href = tro.console_url" in JS
     assert "tops ? null : suggestChips(x, note, reviewer)" in JS        # no Approve/Reject wording to fill in
-    assert '"sent to TrustOps for approval"' in JS
+    assert '"for review, sent to TrustOps by a person"' in JS   # 2026-11-13: sent by hand

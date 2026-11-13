@@ -784,7 +784,8 @@ class Service:
                "decisions": {}}
         self._carry_decisions(user, w, run)
         w.runs[rid] = run
-        self.submit_to_trustops(user, w, run)
+        # 2026-11-13 (user request): review items are no longer sent to TrustOps when the run completes; a person
+        # sends each one with "Send to TrustOps" on the review item (send_to_trustops below).
         return run
 
     CARRY_FIELDS = ("status", "reviewer", "reviewed_at", "review_note", "approval_id", "effect", "approval_policy", "proposal_id",
@@ -922,7 +923,7 @@ class Service:
             if v:
                 facts.append({"label": k.replace("_", " "), "value": str(v)})
         if exc.get("proposal_note"):
-            facts.append({"label": f"Preparer proposal ({exc.get('proposed_by')})", "value": exc["proposal_note"]})
+            facts.append({"label": f"Note from {exc.get('proposed_by')}", "value": exc["proposal_note"]})
         base = os.environ.get("LEDGERSIGHT_URL", "").rstrip("/")
         return {"title": f"{exc['type'].replace('_', ' ').title()} · {money(abs(exc['amount_cents']))} · {exc['id']}",
                 "summary": exc.get("why") or "", "compare": compare, "lines": lines,
@@ -930,28 +931,51 @@ class Service:
                 "consequence": "Local review decision only. Nothing is posted to any accounting system or bank.",
                 "facts": facts[:30], "link": f"{base}/#exceptions" if base.startswith("https://") else None}
 
-    def submit_to_trustops(self, user, w, run):
-        """Send every open exception of a run to TrustOps for approval (approval happens only in TrustOps)."""
+    def _submit_one(self, user, w, run, exc) -> dict:
+        """Send one review item to TrustOps for approval (approval happens only in TrustOps)."""
+        ref = f"{w.id}|{run['id']}|{exc['id']}"
+        t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref,
+                                amount_minor=abs(int(exc["amount_cents"])), currency="USD", **self.review_details(w, run, exc))
+        if t.get("decision_id"):
+            exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
+                                      "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref}
+        else:
+            exc["trustops_review"] = {"status": "NOT_SENT", "reason": t.get("reason") or "TrustOps could not be reached"}
+        return exc["trustops_review"]
+
+    def send_to_trustops(self, user, wid: str, run_id: str, exc_id: str, note: str = "", to: str | None = None) -> dict:
+        """'Send to TrustOps' on a review item (2026-11-13, user request): the person sends it to the approvers in
+        TrustOps, optionally with a note and a chosen reviewer. Signed into the evidence log; the other people are
+        told through the bell."""
         if not trustops_api.configured():
-            return
-        sent = []
-        for exc in run["result"]["exceptions"]:
-            if exc["status"] not in ("OPEN", "RETURNED") or (exc.get("trustops_review") or {}).get("status") == "PENDING":
-                continue
-            ref = f"{w.id}|{run['id']}|{exc['id']}"
-            t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref,
-                           amount_minor=abs(int(exc["amount_cents"])), currency="USD", **self.review_details(w, run, exc))
-            if t.get("decision_id"):
-                exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
-                                          "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref}
-                sent.append(exc["id"])
-            else:
-                exc["trustops_review"] = {"status": "NOT_SENT", "reason": t.get("reason")}
-        if sent:   # one signed record per run: the confirmation in the bell and the run's toast (2026-11-13)
-            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="agent", actor_id="AG-04", delegated_by=user.user_id,
-                         run_id=run["id"], action="exception.sent_to_trustops", policy_decision="ALLOW:TRUSTOPS_SUBMITTED",
-                         policy_id="TRUSTOPS", source_line_refs=sent, workflow_pack="cpa-bank-reconciliation",
-                         trace_id=run.get("trace_id"))
+            raise ValueError("TrustOps is not connected")
+        w = self.gate(user, wid, "workspace.read", run_id=run_id)
+        acts = policy.ROLE_ACTIONS.get(user.role, set())
+        if not ({"exception.propose", "exception.decide"} & acts):
+            raise Denied("ROLE_NOT_AUTHORISED", policy_id="POL-02")
+        run = w.runs.get(run_id)
+        exc = next((x for x in (run or {}).get("result", {}).get("exceptions", []) if x["id"] == exc_id), None) if run else None
+        if not exc:
+            raise ValueError("Review item not found")
+        if exc["status"] not in ("OPEN", "RETURNED"):
+            raise ValueError("This item already has a decision")
+        if (exc.get("trustops_review") or {}).get("status") == "PENDING":
+            raise ValueError("Already sent to TrustOps. Waiting for the approver.")
+        note = " ".join(str(note or "").split())[:1000]
+        if note:   # what the sender says goes to the approver with the item (review_details shows it)
+            exc["proposal_note"], exc["proposed_by"] = note, user.user_id
+        tr = self._submit_one(user, w, run, exc)
+        if tr["status"] == "PENDING" and to:
+            try:
+                tr["assigned_to"] = trustops_api.assign(tr["decision_id"], to, user.user_id).get("assigned_to")
+            except ValueError:
+                pass   # sent to any approver; the reviewer can still be changed on the item
+        if tr["status"] == "PENDING":
+            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=user.user_id, run_id=run_id,
+                         action="exception.sent_to_trustops", policy_decision="ALLOW:TRUSTOPS_SUBMITTED", policy_id="TRUSTOPS",
+                         approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
+                         matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
+        return {"exception_id": exc_id, "trustops_review": tr}
 
     def sync_trustops(self, w, run):
         """Pick up approvals made in TrustOps and apply them to the review queue (signed into the evidence log)."""

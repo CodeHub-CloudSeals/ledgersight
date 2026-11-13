@@ -24,6 +24,17 @@ class FakeTrustOps:
         return {"final": f[0], "resolved_by": f[1], "resolution_reason": f[2]} if f else {"final": "PENDING"}
 
 
+def sent_run(c):
+    """A run whose review items a person has sent to TrustOps ("Send to TrustOps", 2026-11-13: nothing is sent
+    automatically when the run completes any more)."""
+    run = pack_run(c)
+    for e in run["result"]["exceptions"]:
+        r = c.post(f"{WS}/runs/{run['id']}/exceptions/{e['id']}/send-to-trustops", headers=H, json={})
+        assert r.status_code == 200, r.text
+    r = c.get(f"{WS}/runs/{run['id']}", headers=H)
+    return r.json()
+
+
 @pytest.fixture()
 def tops(monkeypatch):
     fake = FakeTrustOps()
@@ -42,7 +53,7 @@ def owner():
 
 
 def test_exceptions_go_to_trustops_and_cannot_be_approved_here(tops, owner):
-    run = pack_run(owner)
+    run = sent_run(owner)
     assert run["trustops"]["connected"] is True
     exc = run["result"]["exceptions"]
     assert exc and all(e["trustops_review"]["status"] == "PENDING" for e in exc)
@@ -57,7 +68,7 @@ def test_exceptions_go_to_trustops_and_cannot_be_approved_here(tops, owner):
 
 
 def test_trustops_approval_comes_back_to_the_review_queue(tops, owner):
-    run = pack_run(owner)
+    run = sent_run(owner)
     e0 = run["result"]["exceptions"][0]
     tops.final[e0["trustops_review"]["decision_id"]] = ("APPROVED", "controller@firm.test", "checked the bank statement")
     again = owner.get(f"{WS}/runs/{run['id']}", headers=H).json()
@@ -74,7 +85,7 @@ def test_blocked_agent_action_is_recorded_in_trustops(tops, owner):
 
 
 def test_load_details_needs_the_trustops_key(tops, owner):
-    run = pack_run(owner)
+    run = sent_run(owner)
     ref = run["result"]["exceptions"][0]["trustops_review"]["ref"]
     assert owner.get(f"/trustops/items/{ref}").status_code == 401
     assert owner.get(f"/trustops/items/{ref}", headers={"X-TrustOps-Key": "wrong"}).status_code == 401
@@ -131,7 +142,7 @@ def test_reviewer_is_shown_and_can_be_changed(tops, monkeypatch):
     rv = owner.get("/v1/trustops/reviewers", headers=H)
     assert rv.status_code == 200, rv.text
     assert rv.json()["items"] == revs
-    run = pack_run(owner)
+    run = sent_run(owner)
     e0 = run["result"]["exceptions"][0]
     url = f"{WS}/runs/{run['id']}/exceptions/{e0['id']}/reviewer"
     r = owner.post(url, headers=H, json={"to": "approver@firm.test"})
@@ -145,7 +156,7 @@ def test_reviewer_is_shown_and_can_be_changed(tops, monkeypatch):
 def test_finance_report_shows_trustops_approvals(tops):
     tops.access["tops-rep@demo.test"] = "reviewer"
     owner = make_user("tops-rep@demo.test", "owner_reviewer", ["client-a"])
-    run = pack_run(owner)
+    run = sent_run(owner)
     e0 = run["result"]["exceptions"][0]
     tops.final[e0["trustops_review"]["decision_id"]] = ("APPROVED", "controller@firm.test", "checked")
     owner.get(f"{WS}/runs/{run['id']}", headers=H)
