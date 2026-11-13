@@ -829,27 +829,53 @@ $("period-chip").onclick = () => {
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
 
 // ---------------- import ----------------
+// One glyph per source type for the Source status tiles.
+const SRC_GLYPH = {
+  bank: "M3 10h18M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18M12 3l9 5H3z",
+  ledger: "M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h11M9 8h6",
+  ar: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 14l3-3 3 3M12 11v6",
+  ap: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 14l3 3 3-3M12 11v6",
+  documents: "M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7",
+  parties: "M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 20v-1a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+};
 const KIND = { bank: "Bank statement", ledger: "General ledger", ar: "Open invoices", ap: "Vendor bills", documents: "Supporting docs", parties: "Customer & vendor list" };
 function renderStatus() { renderSources(); }
 async function renderSources() {
   let s; try { s = await api(W("/sources")); } catch (_) { return; }
   s.kinds.forEach((k) => { KIND[k.kind] = k.label; });
   SOURCE_KINDS = s.kinds.map((k) => k.kind);
-  put("src-status", s.kinds.map((k) => {
-    const on = k.status !== "NOT_CONNECTED";
-    return el("div", { class: "ss-row" + (on ? "" : " ss-empty") },
-      el("span", { class: "ss-dot " + (on ? "on" : "") }),
-      el("div", { class: "ss-main" },
-        el("div", { class: "ss-name" }, k.label, k.required ? null : el("span", { class: "ss-opt" }, "Optional")),
-        on && k.envelope ? srcEnvelope(k.envelope) : el("div", { class: "ss-meta" }, on ? `${k.rows || 0} records` : (k.required ? "Needed to run reconciliation" : "Not imported"))),
-      el("div", { class: "ss-side" },
-        on ? el("span", { class: "ss-count" }, String(k.rows || 0), el("small", {}, " records")) : null,
+  // Source status as a grid of tiles (2026-11-13): one per source, imported ones show file, dates, records and Clear.
+  const tiles = s.kinds.map((k) => {
+    const on = k.status !== "NOT_CONNECTED", e = k.envelope || {};
+    const tip = e.source_digest ? `${e.source_file || ""}\nSHA-256 ${e.source_digest}\nTenant ${e.tenant_id} · client ${e.client_id}` +
+      (e.period ? `\nPeriod ${e.period}` : "") + `\nAccess ${e.access === "READ_ONLY" ? "read-only" : nice(e.access || "")}` : "";
+    const meta = [e.date_range ? spanDates(e.date_range) : null, e.currency && e.currency.length ? e.currency.join(" / ") : null,
+      e.freshness_seconds != null ? `Imported ${ago(e.freshness_seconds)}` : null].filter(Boolean).join(" · ");
+    return el("div", { class: `ss-tile ${on ? "on" : "off"}${k.required ? " req" : ""}`, "data-kind": k.kind },
+      el("div", { class: "ss-head" }, el("span", { class: "ss-ico", "aria-hidden": "true" }, icon(SRC_GLYPH[k.kind] || SRC_GLYPH.documents)),
+        el("div", { class: "ss-titles" }, el("div", { class: "ss-name" }, k.label),
+          el("span", { class: "ss-req" }, k.required ? "Required" : "Optional")),
+        on ? el("button", { class: "linkbtn ss-clear", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null),
+      on ? [el("div", { class: "ss-file", title: tip }, e.source_file || "—"), meta ? el("div", { class: "ss-meta" }, meta) : null]
+        : el("div", { class: "ss-meta" }, k.required ? "Needed to run reconciliation" : "Not imported yet"),
+      el("div", { class: "ss-bot" },
         el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, on ? nice(k.status) : "Not yet"),
-        on ? el("button", { class: "linkbtn ss-clear", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null));
-  }), el("div", { class: "ss-foot" }, "All sources are read-only. Hover a file name for its fingerprint."));
-  put("connectors", el("table", {}, el("tr", {}, ["Connection", "Status", "What the label means"].map((h) => el("th", {}, h))),
-    s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, nice(c.status))),
-      el("td", { class: "small muted" }, s.status_labels[c.status])))));
+        on ? el("span", { class: "ss-count" }, el("b", {}, String(k.rows || 0)), " records") : null));
+  });
+  put("src-status", el("div", { class: "ss-grid" }, tiles));
+  const nOn = s.kinds.filter((k) => k.status !== "NOT_CONNECTED").length;
+  const ready = s.kinds.filter((k) => k.required).every((k) => k.status !== "NOT_CONNECTED");
+  put("ss-sum", el("b", {}, `${nOn} of ${s.kinds.length}`), " imported", el("span", { class: "ss-dot2 " + (ready ? "is-ready" : "is-wait") }),
+    ready ? "ready to reconcile" : "bank statement and ledger needed");
+  // Connections (2026-11-13): sources in use as short rows; planned ones as one line of chips.
+  const live = s.connectors.filter((c) => c.status !== "PLANNED"), planned = s.connectors.filter((c) => c.status === "PLANNED");
+  put("connectors", el("div", { class: "cn-grid" },
+    el("div", { class: "cn-list" }, el("div", { class: "cn-h" }, "In use"), live.map((c) => el("div", { class: "cn-row" },
+      el("div", { class: "cn-main" }, el("div", { class: "cn-name" }, c.name), el("div", { class: "cn-mean" }, s.status_labels[c.status])),
+      el("span", { class: "badge " + c.status }, nice(c.status))))),
+    planned.length ? el("div", { class: "cn-planned" },
+      el("div", { class: "cn-k" }, el("span", { class: "badge PLANNED" }, "Planned"), el("span", {}, s.status_labels.PLANNED || "Not available yet")),
+      el("div", { class: "cn-chips" }, planned.map((c) => el("span", { class: "cn-chip" }, c.name)))) : null));
   const sel = $("up-kind"), cur = sel.value;
   put(sel, el("option", { value: "auto" }, "Detect file type automatically"),
     s.kinds.map((k) => el("option", { value: k.kind }, `${k.label} · ${k.formats.filter((f) => f !== "PDF (text)").join(", ")}`)),

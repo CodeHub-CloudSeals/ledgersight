@@ -138,8 +138,9 @@
         <p class="sub">Bring in the bank statement, general ledger, invoices and supporting documents. Each file is checked, fingerprinted and mapped to standard columns, and you confirm the mapping before anything is used.</p></div></div>
       <!-- The file being confirmed sits first, right under the heading: no jump past the upload and status cards. -->
       <div id="mapping" class="card map-card hidden"></div>
-      <div class="grid two">
-        <div class="card">
+      <!-- 2026-11-13 layout: upload and source status side by side at equal height; details below -->
+      <div class="src-top">
+        <div class="card src-up">
           <div class="card-title">Upload files</div>
           <select id="up-kind" aria-label="File type" class="hidden"><option value="auto">Detect file type automatically</option></select>
           <div class="dropzone" id="dz-target">
@@ -166,15 +167,17 @@
           <div id="up-refused"></div>
           <div id="up-next"></div>
         </div>
-        <div class="card">
-          <div class="card-title">Source status</div>
-          <div id="src-status" class="src-status"></div>
-          <div class="row gap"><button id="clear-all" class="danger">Clear all imported files</button><span id="clear-msg" class="msg"></span></div>
+        <div class="card src-st">
+          <div class="ss-headrow"><div class="card-title">Source status</div><span id="ss-sum" class="ss-sum"></span></div>
+          <div id="src-status" class="ss-wrap"></div>
+          <div class="ss-endrow"><span class="ss-note">All sources are read-only. Hover a file name for its fingerprint.</span>
+            <button id="clear-all" class="danger">Clear all imported files</button></div>
+          <div id="clear-msg" class="msg"></div>
         </div>
       </div>
-      <div class="card gap"><div class="card-title">Connections</div><div id="connectors"></div></div>
       <div class="card gap"><div class="card-title">Import health</div><div id="health" class="tablewrap"></div></div>
       <div class="card gap"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
+      <div class="card gap"><div class="card-title">Connections</div><div id="connectors"></div></div>
       <div class="card gap" id="held-card"><div class="card-title">Held for conversion <span class="muted">stored safely · not opened · JSON conversion in development</span></div><div id="held"></div></div>
     </section>
 

@@ -151,7 +151,14 @@ with sync_playwright() as pw:
     check("Upload + column-mapping confirm (6 files)", "set files on #up-file, click Confirm mapping & import", t_uploads)
 
     def t_connectors():
-        c = p.inner_text("#connectors"); assert "planned" in c.lower(); return "QuickBooks/Xero shown Planned"
+        c = p.inner_text("#connectors"); assert "planned" in c.lower()
+        # 2026-11-13 Sources layout: upload and status side by side at equal height, sources as 6 tiles,
+        # planned connections as chips (not table rows)
+        assert p.locator("#src-status .ss-tile").count() == 6 and p.locator("#src-status .ss-tile.on").count() >= 2
+        hs = p.evaluate("[...document.querySelectorAll('#p-import .src-top > .card')].map(c => [Math.round(c.getBoundingClientRect().top), Math.round(c.getBoundingClientRect().height)])")
+        assert len(hs) == 2 and hs[0] == hs[1], hs
+        assert p.locator("#connectors .cn-chip").count() >= 3 and p.locator("#connectors table").count() == 0
+        return f"QuickBooks/Xero shown Planned (chips); 6 source tiles; upload + status cards aligned {hs[0]}"
     check("Connections status labels", "read #connectors", t_connectors)
 
     def t_pdf():
