@@ -136,8 +136,11 @@ Like TrustOps: with LEDGERSIGHT_STATE_GCS_URI=gs://bucket/prefix, `cloud_sync.st
 (db snapshot + uploaded files) before the Store opens and writes `owner.json`; `Store.on_change` marks it dirty and a
 background thread uploads a SQLite backup snapshot (generation check) and mirrors files (new and deleted) about 1 s
 later; flushed at exit. An older revision that sees another owner stops writing. /readyz: durable_storage +
-cloud_storage. Hosted: bucket trustops-uat-ledgersight-state (us-east4, versioned), signing key from Secret Manager
-(ledgersight-signing-key). Without the setting nothing changes (local, tests).
+cloud_storage. Unchanged snapshots are not uploaded again. Hosted (moved 2026-11-16 from us-east4 to europe-west1,
+next to TrustOps): service ledgersight in europe-west1, bucket gs://trustops-uat-ledgersight-state-eu/ledgersight
+(versioned, 30-day history), image repo europe-west1/ledgersight, domain ledgersight.cloudseals.com mapped there. The
+signing key file is synced with the data (Secret Manager not set up). The old us-east4 service is frozen (ingress
+internal) as a fallback; its bucket trustops-uat-ledgersight-state is kept. Without the setting nothing changes.
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else

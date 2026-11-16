@@ -127,6 +127,20 @@ def test_existing_local_database_is_kept_not_overwritten(tmp_path):
     assert sb.get("k") == "local copy" and b.status["restored"] == 0
 
 
+def test_unchanged_database_is_not_uploaded_again(tmp_path):
+    """The periodic check must not create a new object version every 30 s when nothing changed."""
+    bucket = FakeBucket()
+    a, sa = boot(tmp_path / "a", bucket, "rev-1")
+    sa.put("k", 1)
+    a.sync_now()
+    gen = bucket.generation("ledgersight/db/ledgersight.db")
+    assert a.sync_now() and a.sync_now()
+    assert bucket.generation("ledgersight/db/ledgersight.db") == gen
+    sa.put("k", 2)
+    a.sync_now()
+    assert bucket.generation("ledgersight/db/ledgersight.db") != gen
+
+
 def test_bad_uri_is_refused(tmp_path):
     with pytest.raises(ValueError):
         cloud_sync.CloudSync(tmp_path, "s3://x/y", backend=FakeBucket())

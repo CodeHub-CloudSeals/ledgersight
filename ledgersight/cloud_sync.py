@@ -16,6 +16,7 @@ The bucket should be private, versioned and in the declared region. Without the 
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import tempfile
@@ -88,6 +89,7 @@ class CloudSync:
         self.data_dir = Path(data_dir)
         self.instance = instance or f"{os.environ.get('K_REVISION', 'local')}:{uuid.uuid4().hex[:8]}"
         self.db_gen = 0            # generation of the database object this instance last read or wrote
+        self.db_digest = None      # SHA-256 of the last snapshot uploaded (skip unchanged uploads)
         self.files: dict[str, tuple[int, int]] = {}   # relative path -> (size, mtime_ns) known to be in the bucket
         self.store = None
         self.status = {"enabled": True, "restored": None, "last_sync": None, "last_error": None, "stopped": None}
@@ -199,6 +201,11 @@ class CloudSync:
             self._sync_files()
             with tempfile.TemporaryDirectory() as tmp:
                 snap = self.store.backup(Path(tmp) / DB_NAME)
+                digest = hashlib.sha256(snap.read_bytes()).hexdigest()
+                if digest == self.db_digest and self.db_gen:
+                    # Nothing changed since the last upload (the periodic check): no new object version.
+                    self.status.update(last_sync=time.time(), last_error=None)
+                    return True
                 try:
                     self.db_gen = self.backend.upload_file(self._db_obj(), snap, if_generation=self.db_gen)
                 except Conflict:
@@ -208,6 +215,7 @@ class CloudSync:
                     print(f"[ledgersight] storage: database changed by another instance (generation {self.db_gen} -> "
                           f"{current}); this owner's copy is kept", flush=True)
                     self.db_gen = self.backend.upload_file(self._db_obj(), snap, if_generation=current)
+                self.db_digest = digest
             self.status.update(last_sync=time.time(), last_error=None)
             return True
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Deploy LedgerSight to Google Cloud Run (US region), with login + MFA on and secrets in Secret Manager.
+# Deploy LedgerSight to Google Cloud Run (europe-west1, next to TrustOps), with login + MFA on and secrets in Secret Manager.
 #
-#   ./deploy/cloudrun.sh <GCP_PROJECT_ID> [REGION]        default REGION = us-east4
+#   ./deploy/cloudrun.sh <GCP_PROJECT_ID> [REGION]        default REGION = europe-west1 (same region as TrustOps)
 #
 # Re-running is safe: it redeploys and keeps the existing secrets.
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 PROJECT="${1:?usage: ./deploy/cloudrun.sh <GCP_PROJECT_ID> [REGION]}"
-REGION="${2:-us-east4}"
+REGION="${2:-europe-west1}"
 SERVICE="ledgersight"
 SA="ledgersight-run@${PROJECT}.iam.gserviceaccount.com"
 cd "$(dirname "$0")/.."
