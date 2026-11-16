@@ -183,16 +183,16 @@ def test_sender_is_told_when_the_approver_did_not_receive_it(tops, cpa, prep, mo
     mine = [it for it in _items(prep) if it["kind"] == "NOT_RECEIVED" and it["exception_id"] == e0["id"]]
     assert mine and "did not receive it" in mine[0]["note"] and "TrustOps is down" in mine[0]["note"] and mine[0]["by"] == "TrustOps"
     assert not [it for it in _items(cpa) if it["kind"] == "NOT_RECEIVED"]          # only the sender is told
-    # TrustOps gets it, but the approver cannot be assigned
-    monkeypatch.setattr(trustops_client, "decide", real)
-
-    def no_assign(did, to, by):
-        raise ValueError("This person is not an Admin or Approver in TrustOps")
-    monkeypatch.setattr(trustops_client, "assign", no_assign)
+    # TrustOps refuses the chosen approver. 2026-11-16: the approver goes in the same call (assign_to), so TrustOps
+    # refuses the item as a whole and it is never left unassigned there.
+    monkeypatch.setattr(trustops_client, "decide", lambda *a, **k: {
+        "decision": "DENY", "policy_id": "TRUSTOPS_REFUSED", "error": "not_a_reviewer",
+        "reason": "This person is not an Admin or Approver in TrustOps"} if a[2] == "submit_for_review" else real(*a, **k))
+    monkeypatch.setattr(trustops_client, "assign", lambda *a, **k: pytest.fail("no separate assign call any more"))
     r = _send(prep, run, e1)
-    assert r.status_code == 200 and r.json()["trustops_review"]["status"] == "PENDING"
+    assert r.status_code == 200 and r.json()["trustops_review"]["status"] == "NOT_SENT"
     hit = [it for it in _items(prep) if it["kind"] == "NOT_RECEIVED" and it["exception_id"] == e1["id"]]
-    assert hit and "could not be made the approver" in hit[0]["note"]
+    assert hit and "could not be made the approver" in hit[0]["note"] and "not an Admin or Approver" in hit[0]["note"]
     assert 'NOT_RECEIVED: "did not receive"' in JS and "k-NOT_RECEIVED" in CSS
 
 
@@ -234,11 +234,15 @@ def test_rejected_item_can_be_sent_again_with_new_proof(tops, cpa, prep):
 def test_same_person_in_both_apps_still_hears_the_trustops_decision(tops, cpa, monkeypatch):
     """Live issue 2026-11-13: one Google account sent an item to itself and approved / rejected it in TrustOps; the
     LedgerSight bell hid the decision as 'your own action'. A decision made in TrustOps is always news here."""
-    monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: [{"email": "tops-notify@demo.test", "role": "Admin"}])
+    monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: [{"email": "tops-notify@demo.test", "role": "Admin"},
+                                                                          {"email": "approver@firm.test", "role": "Approver"}])
     run = pack_run(cpa)
     e0, e1 = run["result"]["exceptions"][:2]
-    d0 = _send(cpa, run, e0, to="tops-notify@demo.test").json()["trustops_review"]["decision_id"]
-    d1 = _send(cpa, run, e1, to="tops-notify@demo.test").json()["trustops_review"]["decision_id"]
+    # 2026-11-16: sending an item to yourself is refused (maker-checker across both apps)
+    r = _send(cpa, run, e0, to="tops-notify@demo.test")
+    assert r.status_code == 422 and "send an item to yourself" in r.text
+    d0 = _send(cpa, run, e0).json()["trustops_review"]["decision_id"]
+    d1 = _send(cpa, run, e1).json()["trustops_review"]["decision_id"]
     assert not [it for it in _items(cpa) if it["kind"] == "SENT"]               # sending is still your own action
     tops.final[d0] = ("APPROVED", "tops-notify@demo.test", "ok")
     tops.final[d1] = ("REJECTED", "tops-notify@demo.test", "no receipt")

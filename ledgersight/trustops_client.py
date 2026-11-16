@@ -20,7 +20,27 @@ import urllib.error
 import urllib.request
 
 TIMEOUT = float(os.environ.get("TRUSTOPS_TIMEOUT", "6"))
-_status_cache: dict[str, tuple[float, dict]] = {}
+_status_cache: dict[str, tuple[float, dict | None]] = {}
+
+# 2026-11-16: circuit breaker. After TrustOps could not be reached (connection refused, DNS, timeout), further calls
+# are not attempted for BREAKER_SECONDS: they fail at once with the same "unreachable" result, so pages and the bell
+# do not wait TIMEOUT seconds per call. Decisions stay fail-closed (unreachable = DENY). An HTTP answer (even 4xx/5xx)
+# means TrustOps is up and does not open the breaker.
+BREAKER_SECONDS = float(os.environ.get("TRUSTOPS_BREAKER_SECONDS", "15"))
+FAILED_STATUS_SECONDS = 10.0
+_breaker = {"open_until": 0.0}
+
+
+class Unreachable(Exception):
+    """TrustOps could not be reached (or the breaker is open)."""
+
+
+def breaker_open() -> bool:
+    return time.monotonic() < _breaker["open_until"]
+
+
+def reset_breaker() -> None:
+    _breaker["open_until"] = 0.0
 
 
 def url() -> str:
@@ -40,12 +60,22 @@ def console_link(path: str = "") -> str | None:
 
 
 def _call(method: str, path: str, body: dict | None = None) -> dict:
+    if breaker_open():
+        raise Unreachable("TrustOps could not be reached")
     req = urllib.request.Request(url() + path, method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Content-Type": "application/json", "X-TrustOps-Key": key(),
                                           "User-Agent": "LedgerSight"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:   # noqa: S310 - fixed https origin from settings
-        return json.loads(r.read() or b"{}")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:   # noqa: S310 - fixed https origin from settings
+            out = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError:
+        raise                                       # TrustOps answered: it is up
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        _breaker["open_until"] = time.monotonic() + BREAKER_SECONDS
+        raise Unreachable("TrustOps could not be reached") from e
+    _breaker["open_until"] = 0.0
+    return out
 
 
 def decide(actor_type: str, actor_id: str, action: str, **ctx) -> dict:
@@ -56,20 +86,37 @@ def decide(actor_type: str, actor_id: str, action: str, **ctx) -> dict:
         return _call("POST", "/v1/decisions", body)
     except urllib.error.HTTPError as e:
         code = e.code
-        return {"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE",
-                "reason": "TrustOps rejected the LedgerSight key" if code == 401 else f"TrustOps answered HTTP {code}"}
+        err, msg = _error_body(e)
+        if code == 401:
+            return {"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "reason": "TrustOps rejected the LedgerSight key"}
+        # TrustOps refused the request itself (e.g. 422 not_a_reviewer for the chosen approver): pass its words on.
+        return {"decision": "DENY", "policy_id": "TRUSTOPS_REFUSED" if 400 <= code < 500 else "TRUSTOPS_UNAVAILABLE",
+                "error": err, "reason": msg or f"TrustOps answered HTTP {code}"}
     except Exception:
         return {"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "reason": "TrustOps could not be reached"}
+
+
+def _error_body(e: urllib.error.HTTPError) -> tuple[str | None, str | None]:
+    """TrustOps error answers look like {"error": code, "message": text} (or FastAPI's {"detail": {...}})."""
+    try:
+        b = json.loads(e.read() or b"{}")
+    except Exception:
+        return None, None
+    if isinstance(b.get("detail"), dict):
+        b = b["detail"]
+    msg = b.get("message") or (b.get("detail") if isinstance(b.get("detail"), str) else None)
+    return b.get("error") or b.get("code"), (str(msg)[:300] if msg else None)
 
 
 def status(decision_id: str, max_age: float = 8.0) -> dict | None:
     """Final state of an escalated item: APPROVED | REJECTED | PENDING. None if TrustOps cannot be reached."""
     hit = _status_cache.get(decision_id)
-    if hit and time.monotonic() - hit[0] < max_age:
+    if hit and time.monotonic() - hit[0] < (max_age if hit[1] is not None else FAILED_STATUS_SECONDS):
         return hit[1]
     try:
         out = _call("GET", f"/v1/decisions/{decision_id}/status")
     except Exception:
+        _status_cache[decision_id] = (time.monotonic(), None)   # a failed lookup is not retried for a few seconds
         return None
     _status_cache[decision_id] = (time.monotonic(), out)
     return out
@@ -115,11 +162,9 @@ def assign(decision_id: str, to: str | None, by: str) -> dict:
     try:
         out = _call("POST", f"/v1/decisions/{decision_id}/app-assign", {"to": to, "by": by})
     except urllib.error.HTTPError as e:
-        try:
-            msg = json.loads(e.read() or b"{}").get("message")
-        except Exception:
-            msg = None
-        raise ValueError(msg or f"TrustOps answered HTTP {e.code}") from None
+        raise ValueError(_error_body(e)[1] or f"TrustOps answered HTTP {e.code}") from None
+    except Unreachable:
+        raise ValueError("TrustOps could not be reached. Try again shortly.") from None
     _status_cache.pop(decision_id, None)
     return out
 

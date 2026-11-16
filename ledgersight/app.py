@@ -483,6 +483,19 @@ def confirm_pdf(wid: str, doc_id: str, body: dict = Body(...), u=Depends(current
     return handle(svc.confirm_pdf, u, wid, doc_id, body.get("fields") or {}, body.get("doc_type"))
 
 
+@app.get("/v1/workspaces/{wid}/uploads/{upload_id}/rejected.csv")
+def rejected_rows(wid: str, upload_id: str, u=Depends(current_user)):
+    """The rows of a file that could not be imported, with the reason (2026-11-16 action items)."""
+    body, name = handle(svc.rejected_rows_csv, u, wid, upload_id)
+    return Response(body.encode("utf-8-sig"), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "X-Content-Type-Options": "nosniff"})
+
+
+@app.post("/v1/workspaces/{wid}/uploads/{upload_id}/acknowledge-rejections")
+def acknowledge_rejections(wid: str, upload_id: str, body: dict = Body(default={}), u=Depends(current_user)):
+    return handle(svc.acknowledge_rejections, u, wid, upload_id, body.get("note") or "")
+
+
 @app.post("/v1/workspaces/{wid}/uploads/{upload_id}/mapping")
 def commit_mapping(wid: str, upload_id: str, body: dict = Body(...), u=Depends(current_user)):
     return handle(svc.commit_mapping, u, wid, upload_id, body.get("mapping") or {}, body.get("date_order"))
@@ -543,6 +556,12 @@ def template(kind: str, u=Depends(current_user)):
         "Content-Disposition": f'attachment; filename="ledgersight-template-{kind}.csv"', "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/v1/workspaces/{wid}/runs")
+def runs_list(wid: str, day: str | None = None, month: str | None = None, by: str | None = None, u=Depends(current_user)):
+    """Every run of this client, newest first; filter by day, month or who ran it (2026-11-16 action items)."""
+    return handle(svc.runs_list, u, wid, day, month, by)
+
+
 @app.get("/v1/workspaces/{wid}/runs/{run_id}")
 def get_run(wid: str, run_id: str, u=Depends(current_user)):
     w = handle(svc.gate, u, wid, "workspace.read", run_id=run_id)
@@ -570,6 +589,21 @@ def send_to_trustops(wid: str, run_id: str, exc_id: str, body: dict = Body(defau
         raise HTTPException(409, "TrustOps is not connected")
     try:
         return handle(svc.send_to_trustops, u, wid, run_id, exc_id, body.get("note") or "", body.get("to") or None)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/send-to-trustops")
+def send_many_to_trustops(wid: str, run_id: str, body: dict = Body(...), u=Depends(current_user)):
+    """Send several review items to one approver in TrustOps (2026-11-16 action items: select all / bulk send).
+    Body: {"exception_ids": [...], "to": email, "note": optional}. Each item is sent and signed like a single send."""
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    ids = body.get("exception_ids")
+    if not isinstance(ids, list):
+        raise HTTPException(422, "exception_ids must be a list")
+    try:
+        return handle(svc.send_many_to_trustops, u, wid, run_id, ids, body.get("note") or "", body.get("to") or None)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
 

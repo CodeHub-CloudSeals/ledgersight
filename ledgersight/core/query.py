@@ -126,6 +126,28 @@ def _fact_question(q: str) -> bool:
     return bool(FACT_Q.search(q) and FACT_VERB.search(q))
 
 
+# 2026-11-16: when TrustOps (not this question) stops the query assistant, say so in plain words instead of the
+# read-only text, which was misleading. Keyed by the TrustOps policy that answered.
+TRUSTOPS_REFUSAL_TEXT = {
+    "AUTH-SUSPENDED": "TrustOps has paused FinTwin (the query assistant) for now, so I can't answer. "
+                      "An administrator can resume it in TrustOps > Authority.",
+    "AUTH-SCOPE": "TrustOps has not authorised FinTwin (the query assistant) for this client, so I can't answer here. "
+                  "An administrator can change that in TrustOps > Authority.",
+    "TRUSTOPS_UNAVAILABLE": "TrustOps can't be reached right now, and I only answer when TrustOps allows it. "
+                            "Please try again shortly.",
+}
+
+
+def trustops_refusal(policy_id: str, reason_code: str = "") -> dict:
+    """Refusal for a question TrustOps did not allow (suspended, out of scope, unreachable, or another rule)."""
+    text = TRUSTOPS_REFUSAL_TEXT.get(policy_id)
+    if not text:
+        what = "sent it to a person to decide" if reason_code == "TRUSTOPS_ESCALATE" else "did not allow it"
+        text = (f"TrustOps {what} (rule {policy_id or 'unknown'}), so I can't answer this now. "
+                "Ask a TrustOps administrator if you think FinTwin should be allowed.")
+    return {"status": "REFUSED", "intent": "refused_by_trustops", "answer": text, "rows": [], "columns": [], "citations": []}
+
+
 def refusal(code: str) -> dict:
     return {"status": "REFUSED", "intent": "refused", "answer": REFUSAL_TEXT.get(code, REFUSAL_TEXT["READ_ONLY_QUERY"]),
             "rows": [], "columns": [], "citations": []}

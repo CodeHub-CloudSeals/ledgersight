@@ -13,6 +13,7 @@ import json
 import re
 import textwrap
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 FORMATS = {"json": "application/json", "csv": "text/csv; charset=utf-8",
@@ -242,7 +243,7 @@ def to_csv(rep: dict) -> bytes:
     for k, v in rep["summary"]:
         if k == "Report":
             continue  # already the first row
-        w.writerow([k, _safe(v)])
+        w.writerow([k, _safe(fmt_any(v))])   # header dates in the shared format; table rows keep ISO dates (sortable)
     for s in rep["sections"]:
         w.writerow([])
         w.writerow([s["title"]])
@@ -268,7 +269,7 @@ def to_xlsx(rep: dict) -> bytes:
     def val(v, money=False):
         if isinstance(v, str) and _NUM.match(v):
             v = float(v) if "." in v or money else int(v)
-        return v
+        return fmt_any(v)   # dates as "16 Nov 2026" / "16 Nov 2026, 14:05 UTC" (2026-11-16)
 
     def put(c, v, money=False):
         c.value = val(v, money)
@@ -461,9 +462,52 @@ def _proper(v) -> str:
     return re.sub(r"[a-z0-9]+", lambda m: m.group(0).upper() if m.group(0).upper() in _ACRONYMS else m.group(0).capitalize(), t)
 
 
+# 2026-11-16 action items: one date format across LedgerSight and TrustOps. Dates read "16 Nov 2026"; date-times
+# "16 Nov 2026, 14:05". The page shows the viewer's local time; files made on the server say UTC.
+_MON = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_DT = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?( UTC)?$")
+
+
+def fmt_date(v) -> str:
+    """2026-11-16 -> 16 Nov 2026. Anything that is not an ISO date comes back unchanged."""
+    m = _DATE.match(str(v or "").strip())
+    if not m or not (1 <= int(m.group(2)) <= 12):
+        return "" if v is None else str(v)
+    return f"{int(m.group(3))} {_MON[int(m.group(2)) - 1]} {m.group(1)}"
+
+
+def fmt_datetime(v, utc_label: bool = True) -> str:
+    """ISO date-time, '2026-11-16 14:05 UTC' or a Unix time -> '16 Nov 2026, 14:05 UTC' (converted to UTC)."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        d = datetime.fromtimestamp(v, timezone.utc)
+    else:
+        s = str(v or "").strip()
+        m = _DT.match(s)
+        if not m:
+            return fmt_date(s) if _DATE.match(s) else s
+        try:
+            d = datetime.fromisoformat(s.replace(" UTC", "").replace("Z", "+00:00").replace(" ", "T", 1))
+        except ValueError:
+            return s
+        d = d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d.astimezone(timezone.utc)
+    return f"{d.day} {_MON[d.month - 1]} {d.year}, {d:%H:%M}" + (" UTC" if utc_label else "")
+
+
+def fmt_any(v):
+    """A cell for people to read: ISO date-times and dates in the shared format, everything else unchanged."""
+    if isinstance(v, str):
+        s = v.strip()
+        if _DT.match(s):
+            return fmt_datetime(s)
+        if _DATE.match(s):
+            return fmt_date(s)
+    return v
+
+
 def _when(v: str) -> str:
-    m = _ISO.match(str(v))
-    return f"{m.group(1)} {m.group(2)} UTC" if m else str(v)
+    out = fmt_any(v)
+    return out if isinstance(out, str) else str(v)
 
 
 LOGO_PNG = Path(__file__).resolve().parent.parent / "static" / "logo-report.png"  # CloudSeals logo, rendered from logo.svg

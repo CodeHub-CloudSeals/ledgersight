@@ -30,11 +30,20 @@ def upload_confirm(c, name, blob, wid="client-a"):
     return m.json()
 
 
+def acknowledge_rejections(c, wid="client-a"):
+    """2026-11-16: a run needs a person to confirm any rejected rows first (as on the Sources page)."""
+    for u in c.get(f"/v1/workspaces/{wid}", headers=H).json()["uploads"]:
+        if (u.get("health") or {}).get("rejected") and not u.get("rejections_acknowledged"):
+            r = c.post(f"/v1/workspaces/{wid}/uploads/{u['id']}/acknowledge-rejections", headers=H, json={})
+            assert r.status_code == 200, r.text
+
+
 def pack_run(c, bank_blob=None):
     c.post(WS + "/reset", headers=H)
     upload_confirm(c, "01_bank_statement_October.csv", bank_blob or (PACK / "01_bank_statement_October.csv").read_bytes())
     for n in ("02_general_ledger_October.xlsx", "03_open_invoices.csv", "04_vendor_bills.csv", "05_supporting_documents.csv"):
         upload_confirm(c, n, (PACK / n).read_bytes())
+    acknowledge_rejections(c)
     r = c.post(WS + "/reconciliation-runs", headers=H)
     assert r.status_code == 200, r.text
     return r.json()
@@ -85,7 +94,11 @@ def test_sec03_preparer_cannot_clear_after_decisions(owner, prep):
     r = prep.post(WS + "/sources/bank/clear", headers=H)
     assert r.status_code == 403 and r.json()["detail"]["reason_code"] == "DECISIONS_EXIST"
     assert owner.get(f"{WS}/runs/{run['id']}").status_code == 200
-    assert owner.post(WS + "/sources/bank/clear", headers=H).status_code == 200
+    # 2026-11-16 action items: the CPA reviewer can't delete files under decided work either; Reset starts a new period
+    r = owner.post(WS + "/sources/bank/clear", headers=H)
+    assert r.status_code == 403 and r.json()["detail"]["reason_code"] == "DECISIONS_EXIST"
+    assert owner.get(f"{WS}/runs/{run['id']}").status_code == 200
+    assert owner.post(WS + "/reset", headers=H).status_code == 200
 
 
 def test_sec04_lockout_is_temporary_generic_and_unlockable(owner):

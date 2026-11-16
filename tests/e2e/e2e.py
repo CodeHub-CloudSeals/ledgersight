@@ -563,9 +563,15 @@ with sync_playwright() as pw:
         for a in p.locator("#rep-cards .rep-also a").all():
             href = a.get_attribute("href"); r = p.request.get((BASE + href) if href.startswith("/") else href)
             assert r.status == 200, (href, r.status); also.append(a.inner_text())
-        assert len(also) == 7, also
+        assert len(also) == 4, also                      # whole audit trail (4 formats); review exports have their own card
+        # 2026-11-16: one "Export reviews" card: view the review pack page, CSV, signed JSON (no second copy elsewhere)
+        ex = [a.get_attribute("href") for a in p.locator("#rep-exports a.btnlink").all()]
+        assert len(ex) == 3 and any("pack.html" in h for h in ex), ex
+        for h in ex:
+            r = p.request.get(BASE + h); assert r.status == 200, (h, r.status)
+        assert p.locator("#rep-run-pick option").count() >= 1 and p.locator("#rep-runs table.runs-table").count() == 1
         shot(p, "09-reports")
-        return "preview works; downloads 200: " + ", ".join(got) + f"; plus {len(also)} review-pack/audit-trail links"
+        return "preview works; downloads 200: " + ", ".join(got) + f"; plus {len(also)} audit-trail links and 3 review exports; run picker + runs list"
     check("Reports: preview + 2 reports × 4 formats", "click Preview, fetch every download link", t_reports)
 
     # ---------- audit trail ----------
@@ -573,10 +579,10 @@ with sync_playwright() as pw:
         tab(p, "evidence"); p.click("#ev-refresh"); p.wait_for_timeout(600)
         b = p.inner_text("#verify-badge"); assert "VERIFIED" in b, b
         p.click("#tamper-btn"); p.wait_for_timeout(800); t = p.inner_text("#tamper-out"); assert "FAIL" in t and "PASS" in t, t
-        for i in ["exp-csv", "exp-pack", "exp-print"]:
+        for i in ["exp-audit-pdf", "exp-audit-csv"]:   # review exports moved to Reports (2026-11-16)
             href = p.get_attribute(f"#{i}", "href"); r = p.request.get(BASE + href); assert r.status == 200, (i, r.status)
         shot(p, "10-audit")
-        return f"{b}; tamper copy FAIL, real chain PASS; CSV, JSON pack, printable pack all 200"
+        return f"{b}; tamper copy FAIL, real chain PASS; audit trail PDF and CSV 200"
     check("Audit trail verify + tamper + exports", "Verify now, Tamper test, fetch exports", t_evidence)
 
     # ---------- counterparties / trace ----------

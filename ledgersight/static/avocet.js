@@ -32,6 +32,24 @@ function morphKids(parent, ...kids) {
   cur.slice(next.length).forEach((n) => n.remove());
 }
 const usd = (c) => (c < 0 ? "-" : "") + "$" + (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
+// 2026-11-16 action items: one date format in LedgerSight and TrustOps. Dates "16 Nov 2026"; date-times
+// "16 Nov 2026, 14:05" in the viewer's local time. A plain ISO date (2026-10-09, a bank line date) is a calendar
+// day, never shifted by time zone. Unix seconds (TrustOps times) are accepted too.
+const _toDate = (v) => v instanceof Date ? v : typeof v === "number" ? new Date(v < 1e12 ? v * 1000 : v) : new Date(v);
+function fmtDate(v) {
+  if (v == null || v === "") return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  if (m) return `${+m[3]} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+m[2] - 1]} ${m[1]}`;
+  const d = _toDate(v); if (isNaN(d)) return String(v);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+function fmtDateTime(v) {
+  if (v == null || v === "") return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return fmtDate(v);
+  const d = _toDate(v); if (isNaN(d)) return String(v);
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+const fmtTime = (v) => { const d = _toDate(v); return isNaN(d) ? "" : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }); };
 // Readable names on screen. Display only: the technical codes stay unchanged in config, the audit trail and exports.
 const ACRONYM = new Set(["GL", "AR", "AP", "CPA", "CSV", "JSON", "PDF", "OK", "ID", "AI", "LLM", "SHA", "URL", "MFA", "KYC", "OCR",
   "QBO", "OFX", "QFX", "XLSX", "TSV", "EML", "UTC", "API", "SSO", "US", "SAP"]);
@@ -218,7 +236,7 @@ function applyRole() {
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
-  S.run = null; S.agents = null; S.anim = null; renderPipelines(); resetIntakeUi();
+  S.run = null; S.agents = null; S.anim = null; S.runs = null; S.repRunId = null; S.repRun = null; renderPipelines(); resetIntakeUi();
   const w = await api(W());
   S.wsMeta = w;
   renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
@@ -244,6 +262,8 @@ function markExported() {
 const STEPS = [["Import", "import"], ["Confirm columns", "import"], ["Reconcile", "recon"], ["Review", "exceptions"], ["Report", "reports"]];
 async function progress() {
   S.wsList = await api("/v1/workspaces");
+  // every run (2026-11-16): Overview totals across all runs and the runs list on Reconciliation stay current
+  loadRuns().then(() => { renderAllRunsSummary(); renderRunsList("runs-list"); });
   const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
   const st = w.status;
   const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0,
@@ -274,7 +294,6 @@ async function progress() {
   renderReadiness();
   renderOverview();
 }
-["exp-csv", "exp-pack", "exp-print"].forEach((id) => $(id).addEventListener("click", markExported));
 
 // ---------------- dashboard visuals ----------------
 // Presentation only. Every figure is read from the run and status already loaded (S.run, S.wsList, S.events);
@@ -308,7 +327,7 @@ const compactUsd = (c) => {
   return v >= 1e6 ? `${s}$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${s}$${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k` : `${s}$${Math.round(v)}`;
 };
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const shortDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? `${MON[+m[2] - 1]} ${+m[3]}` : d; };
+const shortDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? `${+m[3]} ${MON[+m[2] - 1]}` : d; };  // 9 Oct (2026-11-16)
 const KPI_ICON = {
   sources: "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v5c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12v5c0 1.7 3.6 3 8 3s8-1.3 8-3v-5",
   matched: "M9 12.5l2 2 4-4.5M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
@@ -697,7 +716,7 @@ async function openTrace(id) {
   put("trace-view", el("div", { class: "muted" }, "Loading…"));
   let t; try { t = await api(W(`/trace/${encodeURIComponent(id)}`)); } catch (e) { return put("trace-view", el("div", { class: "msg err" }, e.message)); }
   const fmt = (v) => v == null || v === "" ? "—" : typeof v === "object" ? Object.entries(v).filter(([, c]) => c).map(([f, c]) => f === c ? f : `${f} ← “${c}”`).join(", ") : String(v);
-  const when = (x) => x ? new Date(x).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  const when = (x) => x ? fmtDateTime(x) : "";
   const who = (w) => { if (!w) return null; w = String(w).replace(/\s*\(deterministic\)$/, "");
     return w.toLowerCase() === "trustops" ? "TrustOps" : w.startsWith("agent:") ? niceActor(w) : w.includes("@") ? w : nice(w); };
   const tidy = (x) => String(x || "").replace(/\b[A-Z]+(?:_[A-Z]+)+\b/g, (m) => nice(m));
@@ -895,6 +914,7 @@ function renderStatus() { renderSources(); }
 async function renderSources() {
   let s; try { s = await api(W("/sources")); } catch (_) { return; }
   s.kinds.forEach((k) => { KIND[k.kind] = k.label; });
+  S.srcLocked = s.locked ? s.locked_reason : null;
   SOURCE_KINDS = s.kinds.map((k) => k.kind);
   // Source status as a grid of tiles (2026-11-13): one per source, imported ones show file, dates, records and Clear.
   const tiles = s.kinds.map((k) => {
@@ -907,14 +927,20 @@ async function renderSources() {
       el("div", { class: "ss-head" }, el("span", { class: "ss-ico", "aria-hidden": "true" }, icon(SRC_GLYPH[k.kind] || SRC_GLYPH.documents)),
         el("div", { class: "ss-titles" }, el("div", { class: "ss-name" }, k.label),
           el("span", { class: "ss-req" }, k.required ? "Required" : "Optional")),
-        on ? el("button", { class: "linkbtn ss-clear", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null),
+        // 2026-11-16: files under review work can't be removed (the server refuses too); Start next period instead
+        on ? el("button", { class: "linkbtn ss-clear", title: s.locked ? s.locked_reason : "Remove this file", disabled: s.locked ? "" : null,
+          "aria-disabled": s.locked ? "true" : null, onclick: () => clearSource(k.kind) }, "Clear") : null),
       on ? [el("div", { class: "ss-file", title: tip }, e.source_file || "—"), meta ? el("div", { class: "ss-meta" }, meta) : null]
         : el("div", { class: "ss-meta" }, k.required ? "Needed to run reconciliation" : "Not imported yet"),
       el("div", { class: "ss-bot" },
         el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, on ? nice(k.status) : "Not yet"),
-        on ? el("span", { class: "ss-count" }, el("b", {}, String(k.rows || 0)), " records") : null));
+        on ? el("span", { class: "ss-count" }, el("b", {}, String(k.rows || 0)), " records") : null),
+      k.rejected_rows ? el("div", { class: "ss-rej" + (k.rejections_acknowledged ? " ok" : "") },
+        k.rejections_acknowledged ? `${k.rejected_rows} rejected row${k.rejected_rows === 1 ? "" : "s"} reviewed` :
+          `${k.rejected_rows} of ${k.rows_received} rows rejected · see Import health`) : null);
   });
-  put("src-status", el("div", { class: "ss-grid" }, tiles));
+  put("src-status", el("div", { class: "ss-grid" }, tiles),
+    s.locked ? el("div", { class: "msg ss-locked" }, el("b", {}, "Files are locked. "), s.locked_reason) : null);
   const nOn = s.kinds.filter((k) => k.status !== "NOT_CONNECTED").length;
   const ready = s.kinds.filter((k) => k.required).every((k) => k.status !== "NOT_CONNECTED");
   put("ss-sum", el("b", {}, `${nOn} of ${s.kinds.length}`), " imported", el("span", { class: "ss-dot2 " + (ready ? "is-ready" : "is-wait") }),
@@ -944,22 +970,27 @@ function srcEnvelope(e) {
     el("div", { class: "ss-meta" }, [e.date_range ? spanDates(e.date_range) : null, e.currency && e.currency.length ? e.currency.join(" / ") : null,
       fresh ? `Imported ${fresh}` : null].filter(Boolean).join("  ·  ")));
 }
-// 2026-10-01 → 2026-10-31 reads as "Oct 1 – 31, 2026"
+// 2026-10-01 → 2026-10-31 reads as "1 – 31 Oct 2026" (day month year, like every date since 2026-11-16)
 function spanDates([a, b]) {
   const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const p = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null; };
   const x = p(a), y = p(b);
-  if (!x || !y) return `${a} – ${b}`;
-  if (x.y === y.y && x.m === y.m) return x.d === y.d ? `${M[x.m]} ${x.d}, ${x.y}` : `${M[x.m]} ${x.d} – ${y.d}, ${x.y}`;
-  if (x.y === y.y) return `${M[x.m]} ${x.d} – ${M[y.m]} ${y.d}, ${x.y}`;
-  return `${M[x.m]} ${x.d}, ${x.y} – ${M[y.m]} ${y.d}, ${y.y}`;
+  if (!x || !y) return `${fmtDate(a)} – ${fmtDate(b)}`;
+  if (x.y === y.y && x.m === y.m) return x.d === y.d ? `${x.d} ${M[x.m]} ${x.y}` : `${x.d} – ${y.d} ${M[x.m]} ${x.y}`;
+  if (x.y === y.y) return `${x.d} ${M[x.m]} – ${y.d} ${M[y.m]} ${x.y}`;
+  return `${x.d} ${M[x.m]} ${x.y} – ${y.d} ${M[y.m]} ${y.y}`;
 }
 async function clearSource(k) {
+  if (S.srcLocked) return msg("clear-msg", S.srcLocked, "err");
   try { const r = await api(W(`/sources/${k}/clear`), { method: "POST" });
     msg("clear-msg", `${KIND[k]} cleared` + (r.runs_withdrawn ? "; previous match results withdrawn, run Match again." : "."), "good");
     if (S.upload && (S.upload.kind === k || (k === "documents" && S.upload.kind === "pdf"))) resetIntakeUi();
     put("up-next"); S.run = null; await refreshWs(); renderRun(); renderExceptions(); renderResults(); }
-  catch (e) { msg("clear-msg", e.message, "err"); }
+  catch (e) {
+    const code = e.body && e.body.detail && e.body.detail.reason_code;
+    msg("clear-msg", code === "DECISIONS_EXIST" ? "This file can't be removed: review items built on it already have decisions, proposals, proof or approvals in progress. " +
+      "To start again, a CPA reviewer starts a new period (Overview > Start next period, or Data & security > Clear this client's data); the audit trail is archived, never deleted." : e.message, "err");
+  }
 }
 async function clearClient(btn, nextPeriod = false) {
   const name = proper((S.wsMeta && S.wsMeta.name) || "this client");
@@ -977,17 +1008,44 @@ async function clearClient(btn, nextPeriod = false) {
 function renderHealth(uploads) {
   const done = uploads.filter((u) => u.health);
   if (!done.length) return put("health", el("div", { class: "muted" }, "Nothing imported yet."));
+  // 2026-11-16 action items: a file with rejected rows is never shown as simply "validated". It says how many rows
+  // were left out, lists them with the reason, offers them as a CSV to fix, and asks a person to confirm before the
+  // run uses the file without them (the server refuses the run until then).
+  const stateOf = (u) => u.health.rejected.length
+    ? el("span", { class: "badge OPEN", title: "Some rows could not be imported" }, u.health.status_text || `Imported with ${u.health.rejected.length} of ${u.health.received} rows rejected`)
+    : el("span", { class: "badge " + (u.state === "VALIDATED" ? "ACCEPTED" : "OPEN") }, u.state === "VALIDATED" ? "Imported" : nice(u.state));
+  const withRej = done.filter((u) => u.health.rejected.length && u.state === "VALIDATED");
   put("health", el("table", {},
     el("tr", {}, ["Source", "File", "State", "Rows received", "Accepted", "Rejected", "Debits", "Credits", "Control total", "SHA-256"].map((h) => el("th", {}, h))),
     done.map((u) => el("tr", {},
-      el("td", {}, KIND[u.kind]), el("td", {}, u.filename), el("td", {}, el("span", { class: "badge " + (u.state === "VALIDATED" ? "ACCEPTED" : "OPEN") }, nice(u.state))),
+      el("td", {}, KIND[u.kind]), el("td", {}, u.filename), el("td", {}, stateOf(u)),
       el("td", { class: "num" }, u.health.received), el("td", { class: "num" }, u.health.accepted),
       el("td", { class: "num" + (u.health.rejected.length ? " neg" : "") }, u.health.rejected.length),
       el("td", { class: "num" }, usd(u.health.debit_cents)), el("td", { class: "num" }, usd(u.health.credit_cents)),
       el("td", {}, el("span", { class: "badge " + (u.health.control_total_ok ? "PASS" : "FAIL") }, u.health.control_total_ok ? "Balances" : "Mismatch")),
       el("td", { class: "mono" }, u.sha256.slice(0, 12) + "…")))),
-    done.some((u) => u.health.rejected.length) ? el("div", { class: "msg err" }, "Rejected rows: " +
-      done.flatMap((u) => u.health.rejected.map((r) => `row ${r.row}: ${r.reason}`)).join("; ")) : null);
+    withRej.map((u) => rejectedBox(u)));
+}
+// One file's rejected rows: what was left out and why, the next step, a CSV to fix, and the confirmation.
+function rejectedBox(u) {
+  const rej = u.health.rejected, ack = u.rejections_acknowledged;
+  const shown = rej.slice(0, 12);
+  return el("div", { class: "rej-box" + (ack ? " acked" : "") },
+    el("div", { class: "rej-h" }, el("b", {}, `${u.filename}: imported with ${rej.length} of ${u.health.received} rows rejected`),
+      ack ? el("span", { class: "badge PASS" }, `Reviewed by ${niceActor(ack.by)} · ${fmtDateTime(ack.at)}`) : el("span", { class: "badge OPEN" }, "Needs a decision before the run")),
+    el("div", { class: "muted small" }, "These rows are not in the totals and are not matched. Next step: download them, fix them in the original file and upload the corrected file (it replaces this one). " +
+      "Or, if they should stay out, confirm below; each one then appears in the run as a review item “Row could not be imported”."),
+    el("ul", { class: "plain rej-list" }, shown.map((r) => el("li", {}, el("b", {}, `Row ${r.row}`), `: ${r.reason}`)),
+      rej.length > shown.length ? el("li", { class: "muted" }, `…and ${rej.length - shown.length} more in the CSV.`) : null),
+    el("div", { class: "row" },
+      el("a", { class: "secondary btnlink", href: W(`/uploads/${u.id}/rejected.csv`), download: "" }, `Download ${rej.length} rejected row${rej.length === 1 ? "" : "s"} (CSV)`),
+      ack ? null : el("button", { class: "primary", onclick: async (e) => {
+        if (!(await confirmDialog("Reconcile without these rows?", `${rej.length} row${rej.length === 1 ? "" : "s"} of ${u.filename} will stay out of the totals. Each one is listed in the run as a review item. You can still upload a corrected file later.`, "Confirm", false))) return;
+        await withBusy(e.target, async () => {
+          try { await api(W(`/uploads/${u.id}/acknowledge-rejections`), { method: "POST", json: {} }); toast("Confirmed. You can run reconciliation now.", "good"); await refreshWs(); }
+          catch (err) { toast(err.message, "err"); }
+        }, "Saving…");
+      } }, "I've reviewed them: reconcile without these rows")));
 }
 // Several files can be chosen at once; each one is checked and confirmed in turn.
 S.queue = [];
@@ -1169,7 +1227,7 @@ function renderHeld(held) {
     el("tr", {}, ["File", "Type", "Size", "Status", "Added by", "Added", "SHA-256"].map((h) => el("th", {}, h))),
     list.slice().reverse().map((h) => el("tr", {}, el("td", {}, h.filename), el("td", {}, h.extension ? h.extension.slice(1).toUpperCase() : "—"),
       el("td", { class: "num" }, kb(h.size)), el("td", {}, el("span", { class: "badge SIMULATED", title: h.note }, "Held · JSON conversion in development")),
-      el("td", { class: "small" }, h.uploaded_by), el("td", { class: "small" }, new Date(h.uploaded_at).toLocaleString()),
+      el("td", { class: "small" }, h.uploaded_by), el("td", { class: "small" }, fmtDateTime(h.uploaded_at)),
       el("td", { class: "mono" }, h.sha256.slice(0, 12) + "…"))))));
 }
 // One file from the device, Google Drive or an email. The SERVER decides what the file is from its content
@@ -1310,7 +1368,7 @@ function notifText(it) {
 }
 function renderNotifPanel() {
   const n = S.notif || { items: [], unread: 0, for: isCPA() ? "reviewer" : "preparer" };
-  const when = (t) => { const s = (Date.now() - new Date(t).getTime()) / 1000; return s < 86400 ? ago(Math.max(1, s)) : new Date(t).toLocaleDateString(); };
+  const when = (t) => { const s = (Date.now() - new Date(t).getTime()) / 1000; return s < 86400 ? ago(Math.max(1, s)) : fmtDateTime(t); };
   put("notif-panel",
     el("div", { class: "np-head" }, el("b", {}, "Notifications"),
       el("span", { class: "muted small" }, tropsOn() ? "Items sent to TrustOps and its decisions" : n.for === "reviewer" ? "Proposals and proof from staff preparers" : "Decisions and proof from CPA reviewers")),
@@ -1624,7 +1682,7 @@ function reviewTrail(x) {
   return el("div", { class: "xtrail" }, el("div", { class: "xs-k" }, "Review trail"),
     el("ol", {}, steps.map((s) => el("li", { class: "t-" + s.k },
       el("b", {}, s.what), ` by ${niceActor(s.by)}`, s.note ? ` · “${s.note}”` : "",
-      el("span", { class: "muted small" }, ` · ${new Date(s.at).toLocaleString()}${s.id ? " · " + s.id : ""}`)))));
+      el("span", { class: "muted small" }, ` · ${fmtDateTime(s.at)}${s.id ? " · " + s.id : ""}`)))));
 }
 // Proof on a review item: a receipt, bill, statement extract or email. Both roles can add it while the item is
 // open; the server stores it unopened, fingerprints and signs it. Files download; nothing is opened in the page.
@@ -1639,7 +1697,7 @@ function proofList(x) {
       el("div", { class: "pf-b" },
         el("a", { class: "pf-name", href: W(`/runs/${S.run.id}/exceptions/${x.id}/attachments/${a.id}`), download: "",
           title: `SHA-256 ${a.sha256}` }, a.filename),
-        el("div", { class: "pf-m" }, `${kbSize(a.size)} · added by ${niceActor(a.by)} · ${new Date(a.at).toLocaleString()} · ${a.id}`),
+        el("div", { class: "pf-m" }, `${kbSize(a.size)} · added by ${niceActor(a.by)} · ${fmtDateTime(a.at)} · ${a.id}`),
         a.note ? el("div", { class: "pf-note" }, `“${a.note}”`) : null)))));
 }
 function proofButton(x, out, note) {
@@ -1678,7 +1736,58 @@ async function tropsReviewers() {
     try { S.trRevs = { at: Date.now(), items: (await api("/v1/trustops/reviewers")).items || [] }; }
     catch (e) { S.trRevs = { at: Date.now(), items: [] }; }
   }
-  return S.trRevs.items;
+  // 2026-11-16: never offer yourself as the approver (maker-checker; the server and TrustOps refuse it too)
+  const me = String((S.me && S.me.user_id) || "").toLowerCase();
+  return S.trRevs.items.filter((r) => String(r.email || "").toLowerCase() !== me);
+}
+// 2026-11-16 action items: select several review items (or all) and send them to one approver in one go.
+// Each item still becomes its own TrustOps decision and its own signed record; decided or already-sent items are skipped.
+const sendable = (x) => (x.status === "OPEN" || x.status === "RETURNED") && (x.trustops_review || {}).status !== "PENDING";
+function bulkBar(shown) {
+  const can = shown.filter(sendable);
+  if (!can.length) return null;
+  S.excSel = new Set([...(S.excSel || [])].filter((id) => can.some((x) => x.id === id)));
+  const count = el("span", { class: "bulk-n" });
+  const all = el("input", { type: "checkbox", class: "bulk-all", "aria-label": "Select all items that can be sent" });
+  const pick = el("select", { class: "tro-assign", "aria-label": "Send selected to" }, el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+  tropsReviewers().then((items) => { for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  const note = el("input", { class: "bulk-note", maxlength: 1000, placeholder: "Note for the approver (optional)", "aria-label": "Note for the approver" });
+  const btn = el("button", { class: "primary tro-send", type: "button", onclick: (ev) => sendSelected(ev.currentTarget, pick, note) },
+    el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Send selected to TrustOps");
+  const sync = () => {
+    const n = S.excSel.size;
+    count.textContent = n ? `${n} of ${can.length} selected` : `${can.length} can be sent`;
+    all.checked = n === can.length; all.indeterminate = n > 0 && n < can.length;
+    btn.disabled = !n || !pick.value; btn.title = !n ? "Select items first" : !pick.value ? "Choose who to send them to first" : "";
+    document.querySelectorAll("#exc-list input.exc-sel").forEach((c) => { c.checked = S.excSel.has(c.dataset.id); });
+  };
+  all.onchange = () => { S.excSel = all.checked ? new Set(can.map((x) => x.id)) : new Set(); sync(); };
+  pick.onchange = sync;
+  S.bulkSync = sync;
+  setTimeout(sync, 0);
+  return el("div", { class: "bulk-bar" }, el("label", { class: "bulk-sel" }, all, el("span", {}, "Select all")), count,
+    el("span", { class: "grow" }), el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Send to "), pick), note, btn);
+}
+function selBox(x) {
+  if (!sendable(x)) return null;
+  return el("input", { type: "checkbox", class: "exc-sel", "data-id": x.id, "aria-label": `Select ${x.case_id || x.id}`,
+    onchange: (e) => { S.excSel = S.excSel || new Set(); e.target.checked ? S.excSel.add(x.id) : S.excSel.delete(x.id); S.bulkSync && S.bulkSync(); } });
+}
+async function sendSelected(btn, pick, noteEl) {
+  const ids = [...(S.excSel || [])];
+  if (!ids.length) return toast("Select at least one review item.", "bad");
+  if (!pick.value) return toast("Choose who to send them to first.", "bad");
+  if (!(await confirmDialog(`Send ${ids.length} item${ids.length === 1 ? "" : "s"} to ${pick.value}?`,
+    "Each item goes to TrustOps for approval with your note. Items already sent or decided are skipped.", "Send", false))) return;
+  await withBusy(btn, async () => {
+    try {
+      const r = await api(W(`/runs/${S.run.id}/send-to-trustops`), { method: "POST", json: { exception_ids: ids, to: pick.value, note: noteEl.value.trim() } });
+      S.excSel = new Set();
+      const parts = [`${r.sent} sent to ${r.to}`]; if (r.skipped) parts.push(`${r.skipped} skipped`); if (r.not_sent) parts.push(`${r.not_sent} not sent (see the items)`);
+      toast(parts.join(" · ") + ".", r.not_sent ? "bad" : "good");
+      S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); loadNotifications(true);
+    } catch (e) { toast(e.message, "bad"); }
+  }, "Sending…");
 }
 function tropsReviewer(x, tr) {
   const cur = tr.assigned_to || "";
@@ -1706,7 +1815,7 @@ function tropsStatus(x, tops) {
         toast(now && now.status !== x.status ? `${x.case_id || x.id}: ${now.status === "ACCEPTED" ? "approved" : "rejected"} in TrustOps.` : "No decision yet. The approver hasn't answered in TrustOps.", "good");
       } catch (e) { toast(e.message, "bad"); b.classList.remove("spin"); b.disabled = false; } } }, icon(REFRESH_D));
   // No link to approve from here (2026-11-13, user request): the chosen approver is told in TrustOps.
-  const sentAt = tr.submitted_at ? new Date(tr.submitted_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+  const sentAt = tr.submitted_at ? fmtDateTime(tr.submitted_at) : "";
   const to = tr.assigned_to ? tr.assigned_to : "TrustOps approvers";
   // Not sent yet (or sending failed): the person chooses who it goes to and presses "Send to TrustOps".
   if (!tr.status || tr.status === "NOT_SENT") {
@@ -1780,7 +1889,7 @@ function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
   if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
   const reviewer = S.me.role === "owner_reviewer";
-  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; S.excType = "all"; }
+  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; S.excType = "all"; S.excSel = new Set(); }
   const all = S.run.result.exceptions, isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
   const nOpen = all.filter(isOpen).length;
   const typeOf = (x) => x.client_status || "APPROVAL_REQUIRED";
@@ -1812,7 +1921,8 @@ function renderExceptions() {
     : S.excFilter === "rejected" ? empty("Nothing rejected yet", "Items rejected here or in TrustOps appear here with the reason.")
     : S.excFilter === "approved" ? empty("Nothing approved yet", "Items approved here or in TrustOps appear here.")
     : empty("No items yet", "Review items appear here after a reconciliation run."));
-  put("exc-list", bar, shown.map((x) => {
+  const tropsOnRun = S.run && S.run.trustops && S.run.trustops.connected;
+  put("exc-list", bar, tropsOnRun ? bulkBar(shown) : null, shown.map((x) => {
     const note = el("textarea", { rows: 2, placeholder: "Add a note (saved with your name in the audit trail)", "aria-label": "Review note" });
     x._noteEl = note;   // TrustOps "Send" takes this note to the approver
     const out = el("div", { class: "msg" });
@@ -1834,6 +1944,7 @@ function renderExceptions() {
     const refs = x.evidence_refs || [];
     return el("article", { class: "exc " + x.status, "data-exc": x.id },
       el("header", { class: "xh" },
+        tops ? selBox(x) : null,
         el("div", { class: "grow" }, el("div", { class: "xh-id" }, x.id, x.case_id && x.case_id !== x.id ? ` · Case ${x.case_id}` : "",
             x.client_status ? el("span", { class: "case-st" }, caseStatus(x)) : null,
             x.resubmitted ? el("span", { class: "case-st resub", title: "Rejected in TrustOps earlier and sent again with new proof" },
@@ -1882,11 +1993,11 @@ function renderExceptions() {
               el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
               : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
           el("div", { class: "xa-hint" }, tops ? ((x.trustops_review || {}).status === "PENDING"
-              ? "The approver decides in TrustOps. Their answer appears here and in your notifications."
+              ? `Only ${(x.trustops_review || {}).assigned_to || "the chosen approver"} can decide it in TrustOps. Their answer appears here and in your notifications.`
               : "Nothing is sent until you press Send to TrustOps. The approver's answer then appears here and in your notifications.")
             : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
             : "You propose. A CPA reviewer approves, rejects or returns it."), out)
-        : [el("div", { class: "msg " + (x.status === "REJECTED" ? "bad" : "good") }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
+        : [el("div", { class: "msg " + (x.status === "REJECTED" ? "bad" : "good") }, `${x.status} by ${x.reviewer} · ${fmtDateTime(x.reviewed_at)} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
             (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")),
           tops && x.status === "REJECTED" && (x.trustops_review || {}).status === "REJECTED" ? resendBox(x, out, note) : null]);
   }));
@@ -1930,7 +2041,7 @@ async function renderProof() {
     return null;
   };
   const row = (k, v, cls) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", cls ? { class: cls } : {}, v)];
-  const when = (t) => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  const when = (t) => fmtDateTime(t);
   const actor = (c) => `${niceActor(c.actor_id)}${c.agent_code ? ` (${c.agent_code})` : ""}${c.actor_role_label && !c.agent_code ? ` · ${c.actor_role_label}` : ""}`;
   put("proof",
     el("div", { class: "pf-sum" },
@@ -1971,7 +2082,7 @@ async function attempt(a) {
   catch (e) { r = e.body || { decision: "DENY", reason_code: e.message }; }
   attempts.unshift({ a, r, at: new Date() });
   put("attack-out", el("table", {}, el("tr", {}, ["Time", "Who", "Attempt", "Decision", "Reason", "Policy", "Executed"].map((h) => el("th", {}, h))),
-    attempts.map((x) => el("tr", {}, el("td", {}, x.at.toLocaleTimeString()), el("td", {}, x.r.actor ? niceActor(x.r.actor) : "You"), el("td", {}, x.a.t),
+    attempts.map((x) => el("tr", {}, el("td", {}, fmtTime(x.at)), el("td", {}, x.r.actor ? niceActor(x.r.actor) : "You"), el("td", {}, x.a.t),
       el("td", {}, el("span", { class: "badge " + x.r.decision }, x.r.decision)),
       el("td", {}, nice(x.r.reason_code)), el("td", {}, x.r.policy_id || ""), el("td", {}, String(!!x.r.executed))))),
     el("div", { class: "msg" }, "Each refusal is now a signed record in the Audit trail and appears in the Governance report."));
@@ -1986,12 +2097,8 @@ async function renderEvidence() {
   S.evActivity = ev.recent_activity || null;  // newest real activity, even when it is older than the events shown
   const b = $("verify-badge"); b.className = "badge " + v.state;
   b.textContent = v.state === "PASS" ? `VERIFIED · ${v.checked} signed events` : `${v.state === "UNKNOWN" ? "NOT VERIFIED" : "FAILED"} · ${v.reason}`;
-  for (const [id, p] of [["exp-csv", "export.csv"], ["exp-pack", "review-pack.json"]]) {
-    $(id).classList.toggle("disabled", !S.run); $(id).href = S.run ? W(`/runs/${S.run.id}/${p}`) : "#";
-  }
-  $("exp-print").classList.toggle("disabled", !S.run);
+  // 2026-11-16: review exports (CSV, review pack) live only on Reports, so they are not offered twice.
   $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv"); $("exp-audit-xlsx").href = W("/audit-trail.xlsx"); $("exp-audit-json").href = W("/audit-trail.json");
-  $("exp-print").href = S.run ?`/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
   put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first` +
       (S.evTotal > ev.events.length ? `; showing the latest ${ev.events.length} of ${S.evTotal}. Download the audit trail for every event.` : ".")),
     el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Policy", "Source refs", "Hash"].map((h) => el("th", {}, h))),
@@ -2084,7 +2191,7 @@ async function renderAgents() {
   renderReadiness();
   const d = await loadAgents();
   if (!d) { $("ag-live").textContent = "○ offline"; $("ag-live").classList.remove("live"); return; }
-  $("ag-live").textContent = "● live · updated " + new Date().toLocaleTimeString(); $("ag-live").classList.add("live");
+  $("ag-live").textContent = "● live · updated " + fmtTime(new Date()); $("ag-live").classList.add("live");
 
   put("ag-grid", d.agents.map((a) => {
     const stat =(k, label, cls) => el("div", { class: "ag-stat" + (a.counts[k] ? " " + cls : "") }, el("b", {}, a.counts[k]), el("span", {}, label));
@@ -2331,40 +2438,136 @@ function empty(title, text) { return el("div", { class: "empty" }, el("b", {}, t
 
 // ---------------- reports (finance + governance, same run id) ----------------
 const FMT_LABEL = { pdf: "PDF", xlsx: "Excel", csv: "CSV", json: "JSON" };
-function renderReports() {
-  $("rep-run").textContent = S.run ? S.run.id : "none";
-  $("rep-trace").textContent = S.run ? S.run.trace_id || "–" : "–";
-  if (!S.run) { put("rep-cards"); put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first.")); return; }
+// ---------------- every run (2026-11-16 action items) ----------------
+// The list comes from GET /runs (newest first, review totals per run and across all runs). Reports can show any
+// run's reports; Reconciliation lists the runs with filters; Overview counts review items across all runs and
+// can switch the run the pages show. Nothing is recomputed here: the counts are the server's.
+async function loadRuns() { try { S.runs = await api(W("/runs")); } catch (_) { S.runs = null; } return S.runs; }
+const runLabel = (r) => `${r.id} · ${fmtDateTime(r.created_at)} · ${niceActor(r.created_by)}${r.latest ? " · latest" : ""}`;
+function renderRunPicker(sel, current, onPick) {
+  if (!sel) return;
+  const items = (S.runs && S.runs.items) || [];
+  put(sel, items.length ? items.map((r) => el("option", { value: r.id }, runLabel(r))) : el("option", { value: "" }, "none"));
+  sel.value = current || ""; sel.disabled = items.length < 2; sel.onchange = () => onPick(sel.value);
+}
+// Show another run on the Reconciliation, Review queue, Overview and Reports pages (the latest stays the default).
+async function switchRun(id) {
+  if (!id || (S.run && S.run.id === id)) return;
+  try { S.run = await api(W(`/runs/${id}`)); } catch (e) { toast(e.message, "err"); return; }
+  S.repRunId = id; S.repRun = S.run; S.excRun = id;
+  renderRun(); renderExceptions(); progress(); renderRunsList("runs-list");
+  if (isActive("reports")) renderReports();
+  const latest = S.runs && S.runs.latest_run === id;
+  toast(latest ? `Showing the latest run, ${id}.` : `Showing ${id}, an earlier run. Choose the latest run to return to it.`, "good");
+}
+const localDay = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+function renderRunsList(target) {
+  const box = $(target); if (!box) return;
+  const items = (S.runs && S.runs.items) || [];
+  if (!items.length) return put(box, empty("No runs yet", "Run a reconciliation; every run is listed here with who ran it and its review items."));
+  const f = S.runFilter || (S.runFilter = { day: "", month: "", by: "" });
+  // filters use the viewer's local dates, like every date on the page
+  const shown = items.filter((r) => (!f.day || localDay(r.created_at) === f.day) && (!f.month || localDay(r.created_at).startsWith(f.month)) && (!f.by || r.created_by === f.by));
+  const people = [...new Set(items.map((r) => r.created_by).filter(Boolean))].sort();
+  const redraw = () => { renderRunsList("runs-list"); renderRunsList("rep-runs"); };
+  const rv = (r) => ["open", "sent", "approved", "rejected", "returned"].filter((k) => r.reviews[k])
+    .map((k) => el("span", { class: `rv rv-${k}` }, `${r.reviews[k]} ${k}`));
+  const by = el("select", { class: "runs-by", "aria-label": "Runs by this person", onchange: (e) => { f.by = e.target.value; redraw(); } },
+    el("option", { value: "" }, "Anyone"), people.map((p) => el("option", { value: p }, niceActor(p))));
+  by.value = f.by;
+  put(box, el("div", { class: "runs-filter" },
+      el("label", {}, "Day ", el("input", { type: "date", class: "runs-day", value: f.day, "aria-label": "Runs on this day",
+        onchange: (e) => { f.day = e.target.value; if (f.day) f.month = ""; redraw(); } })),
+      el("label", {}, "Month ", el("input", { type: "month", class: "runs-month", value: f.month, "aria-label": "Runs in this month",
+        onchange: (e) => { f.month = e.target.value; if (f.month) f.day = ""; redraw(); } })),
+      el("label", {}, "Run by ", by),
+      (f.day || f.month || f.by) ? el("button", { class: "linkbtn", onclick: () => { S.runFilter = { day: "", month: "", by: "" }; redraw(); } }, "Clear filters") : null,
+      el("span", { class: "muted small" }, `${shown.length} of ${items.length} run${items.length === 1 ? "" : "s"}`)),
+    shown.length ? el("div", { class: "tablewrap" }, el("table", { class: "runs-table" },
+      el("tr", {}, ["Run", "When", "Run by", "Files", "Review items", ""].map((h) => el("th", {}, h))),
+      shown.map((r) => el("tr", { class: (S.run && S.run.id === r.id ? "on " : "") + (r.latest ? "latest" : "") },
+        el("td", {}, el("b", {}, r.id), r.latest ? el("span", { class: "badge PASS" }, "Latest") : null),
+        el("td", { class: "small" }, fmtDateTime(r.created_at)), el("td", { class: "small" }, niceActor(r.created_by)),
+        el("td", { class: "small" }, Object.values(r.files || {}).join(", ") || "–"),
+        el("td", { class: "small" }, `${r.review_items}`, r.review_items ? " · " : "", rv(r)),
+        el("td", { class: "runs-act" },
+          S.run && S.run.id === r.id ? el("span", { class: "muted small" }, "Showing") : el("button", { class: "secondary", onclick: () => switchRun(r.id) }, "Show this run"),
+          el("button", { class: "linkbtn", onclick: () => { S.repRunId = r.id; S.repRun = null; go("reports"); } }, "Reports")))))) :
+      empty("No runs match", "Change or clear the filters."));
+}
+// Overview: review items across ALL runs, and which run the page shows (the latest by default).
+function renderAllRunsSummary() {
+  const box = $("ov-allruns"); if (!box) return;
+  const R = S.runs, items = (R && R.items) || [];
+  box.classList.toggle("hidden", !items.length);
+  if (!items.length) return put(box);
+  const t = R.totals, sel = el("select", { "aria-label": "Run shown on these pages" });
+  const tile = (k, label, n, cls) => el("a", { class: `ar-tile ${cls || ""}`, href: "#exceptions", title: "Open the review queue", onclick: (e) => { e.preventDefault(); S.excFilter = k; go("exceptions"); } },
+    el("b", {}, String(n || 0)), el("span", {}, label));
+  put(box, el("div", { class: "ar-head" },
+      el("div", {}, el("div", { class: "card-title" }, "Review items across all runs"),
+        el("div", { class: "muted small" }, `${items.length} run${items.length === 1 ? "" : "s"} · ${t.review_items} review item${t.review_items === 1 ? "" : "s"} in total`)),
+      el("label", { class: "ar-pick" }, "Showing ", sel)),
+    el("div", { class: "ar-tiles" }, tile("open", "Open", (t.open || 0) + (t.returned || 0)), tile("open", "Sent to TrustOps", t.sent, "ar-sent"),
+      tile("approved", "Approved", t.approved, "ar-ok"), tile("rejected", "Rejected", t.rejected, "ar-bad")),
+    S.run && R.latest_run !== S.run.id ? el("div", { class: "msg" }, `You are looking at ${S.run.id}, an earlier run; the figures below are for that run. `,
+      el("button", { class: "linkbtn", onclick: () => switchRun(R.latest_run) }, "Show the latest run")) : null);
+  renderRunPicker(sel, S.run && S.run.id, switchRun);
+}
+function renderReports() { return renderReportsFor(); }
+async function renderReportsFor() {
+  await loadRuns(); renderRunsList("rep-runs");
+  const ids = ((S.runs && S.runs.items) || []).map((r) => r.id);
+  if (!S.run || !ids.length) {
+    renderRunPicker($("rep-run-pick"), null, () => {}); $("rep-trace").textContent = "–";
+    put("rep-cards"); put("rep-exports"); put("rep-draft");
+    return put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first."));
+  }
+  const id = S.repRunId && ids.includes(S.repRunId) ? S.repRunId : S.run.id;
+  if (id === S.run.id) S.repRun = S.run;
+  else if (!S.repRun || S.repRun.id !== id) { try { S.repRun = await api(W(`/runs/${id}`)); } catch (_) { S.repRun = S.run; } }
+  const R = S.repRun;
+  renderRunPicker($("rep-run-pick"), R.id, (v) => { S.repRunId = v; S.repRun = null; renderReports(); });
+  $("rep-trace").textContent = R.trace_id || "–";
   const cards = [
     ["finance", "Finance Reconciliation Report", "LEDGERSIGHT", "FIN-", "What happened to the financial records. Totals, matches, exceptions, outstanding balances and reviewer status."],
     ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]]
-    .filter(([k]) => !(k === "governance" && S.run.trustops?.connected));
-  // Each report card also links the other downloads for this run, so nothing has to be hunted for on Audit trail.
+    .filter(([k]) => !(k === "governance" && R.trustops?.connected));
   const link = (href, label, extra) => el("a", { class: "linkbtn", href, download: "", ...(extra || {}) }, label);
-  const also = {
-    finance: ["Review pack for this run", [link(W(`/runs/${S.run.id}/export.csv`), "Review CSV", { onclick: markExported }),
-      link(W(`/runs/${S.run.id}/review-pack.json`), "Signed review pack (JSON)", { onclick: markExported }),
-      el("a", { class: "linkbtn", href: `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}`,
-        target: "_blank", rel: "noopener", onclick: markExported }, "Printable review pack")]],
+  // The whole audit trail (CPA reviewer) sits under the governance report. Review exports have their own card.
+  const also = { finance: null,
     governance: isCPA() ? ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]
       : ["The whole signed audit trail is downloaded by a CPA reviewer.", []]};
-  const tops = S.run.trustops?.connected ? el("div", { class: "card" }, el("div", { class: "eyebrow2" }, "TRUSTOPS"),
+  const tops = R.trustops?.connected ? el("div", { class: "card" }, el("div", { class: "eyebrow2" }, "TRUSTOPS"),
     el("div", { class: "card-title" }, "Governance record"),
     el("div", { class: "muted small" }, "Approvals, blocked actions and the evidence chain are kept in TrustOps, across every connected application. Download the governance report there."),
-    S.run.trustops.approvals_url ? el("div", { class: "fmt" }, el("a", { class: "secondary btnlink", href: S.run.trustops.approvals_url.replace("#/approvals", "#/governance-reports"), target: "_blank", rel: "noopener" }, "Open TrustOps reports ↗")) : null) : null;
+    R.trustops.approvals_url ? el("div", { class: "fmt" }, el("a", { class: "secondary btnlink", href: R.trustops.approvals_url.replace("#/approvals", "#/governance-reports"), target: "_blank", rel: "noopener" }, "Open TrustOps reports ↗")) : null) : null;
   put("rep-cards", [...cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
-    el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
+    el("div", { class: "eyebrow2" }, `${by} · ${pre}${R.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
     el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
-      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
-    el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]))), tops].filter(Boolean));
-  const openN = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
-  put("rep-draft", !isCPA() && openN ? el("div", { class: "msg rep-draft" }, el("b", {}, "Draft. "),
-    `${openN} review item${openN === 1 ? "" : "s"} still need${openN === 1 ? "s" : ""} a CPA reviewer's decision, so these reports are not final yet.`) : null);
+      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${R.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
+    also[k] ? el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]) : null)), tops].filter(Boolean));
+  // 2026-11-16 action items: one "Export reviews" card (the review exports were offered twice, and the JSON pack
+  // only downloaded). "View review pack" opens a readable page of every review item; CSV and signed JSON download.
+  const packUrl = `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(R.id)}`;
+  put("rep-exports", el("div", { class: "card gap rep-exports" }, el("div", { class: "eyebrow2" }, `LEDGERSIGHT · REV-${R.id}`),
+    el("div", { class: "card-title" }, "Export reviews"),
+    el("div", { class: "muted small" }, "Every review item of this run with its status, reviewer and note. View it on screen (print or save it as PDF from there), or download it."),
+    el("div", { class: "fmt" },
+      el("a", { class: "primary btnlink", href: packUrl, target: "_blank", rel: "noopener", onclick: markExported }, "View review pack"),
+      el("a", { class: "secondary btnlink", href: W(`/runs/${R.id}/export.csv`), download: "", onclick: markExported }, "Download CSV"),
+      el("a", { class: "secondary btnlink", href: W(`/runs/${R.id}/review-pack.json`), download: "", onclick: markExported,
+        title: "Signed review pack for auditors. Verify it offline with python -m ledgersight.verify_pack" }, "Download signed pack (JSON)"))));
+  const openN = R.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
+  put("rep-draft", [R.id !== S.run.id ? el("div", { class: "msg" }, `These are the reports of ${R.id}, an earlier run.`) : null,
+    !isCPA() && openN ? el("div", { class: "msg rep-draft" }, el("b", {}, "Draft. "),
+      `${openN} review item${openN === 1 ? "" : "s"} still need${openN === 1 ? "s" : ""} a CPA reviewer's decision, so these reports are not final yet.`) : null].filter(Boolean));
   put("rep-preview", el("div", { class: "muted" }, "Choose Preview on either report. Generating a report is itself recorded in the audit trail."));
   $("rep-prev-title").textContent = "Preview";
 }
 async function previewReport(kind) {
-  let r; try { r = await api(W(`/runs/${S.run.id}/reports/${kind}.json?preview=1`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
+  const R = S.repRun || S.run;
+  let r; try { r = await api(W(`/runs/${R.id}/reports/${kind}.json?preview=1`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
   $("rep-prev-title").textContent = `Preview · ${r.title} · ${r.report_id}`;
   put("rep-preview", el("table", { class: "kv" }, r.summary.map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, k), el("td", { class: "small" }, String(v))))),
     r.sections.map((s) => el("div", {}, el("div", { class: "card-title gap" }, `${s.title} (${s.rows.length})`),
@@ -2405,7 +2608,18 @@ function renderAskLog() {
       a.citations.length ? el("div", { class: "cites" }, "Sources", el("ul", { class: "plain" }, a.citations.map((c) => el("li", {}, el("b", {}, c.ref), ` · ${c.kind} · ${c.source}`,
         c.sha256 ? el("span", { class: "mono" }, ` · sha256 ${c.sha256.slice(0, 12)}…`) : null,
         c.kind === "source row" ? el("button", { class: "linkbtn", onclick: () => { closeAsk(); openTrace(c.ref); } }, " Trace →") : null)))) : null))));
-  const sc = $("ask-scroll"); sc.scrollTop = sc.scrollHeight;
+  askScroll();
+}
+// 2026-11-16: after the answer is laid out, bring the newest exchange into view. A long answer (tables, sources)
+// is shown from its question down, so the start is never scrolled away; otherwise go to the bottom.
+function askScroll() {
+  const sc = $("ask-scroll");
+  requestAnimationFrame(() => {
+    const last = $("ask-out").lastElementChild;
+    if (!last) { sc.scrollTop = sc.scrollHeight; return; }
+    const top = last.offsetTop - sc.offsetTop - 8;
+    sc.scrollTop = last.offsetHeight > sc.clientHeight ? top : sc.scrollHeight;
+  });
 }
 S.askOpen = false;
 function setAsk(open) {
@@ -2415,7 +2629,7 @@ function setAsk(open) {
   $("ask-open").setAttribute("aria-expanded", String(open)); $("ask-open").classList.toggle("on", open);
   document.body.classList.toggle("ask-open", open);
 }
-function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => $("ask-q").focus(), 120); }
+function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => { $("ask-q").focus({ preventScroll: true }); askScroll(); }, 120); }
 function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
 $("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
 // (the top-bar search box was removed on request; Ask opens from the floating button, the sidebar card and Ctrl+K)
@@ -2473,7 +2687,7 @@ async function renderTeam() {
       el("span", { class: "u-av" }, initials),
       el("div", { class: "u-main" }, el("div", { class: "u-name" }, u.display_name || u.user_id, u.user_id === S.me.user_id ? el("span", { class: "muted small" }, " · you") : null),
         el("div", { class: "u-meta" }, [u.user_id, ROLE_NAME[u.role] || u.role, (u.workspaces || []).map(wsName).join(", "),
-          `expires ${new Date(u.expires_at).toLocaleDateString()}`].filter(Boolean).join(" · "))),
+          `expires ${fmtDate(u.expires_at)}`].filter(Boolean).join(" · "))),
       el("span", { class: "badge " + st[0] }, st[1]),
       // the local demo's built-in people (used by "Acting as") are not revoked from here
       el("div", { class: "row-actions" }, u.user_id !== S.me.user_id && !u.revoked && !(S.demoPeople || []).some((d) => d.user_id === u.user_id) ? [
@@ -2496,7 +2710,7 @@ $("inv-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
     const copy = el("button", { class: "secondary", onclick: async (e) => {
       try { await navigator.clipboard.writeText(r.invite_url); e.currentTarget.textContent = "Copied ✓"; } catch (_) { toast("Select the link and copy it.", "err"); } } }, "Copy link");
     put("inv-out", el("div", { class: "invite-card" },
-      el("div", { class: "ic-h" }, el("b", {}, `${name} added as ${ROLE_NAME[role]}.`), el("span", { class: "muted small" }, ` Send them this link (single use, expires ${new Date(r.expires_at).toLocaleString()}):`)),
+      el("div", { class: "ic-h" }, el("b", {}, `${name} added as ${ROLE_NAME[role]}.`), el("span", { class: "muted small" }, ` Send them this link (single use, expires ${fmtDateTime(r.expires_at)}):`)),
       el("div", { class: "ic-row" }, el("code", { class: "mono ic-link" }, r.invite_url), copy)));
     $("inv-user").value = ""; $("inv-name").value = "";
     renderTeam();

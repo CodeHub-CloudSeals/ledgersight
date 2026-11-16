@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LedgerSight</title>
 <link rel="icon" href="/static/logo.svg">
-<link rel="stylesheet" href="/static/avocet.css?v=20261113v">
+<link rel="stylesheet" href="/static/avocet.css?v=20261116a">
 </head>
 <body>
 
@@ -112,6 +112,7 @@
     <section class="panel active" id="p-home">
       <div id="ov-hero" class="ov-head"></div>
       <nav class="mprog" id="stepper" aria-label="Month-end progress"></nav>
+      <div id="ov-allruns" class="card ov-allruns hidden" aria-label="Review items across all runs"></div>
       <div id="ov-kpis" class="kw-row"></div>
       <div id="ov-charts" class="sk-grid hidden">
         <div class="card ch-card sk-flow"><div class="ch-head"><div><div class="card-title">Cash movement</div><div class="ch-sub">Money in and out on the bank statement, by day</div></div>
@@ -202,6 +203,7 @@
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
         <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Select a matched row to compare the bank and ledger lines.</div></div>
       </div>
+      <div class="card gap"><div class="card-title">Runs <span class="muted small">every run of this client · filter by day, month or who ran it</span></div><div id="runs-list"></div></div>
     </section>
 
     <!-- ================= Agents ================= -->
@@ -271,8 +273,7 @@
       <div class="row"><a id="exp-audit-pdf" class="primary btnlink" href="#" download>Download audit trail (PDF)</a>
         <a id="exp-audit-csv" class="secondary btnlink" href="#" download>Audit trail (CSV)</a>
         <a id="exp-audit-xlsx" class="secondary btnlink" href="#" download>Audit trail (Excel)</a><a id="exp-audit-json" class="secondary btnlink" href="#" download>Audit trail (JSON)</a>
-        <a id="exp-csv" class="secondary btnlink disabled" href="#">Review CSV</a><a id="exp-pack" class="secondary btnlink disabled" href="#">Signed review pack (JSON)</a>
-        <a id="exp-print" class="secondary btnlink disabled" href="#" target="_blank" rel="noopener">Printable review pack</a></div>
+        <span class="muted small">Review exports (CSV, review pack) are on Reports.</span></div>
       <div class="grid ov gap" id="ev-summary">
         <div class="card"><div class="card-title">TrustOps decisions </div><div id="ov-gov"></div></div>
         <div class="card"><div class="card-title">Recent activity <span class="muted small">newest first</span></div><ul id="ov-activity" class="feed tl-feed"></ul></div>
@@ -284,9 +285,11 @@
     <section class="panel" id="p-reports">
       <div class="page-head"><div><h2>Reports</h2>
         <p class="sub">The Finance Reconciliation Report shows what happened to the records in this run, including who approved each review item in TrustOps. The governance record (how it happened) is kept in TrustOps.</p></div>
-        <div class="row"><span class="pill">Run <b id="rep-run">none</b></span><span class="pill">Trace <b id="rep-trace">–</b></span></div></div>
+        <div class="row"><label class="pill rep-pick" for="rep-run-pick">Run <select id="rep-run-pick" aria-label="Choose the run whose reports to see"><option>none</option></select></label><span class="pill">Trace <b id="rep-trace">–</b></span></div></div>
       <div id="rep-draft"></div>
       <div class="grid two" id="rep-cards"></div>
+      <div id="rep-exports"></div>
+      <div class="card gap"><div class="card-title">All runs <span class="muted small">newest first · choose a run to see its reports</span></div><div id="rep-runs"></div></div>
       <div class="card gap"><div class="card-title" id="rep-prev-title">Preview</div><div id="rep-preview" class="muted">Run a reconciliation first.</div></div>
     </section>
 
@@ -361,7 +364,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="/static/vendor/motion.min.js"></script>
 <script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/avocet.js?v=20261113u"></script>
+<script src="/static/avocet.js?v=20261116a"></script>
 <script src="/static/ui-plus.js"></script>
 <script src="/static/login-motion.js"></script>
 </body>

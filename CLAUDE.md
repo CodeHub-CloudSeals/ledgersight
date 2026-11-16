@@ -104,6 +104,31 @@ it; approvals/rejections made in TrustOps reach both roles' bells (the bell poll
 status bar ("Not sent yet" / "Waiting for approval · Sent to X · time", note sent, reviewer, refresh icon) above one
 button row; "Approve in TrustOps" only for people listed as approvers in TrustOps. Agent cards are equal height.
 
+## Action items 2026-11-16 (lead's list + LedgerSight<->TrustOps integration findings; tests in tests/test_action_items_1116.py)
+FinTwin: only the conversation scrolls (min-height:0 flex body), header and question box stay put; `askScroll()` shows the
+newest exchange (a long answer from its question down). Files under review work (decision, proposal, proof, item sent
+to TrustOps: `Service.review_work`) can't be cleared by anyone, CPA reviewer included (403 DECISIONS_EXIST); /sources
+says `locked` + why, Clear is disabled; a new period (Overview > Start next period / Data & security > Clear this
+client's data) still works. One date format with TrustOps: "16 Nov 2026" / "16 Nov 2026, 14:05" (browser local time;
+JS `fmtDate`/`fmtDateTime`; Python `reports.fmt_date`/`fmt_datetime`/`fmt_any`, files say UTC; CSV table rows keep ISO
+dates, headers and XLSX/PDF use the format). GET /runs (newest first, filters day/month/by in UTC, review totals per run
+and across runs: open/sent/approved/rejected/returned); Reports has a run picker (`S.repRunId`) and an All runs list;
+Reconciliation has the Runs list with Day/Month/Run-by filters (local dates) and "Show this run" (`switchRun`); Overview
+shows "Review items across all runs" with a run switcher. Review exports: one "Export reviews" card on Reports (View
+review pack = pack.html page, Download CSV, Download signed pack JSON); the copies on Audit trail were removed.
+Bulk send: checkboxes + Select all + "Send selected to TrustOps" (one approver, optional note) → POST
+/runs/{id}/send-to-trustops {exception_ids,to,note}; each item is its own TrustOps decision and signed record;
+decided/already-sent items are skipped and reported. The approver goes in the decide call (`assign_to`), no separate
+assign; a TrustOps refusal (4xx {error,message}) is shown in its words ("could not be made the approver"). Nobody can
+send or reassign an item to themself (422; approver lists hide you). Rejected rows: upload health has
+`import_status`/`status_text` ("Imported with N of M rows rejected"); Import health lists them, GET
+/uploads/{id}/rejected.csv (reason column), POST /uploads/{id}/acknowledge-rejections (signed); a run is refused (422)
+until every file in use with rejected rows is fixed (re-upload replaces it) or acknowledged. TrustOps client: circuit
+breaker (TRUSTOPS_BREAKER_SECONDS=15) after a connection failure, failed status lookups cached 10 s, sync_trustops
+stops on the breaker and after 2 s; decisions stay fail-closed. FinTwin explains a TrustOps refusal (paused /
+not authorised for this client / can't be reached / rule X) instead of the read-only text. PDF confirm: field
+objects ({"value":...}) are reduced to their value; anything else is 422, never 500.
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.

@@ -424,7 +424,10 @@ class Service:
         if up["state"] == "VALIDATED":
             return up  # idempotent
         dup = w.digests.get((up["kind"], up["sha256"]))
-        if dup and dup in w.uploads and w.uploads[dup]["state"] == "VALIDATED":
+        # Only the file currently in use counts as a duplicate. Re-uploading an earlier file (e.g. the good one after a
+        # bad one replaced it) must replace the current file, as the rejected-rows message promises (2026-11-16).
+        in_use = (w.batches.get(up["kind"]) or {}).get("upload_id")
+        if dup and dup == in_use and dup in w.uploads and w.uploads[dup]["state"] == "VALIDATED":
             up["state"] = "DUPLICATE_BATCH"
             up["health"] = {**w.uploads[dup]["health"], "note": f"identical file already imported as {dup}; "
                             "no rows added twice"}
@@ -436,7 +439,11 @@ class Service:
             up["date_order"] = date_order
         up["health"] = {"received": res.rows_received, "accepted": len(res.accepted), "rejected": res.rejected,
                         "debit_cents": res.debit_cents, "credit_cents": res.credit_cents, "net_cents": res.net_cents,
-                        "control_total_ok": res.rows_received == len(res.accepted) + len(res.rejected)}
+                        "control_total_ok": res.rows_received == len(res.accepted) + len(res.rejected),
+                        # 2026-11-16: a file with rejected rows is never shown as fully validated
+                        "import_status": "IMPORTED_WITH_REJECTIONS" if res.rejected else "IMPORTED",
+                        "status_text": (f"Imported with {len(res.rejected)} of {res.rows_received} rows rejected"
+                                        if res.rejected else f"All {res.rows_received} rows imported")}
         rows, batch_sha, extra = res.accepted, up["sha256"], {}
         prev = w.batches.get(up["kind"])
         if up["kind"] == "documents" and prev and prev.get("pdf_added"):
@@ -507,6 +514,35 @@ class Service:
                      workflow_pack="cpa-bank-reconciliation")
         return rec
 
+    PDF_FIELDS = ("vendor", "reference", "date", "amount")
+
+    @classmethod
+    def _clean_pdf_fields(cls, fields) -> dict:
+        """2026-11-16: confirmed PDF fields are plain text. An extracted-field object ({"value": ...}) is accepted
+        and reduced to its value; anything else (lists, numbers in odd shapes, nested data) is refused with 422."""
+        if not isinstance(fields, dict):
+            raise ValueError("fields must be an object of vendor, reference, date and amount")
+        out = {}
+        for k, v in fields.items():
+            if k not in cls.PDF_FIELDS:
+                continue
+            if isinstance(v, dict) and set(v) >= {"value"}:
+                v = v.get("value")
+            if v is None:
+                v = ""
+            if isinstance(v, bool) or not isinstance(v, (str, int, float)):
+                raise ValueError(f"{k} must be text")
+            v = str(v).strip()
+            if len(v) > 200:
+                raise ValueError(f"{k} is too long (200 characters at most)")
+            out[k] = v
+        if out.get("amount"):
+            try:
+                ingest.to_cents(out["amount"])
+            except Exception:
+                raise ValueError("amount is not a number, e.g. 245.00") from None
+        return out
+
     def confirm_pdf(self, user, wid, doc_id, fields, doc_type):
         w = self.gate(user, wid, "mapping.commit")
         up = w.uploads.get(doc_id)
@@ -514,6 +550,7 @@ class Service:
             raise KeyError(doc_id)
         if up["state"] == "CONFIRMED":
             return up
+        fields = self._clean_pdf_fields(fields)
         ref = (fields.get("reference") or "").strip()
         if not ref:
             raise ValueError("reference is required to link the document")
@@ -593,6 +630,12 @@ class Service:
             status = "NOT_CONNECTED" if not b else ("SIMULATED" if b.get("origin") == "sample" and not b.get("pdf_added") else "VERIFIED_UPLOAD")
             rec = {**k, "status": status, "rows": len(b["rows"]) if b else 0, "sha256": b["sha256"] if b else None,
                    "filename": b.get("filename") if b else None}
+            up_ = w.uploads.get((b or {}).get("upload_id") or "") or {}
+            hl = up_.get("health") or {}
+            # 2026-11-16: rows this file could not import, and whether a person has looked at them
+            rec.update(upload_id=up_.get("id"), rows_received=hl.get("received"), rejected_rows=len(hl.get("rejected") or []),
+                       import_status=hl.get("import_status"), status_text=hl.get("status_text"),
+                       rejected=(hl.get("rejected") or [])[:200], rejections_acknowledged=up_.get("rejections_acknowledged"))
             if b:  # source envelope: where these rows came from, in this client's context
                 up = w.uploads.get(b.get("upload_id") or "") or {}
                 dates = sorted(str(r.get("date") or r.get("issue_date") or "")[:10] for r in b["rows"]
@@ -613,10 +656,119 @@ class Service:
             if c.get("env") and all(os.environ.get(e) for e in c["env"]):
                 st = c.get("status_when_configured", st)
             conns.append({"id": c["id"], "name": c["name"], "status": st})
+        work = self.review_work(w)
         return {"kinds": kinds, "connectors": conns, "status_labels": SOURCES["status_labels"],
+                # 2026-11-16: files under review work cannot be cleared (see clear_source)
+                "locked": bool(work), "locked_reason": (
+                    f"{work} review item{'s' if work != 1 else ''} already {'have' if work != 1 else 'has'} decisions, proposals, "
+                    "proof or approvals in progress, so these files can't be removed. To start again, a CPA reviewer starts "
+                    "a new period (Overview > Start next period, or Data & security > Clear this client's data); the audit trail is "
+                    "archived, never deleted.") if work else None,
                 "not_accepted": SOURCES["not_accepted"], "accepted_extensions": sorted(ingest.ALLOWED_EXT | {".pdf", ".eml"})}
 
     # ---- runs ----------------------------------------------------------
+    REVIEW_BUCKETS = ("open", "sent", "approved", "rejected", "returned")
+
+    @staticmethod
+    def review_bucket(e) -> str:
+        """Where a review item stands: open, sent (waiting in TrustOps), approved, rejected or returned."""
+        st = e.get("status")
+        if st == "ACCEPTED":
+            return "approved"
+        if st == "REJECTED":
+            return "rejected"
+        if st == "RETURNED":
+            return "returned"
+        return "sent" if (e.get("trustops_review") or {}).get("status") == "PENDING" else "open"
+
+    def runs_list(self, user, wid, day: str | None = None, month: str | None = None, by: str | None = None) -> dict:
+        """2026-11-16 action items: every run of this client (newest first), filterable by day (YYYY-MM-DD), month
+        (YYYY-MM) and who ran it (UTC dates), with review totals per run and across all runs."""
+        w = self.gate(user, wid, "workspace.read")
+        import re
+        if day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise ValueError("day must look like 2026-11-16")
+        if month and not re.fullmatch(r"\d{4}-\d{2}", month):
+            raise ValueError("month must look like 2026-11")
+        runs = list(w.runs.values())
+        latest = runs[-1]["id"] if runs else None
+        items = []
+        for r in reversed(runs):
+            excs = r["result"]["exceptions"]
+            counts = {k: 0 for k in self.REVIEW_BUCKETS}
+            for e in excs:
+                counts[self.review_bucket(e)] += 1
+            items.append({"id": r["id"], "created_at": r["created_at"], "created_by": r["created_by"],
+                          "trace_id": r.get("trace_id"), "latest": r["id"] == latest,
+                          "files": {k: v.get("filename") for k, v in (r.get("inputs") or {}).items() if v.get("filename")},
+                          "matches": len(r["result"].get("matches") or []), "review_items": len(excs), "reviews": counts,
+                          "variance_cents": r["result"].get("variance_cents")})
+        everyone = sorted({x["created_by"] for x in items if x["created_by"]})
+        if day:
+            items = [x for x in items if str(x["created_at"]).startswith(day)]
+        if month:
+            items = [x for x in items if str(x["created_at"]).startswith(month)]
+        if by:
+            items = [x for x in items if str(x["created_by"]).lower() == by.strip().lower()]
+        totals = {k: sum(x["reviews"][k] for x in items) for k in self.REVIEW_BUCKETS}
+        totals["review_items"] = sum(x["review_items"] for x in items)
+        return {"items": items, "total": len(items), "all_runs": len(runs), "latest_run": latest,
+                "people": everyone, "totals": totals}
+
+    @staticmethod
+    def unacknowledged_rejections(w) -> list[dict]:
+        """Uploads in use (the current batch of each source) with rejected rows nobody has acknowledged yet."""
+        out = []
+        for k, b in w.batches.items():
+            up = w.uploads.get(b.get("upload_id") or "")
+            if up and (up.get("health") or {}).get("rejected") and not up.get("rejections_acknowledged"):
+                out.append(up)
+        return out
+
+    def _upload_with_rejections(self, w, upload_id):
+        up = w.uploads.get(upload_id)
+        if not up or not (up.get("health") or {}).get("rejected"):
+            raise KeyError(upload_id)
+        return up
+
+    def acknowledge_rejections(self, user, wid, upload_id, note: str = "") -> dict:
+        """2026-11-16 action items: a person confirms they reviewed a file's rejected rows and want to reconcile
+        without them (they are still carried into the run as 'Row could not be imported' review items). Signed."""
+        w = self.gate(user, wid, "mapping.commit")
+        up = self._upload_with_rejections(w, upload_id)
+        if not up.get("rejections_acknowledged"):
+            n = len(up["health"]["rejected"])
+            up["rejections_acknowledged"] = {"by": user.user_id, "at": _ts(), "count": n,
+                                             "note": " ".join(str(note or "").split())[:500]}
+            w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
+                         action="upload.rejections_acknowledged", policy_decision="ALLOW:OK",
+                         source_batch_sha256=up.get("sha256"), source_line_refs=[f"rejected_rows:{n}"] +
+                         [f"row:{r['row']}" for r in up["health"]["rejected"][:50]],
+                         workflow_pack="cpa-bank-reconciliation", canonical_version="canon-1")
+        return up
+
+    def rejected_rows_csv(self, user, wid, upload_id) -> tuple[str, str]:
+        """The rows of one file that could not be imported, with the reason, to fix and upload again."""
+        w = self.gate(user, wid, "workspace.read", refs=[f"rejected:{upload_id}"])
+        up = self._upload_with_rejections(w, upload_id)
+        rej = up["health"]["rejected"]
+        cols = list(dict.fromkeys(c for r in rej for c in (r.get("raw") or {})))
+        buf = io.StringIO()
+        out = csv.writer(buf)
+        safe = lambda c: reports._safe(c)
+        for k, v in [("Report", "Rejected rows"), ("Client", w.meta.get("name", "")), ("Period", w.meta.get("period", "")),
+                     ("Source file", up["filename"]), ("Rows rejected", f"{len(rej)} of {up['health']['received']}"),
+                     ("Generated by", user.user_id), ("Generated at (UTC)", reports.fmt_any(_ts())),
+                     ("Next step", "Fix these rows in the original file and upload it again; the new file replaces this one.")]:
+            out.writerow([safe(k), safe(v)])
+        out.writerow([])
+        out.writerow(["source_row", "reason"] + cols)
+        for r in rej:
+            out.writerow([r.get("row"), safe(r.get("reason"))] + [safe((r.get("raw") or {}).get(c, "")) for c in cols])
+        import re
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(up["filename"]).stem)[:60] or "upload"   # safe in a header
+        return buf.getvalue(), f"{stem}_rejected_rows.csv"
+
     def run(self, user, wid):
         w = self.gate(user, wid, "run.create")
         if "bank" not in w.batches or "ledger" not in w.batches:
@@ -628,6 +780,13 @@ class Service:
         for r in w.runs.values():
             if r["batch_key"] == key:
                 return {**r, "reused": True}  # idempotent: same inputs, same run (flagged so the page says so)
+        unacked = self.unacknowledged_rejections(w)
+        if unacked:   # 2026-11-16 action items: rejected rows are looked at before anything is reconciled
+            what = "; ".join(f"{u['filename']}: {len(u['health']['rejected'])} of {u['health']['received']} rows rejected"
+                             for u in unacked)
+            raise ValueError(f"Some rows could not be imported ({what}). On the Sources page, download the rejected rows, "
+                             "fix them and upload the corrected file (it replaces the old one), or confirm that you "
+                             "have reviewed them and want to reconcile without them. Then run again.")
         b = w.batches
         rid = "RUN-" + uuid.uuid4().hex[:6]
         trace = "TR-" + uuid.uuid4().hex[:12]
@@ -941,21 +1100,53 @@ class Service:
                 "consequence": "Local review decision only. Nothing is posted to any accounting system or bank.",
                 "facts": facts[:30], "link": f"{base}/#exceptions" if base.startswith("https://") else None}
 
-    def _submit_one(self, user, w, run, exc) -> dict:
-        """Send one review item to TrustOps for approval (approval happens only in TrustOps)."""
+    APPROVER_ERRORS = ("not_a_reviewer", "self_assignment", "requester_cannot_review", "maker_checker_violation")
+
+    def _submit_one(self, user, w, run, exc, to: str | None = None) -> dict:
+        """Send one review item to TrustOps for approval (approval happens only in TrustOps).
+        2026-11-16: the chosen approver goes in the same call (assign_to), so the item is never unassigned in TrustOps."""
         ref = f"{w.id}|{run['id']}|{exc['id']}"
         hist = exc.get("trustops_history") or []
         context = {"resubmission": len(hist), "resubmission_of": hist[-1].get("decision_id")} if hist else None
         t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref, context=context,
-                                amount_minor=abs(int(exc["amount_cents"])), currency="USD", **self.review_details(w, run, exc))
+                                assign_to=to, amount_minor=abs(int(exc["amount_cents"])), currency="USD",
+                                **self.review_details(w, run, exc))
         if t.get("decision_id"):
             exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
-                                      "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref}
+                                      "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref,
+                                      "assigned_to": t.get("assigned_to") or to}
         else:
-            exc["trustops_review"] = {"status": "NOT_SENT", "reason": t.get("reason") or "TrustOps could not be reached"}
+            exc["trustops_review"] = {"status": "NOT_SENT", "reason": t.get("reason") or "TrustOps could not be reached",
+                                      **({"error": t["error"]} if t.get("error") else {})}
         return exc["trustops_review"]
 
-    def send_to_trustops(self, user, wid: str, run_id: str, exc_id: str, note: str = "", to: str | None = None) -> dict:
+    @staticmethod
+    def _is_self(user, to: str) -> bool:
+        me = {str(user.user_id or "").strip().lower(), str(getattr(user, "email", "") or "").strip().lower()} - {""}
+        return str(to or "").strip().lower() in me
+
+    def _check_approver(self, user, to, revs) -> str:
+        """The person the item goes to: named, an approver in TrustOps, and never the sender (maker-checker)."""
+        to = str(to or "").strip().lower()
+        if not to:
+            raise ValueError("Choose who to send it to")
+        if self._is_self(user, to):
+            raise ValueError("You can't send an item to yourself. Choose a different approver: the person who sends "
+                             "an item cannot approve it (maker-checker).")
+        if revs is not None and to not in {str(r.get("email") or "").lower() for r in revs}:
+            raise ValueError(f"{to} is not an approver in TrustOps")
+        return to
+
+    def _sendable(self, exc) -> str | None:
+        """Why this item cannot be sent now (None = it can)."""
+        if exc["status"] not in ("OPEN", "RETURNED"):
+            return "This item already has a decision"
+        if (exc.get("trustops_review") or {}).get("status") == "PENDING":
+            return "Already sent to TrustOps. Waiting for the approver."
+        return None
+
+    def send_to_trustops(self, user, wid: str, run_id: str, exc_id: str, note: str = "", to: str | None = None,
+                         _revs="unset") -> dict:
         """'Send to TrustOps' on a review item (2026-11-13, user request): the person sends it to the approvers in
         TrustOps, optionally with a note and a chosen reviewer. Signed into the evidence log; the other people are
         told through the bell."""
@@ -969,28 +1160,20 @@ class Service:
         exc = next((x for x in (run or {}).get("result", {}).get("exceptions", []) if x["id"] == exc_id), None) if run else None
         if not exc:
             raise ValueError("Review item not found")
-        if exc["status"] not in ("OPEN", "RETURNED"):
-            raise ValueError("This item already has a decision")
-        if (exc.get("trustops_review") or {}).get("status") == "PENDING":
-            raise ValueError("Already sent to TrustOps. Waiting for the approver.")
+        why = self._sendable(exc)
+        if why:
+            raise ValueError(why)
         # 2026-11-13 (user request): no "any approver"; the sender names the person who must approve it in TrustOps.
-        to = str(to or "").strip().lower()
-        if not to:
-            raise ValueError("Choose who to send it to")
-        revs = trustops_api.reviewers()
-        if revs is not None and to not in {str(r.get("email") or "").lower() for r in revs}:
-            raise ValueError(f"{to} is not an approver in TrustOps")
+        to = self._check_approver(user, to, trustops_api.reviewers() if _revs == "unset" else _revs)
         note = " ".join(str(note or "").split())[:1000]
         if note:   # what the sender says goes to the approver with the item (review_details shows it)
             exc["proposal_note"], exc["proposed_by"] = note, user.user_id
-        tr = self._submit_one(user, w, run, exc)
+        tr = self._submit_one(user, w, run, exc, to)
         missed = None   # 2026-11-13 action items: the sender is told (bell) when the approver did not receive it
-        if tr["status"] == "PENDING" and to:
-            try:
-                tr["assigned_to"] = trustops_api.assign(tr["decision_id"], to, user.user_id).get("assigned_to")
-            except ValueError as e:
-                missed = f"TrustOps received it, but {to} could not be made the approver ({e}). Choose the approver again on the item."
-        if tr["status"] != "PENDING":
+        if tr["status"] != "PENDING" and tr.get("error") in self.APPROVER_ERRORS:
+            missed = (f"TrustOps did not accept it: {to} could not be made the approver ({tr.get('reason')}). "
+                      "Choose the approver again on the item.")
+        elif tr["status"] != "PENDING":
             missed = f"{to} did not receive it: {tr.get('reason') or 'TrustOps could not be reached'}. Press Try again on the item."
         if missed:
             tr["missed"] = missed
@@ -1005,6 +1188,44 @@ class Service:
                          approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
                          matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
         return {"exception_id": exc_id, "trustops_review": tr}
+
+    BULK_MAX = 200
+
+    def send_many_to_trustops(self, user, wid: str, run_id: str, exc_ids, note: str = "", to: str | None = None) -> dict:
+        """2026-11-16 action items: send several review items at once to one approver (both roles). Each item goes
+        exactly like a single send (own TrustOps decision, own signed evidence record, bell); items that cannot be
+        sent (already decided, already waiting) are skipped and reported, never sent twice."""
+        if not trustops_api.configured():
+            raise ValueError("TrustOps is not connected")
+        w = self.gate(user, wid, "workspace.read", run_id=run_id)
+        if not ({"exception.propose", "exception.decide"} & policy.ROLE_ACTIONS.get(user.role, set())):
+            raise Denied("ROLE_NOT_AUTHORISED", policy_id="POL-02")
+        run = w.runs.get(run_id)
+        if not run:
+            raise ValueError("Run not found")
+        ids = list(dict.fromkeys(str(x) for x in (exc_ids or []) if x))
+        if not ids:
+            raise ValueError("Select at least one review item")
+        if len(ids) > self.BULK_MAX:
+            raise ValueError(f"Select at most {self.BULK_MAX} items at a time")
+        revs = trustops_api.reviewers()
+        to = self._check_approver(user, to, revs)           # checked once, before anything is sent
+        by_id = {x["id"]: x for x in run["result"]["exceptions"]}
+        results = []
+        for eid in ids:
+            exc = by_id.get(eid)
+            if not exc:
+                results.append({"exception_id": eid, "result": "skipped", "reason": "Review item not found"})
+                continue
+            why = self._sendable(exc)
+            if why:
+                results.append({"exception_id": eid, "result": "skipped", "reason": why})
+                continue
+            tr = self.send_to_trustops(user, wid, run_id, eid, note, to, _revs=revs)["trustops_review"]
+            results.append({"exception_id": eid, "result": "sent" if tr["status"] == "PENDING" else "not_sent",
+                            "reason": tr.get("missed"), "trustops_review": tr})
+        count = {k: sum(1 for r in results if r["result"] == k) for k in ("sent", "not_sent", "skipped")}
+        return {"to": to, "results": results, **count}
 
     def resend_to_trustops(self, user, wid: str, run_id: str, exc_id: str, note: str = "", to: str | None = None) -> dict:
         """2026-11-13 action items: an item rejected in TrustOps can be sent again once new proof is attached. The
@@ -1030,14 +1251,21 @@ class Service:
         exc.update(status="OPEN", trustops_review=None, resubmitted=len(exc["trustops_history"]))
         return self.send_to_trustops(user, wid, run_id, exc_id, note, to)
 
+    SYNC_BUDGET = 2.0
+
     def sync_trustops(self, w, run):
         """Pick up approvals made in TrustOps and apply them to the review queue (signed into the evidence log)."""
         if not trustops_api.configured():
             return
+        # 2026-11-16: pages and the bell poll call this. Never spend more than SYNC_BUDGET seconds here, and stop at
+        # once when TrustOps is unreachable (circuit breaker): unchecked items are picked up on the next poll.
+        started = time.monotonic()
         for exc in run["result"]["exceptions"]:
             tr = exc.get("trustops_review") or {}
             if tr.get("status") != "PENDING":
                 continue
+            if trustops_api.breaker_open() or time.monotonic() - started > self.SYNC_BUDGET:
+                break
             st = trustops_api.status(tr["decision_id"])
             if st and "assigned_to" in st:
                 tr["assigned_to"] = st.get("assigned_to")
@@ -1066,6 +1294,8 @@ class Service:
             raise ValueError("This item is not waiting for review in TrustOps")
         if not to:   # 2026-11-13 (user request): an item always has a named approver
             raise ValueError("Choose who should approve it")
+        if self._is_self(user, to) or str(to).strip().lower() == str(tr.get("submitted_by") or "").lower():
+            raise ValueError("The person who sent an item cannot approve it (maker-checker). Choose a different approver.")
         out = trustops_api.assign(tr["decision_id"], to, user.user_id)
         tr["assigned_to"] = out.get("assigned_to")
         w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="human", actor_id=user.user_id, run_id=run_id,
@@ -1540,7 +1770,7 @@ class Service:
                 out.writerow([reports._safe(c) for c in cells])
         # header block (2026-11-13): report name and details, then a blank line, then the table
         for k, v in self._export_header(user, w, run, "Reconciliation Review Export", "REV").items():
-            wr.writerow([k, v])
+            wr.writerow([k, reports.fmt_any(v)])
         wr.writerow([])
         wr.writerow(["client", "run_id", "record", "type", "bank_line", "ledger_line", "amount_usd", "rule",
                      "reason", "status", "reviewer", "approval_id", "review_note", "source_sha256_bank"])
@@ -1591,7 +1821,7 @@ class Service:
             if not tr:
                 continue
             rows.append([e["id"], e["type"], money(abs(e["amount_cents"])), tr.get("status"), tr.get("assigned_to") or "Any approver",
-                         tr.get("resolved_by") or "", tr.get("resolved_at") and datetime.fromtimestamp(tr["resolved_at"], timezone.utc).strftime("%Y-%m-%d %H:%M UTC") or "",
+                         tr.get("resolved_by") or "", tr.get("resolved_at") and reports.fmt_datetime(tr["resolved_at"]) or "",
                          tr.get("reason") or "", tr.get("decision_id") or ""])
         link = trustops_api.console_link("#/decisions") or ""
         rep["summary"].append(["Approvals", f"Made in TrustOps. Full governance record: {link}"])
@@ -1662,6 +1892,8 @@ class Service:
         d = self.agent_gate(user, w, "agent:query", "query.answer", run_id=run["id"] if run else None,
                             trace_id=run.get("trace_id") if run else None, query_class=cls)
         if d.decision != "ALLOW":
+            if str(d.reason_code).startswith("TRUSTOPS_"):
+                return {**query.trustops_refusal(d.policy_id, d.reason_code), "trustops": d.to_dict()}
             return {**query.refusal(d.reason_code), "trustops": d.to_dict()}
         ctx = {"client": w.meta, "run": run, "lines": (run or {}).get("lines", {}),
                "files": {u["sha256"]: u["filename"] for u in w.uploads.values()}}
@@ -1825,15 +2057,24 @@ class Service:
                            "in-app editing is in development."}
 
     # ---- reset ---------------------------------------------------------
+    @staticmethod
+    def review_work(w) -> int:
+        """Review items that carry work a person did: decided, proposed, with proof, or sent to TrustOps."""
+        return sum(1 for r in w.runs.values() for e in r["result"]["exceptions"]
+                   if e["status"] != "OPEN" or e.get("proposal_note") or e.get("proposals") or e.get("attachments")
+                   or (e.get("trustops_review") or {}).get("decision_id") or e.get("trustops_history"))
+
     def clear_source(self, user, wid, kind):
         """Remove one imported source (e.g. a wrong bank file). Runs built on it are withdrawn too,
         because their results no longer match the inputs. The removal itself is recorded."""
         w = self.gate(user, wid, "upload.create", refs=[kind])
         if kind not in ingest.CANONICAL and kind != "pdf":
             raise ValueError("unknown source type")
-        decided = sum(1 for r in w.runs.values() for e in r["result"]["exceptions"]
-                      if e["status"] != "OPEN" or e.get("proposal_note"))
-        if decided and user.role != "owner_reviewer":
+        decided = self.review_work(w)
+        # 2026-11-16 action items: once review work exists (a decision, a proposal, proof, or an item sent to
+        # TrustOps), nobody can delete the files under it, CPA reviewer included: clearing withdraws every run and
+        # would erase that record. To start again the CPA reviewer starts a new period (Reset), which archives it.
+        if decided:
             w.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                          action=f"source.clear:{kind}", policy_decision="DENY:DECISIONS_EXIST", policy_id="POL-06",
                          source_line_refs=[f"decided_or_proposed:{decided}"], workflow_pack="cpa-bank-reconciliation")
