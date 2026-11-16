@@ -29,6 +29,7 @@ from .core import evidence, ingest, policy, query, recon, reports
 from .core.store import Store
 from . import trustops_client as trustops_api
 from . import cloud_sync
+from . import assistant_model
 
 SOURCES = load_config("sources.json")
 SOURCE_KINDS = [k["kind"] for k in SOURCES["kinds"]]
@@ -1903,18 +1904,58 @@ class Service:
                   [r.get("description") for k in ("bank", "ledger") for r in w.batches.get(k, {}).get("rows", [])
                    if r.get("description")]
         cls = query.classify(question, allowed, self._other_client_terms(wid))
+        # Rules decide write / SQL / other-client refusals before any model is involved (2026-11-16). The model is
+        # used only for a read question, only when switched on and allowlisted, and the gate records its route.
+        use_model = cls == "read" and assistant_model.enabled(policy.ALLOWED_MODEL_ROUTES)
+        route = assistant_model.route() if use_model else "deterministic"
         d = self.agent_gate(user, w, "agent:query", "query.answer", run_id=run["id"] if run else None,
-                            trace_id=run.get("trace_id") if run else None, query_class=cls)
+                            trace_id=run.get("trace_id") if run else None, query_class=cls, model_route=route)
         if d.decision != "ALLOW":
             if str(d.reason_code).startswith("TRUSTOPS_"):
                 return {**query.trustops_refusal(d.policy_id, d.reason_code), "trustops": d.to_dict()}
             return {**query.refusal(d.reason_code), "trustops": d.to_dict()}
         ctx = {"client": w.meta, "run": run, "lines": (run or {}).get("lines", {}),
                "files": {u["sha256"]: u["filename"] for u in w.uploads.values()}}
-        res = query.answer(question, ctx)
+        used = False
+        if use_model and run and not query.smalltalk(question.strip()):
+            res, used = self._ask_with_model(question, ctx)
+        else:
+            res = query.answer(question, ctx)
         res["trustops"] = d.to_dict()
         res["run_id"] = run["id"] if run else None
+        if use_model:   # what actually produced the answer, signed (the gate event above records what was allowed)
+            res["model_route"] = route if used else "deterministic"
+            w.log.append(tenant_id=TENANT, workspace_id=w.id, actor_type="agent", actor_id="agent:query",
+                         agent_code="AG-06", delegated_by=user.user_id, workflow_pack="cpa-bank-reconciliation",
+                         run_id=run["id"] if run else None, trace_id=run.get("trace_id") if run else None,
+                         canonical_version="canon-1", model_route=res["model_route"], action="query.answered",
+                         policy_decision="ALLOW:" + ("MODEL_WORDED" if used else "DETERMINISTIC"),
+                         policy_id=d.policy_id, policy_version=d.policy_version)
         return res
+
+    @staticmethod
+    def _ask_with_model(question: str, ctx: dict) -> tuple[dict, bool]:
+        """Model picks the intent and words the answer; the facts come from query.answer. Any failure: rules."""
+        deadline = time.monotonic() + assistant_model.budget()
+        run = ctx["run"]
+        types = sorted({e["type"] for e in run["result"]["exceptions"]} | set(query.TYPE_PHRASE))
+        reading = assistant_model.understand(question, query.known_refs(run), types, deadline)
+        used = False
+        if reading and reading["intent"] in ("smalltalk",):
+            return query.smalltalk_answer("greeting", ctx), True
+        if reading and reading["intent"] == "help":
+            return query.help_(ctx), True
+        canon = query.canonical_question(reading) if reading else None
+        res = query.answer(canon or question, ctx)
+        used = bool(canon)
+        if res.get("status") in ("ANSWERED", "NO_DATA") and res.get("answer"):
+            worded = assistant_model.phrase(question, res, deadline, query.grounded)
+            if worded:
+                res["answer_rules"] = res["answer"]
+                res["answer"] = worded
+                res["ai_worded"] = True
+                used = True
+        return res, used
 
     @staticmethod
     def _other_client_terms(wid: str) -> list[str]:
@@ -2145,8 +2186,11 @@ class Service:
             "data_classes_allowed": sorted(policy.ALLOWED_DATA_CLASSES),
             "hard_boundary": "No tax returns, SSNs, preparer IDs, banking credentials, unmasked account numbers or real client records.",
             "model_routes_allowed": sorted(r for r in policy.ALLOWED_MODEL_ROUTES if r),
-            "model_routes_in_use": ["deterministic"],
-            "ai_note": "No language model is called anywhere. Mapping and matching are rule-based.",
+            "model_routes_in_use": ["deterministic"] + ([assistant_model.route()] if assistant_model.enabled(policy.ALLOWED_MODEL_ROUTES) else []),
+            "ai_note": ("FinTwin uses Gemini on Vertex AI (europe-west1) to understand questions and word its answers; every "
+                        "figure comes from exact lookups over this client's records and is checked before it is shown. "
+                        "Nothing in mapping, matching or reconciliation uses AI." if assistant_model.enabled(policy.ALLOWED_MODEL_ROUTES)
+                        else "No language model is called anywhere. Mapping and matching are rule-based."),
             "forbidden_actions": sorted(policy.FORBIDDEN),
             "roles": {k: sorted(v) for k, v in policy.ROLE_ACTIONS.items()},
             "agents": [{"id": a["actor_id"], "code": a["code"], "name": a["name"], "does": a["does"], "model": a["model"]}

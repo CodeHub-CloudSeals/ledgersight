@@ -26,7 +26,9 @@ Local mode turns the authenticator-code step off (`AVOCET_REQUIRE_MFA=0`); hoste
 5. **AG-04 Exception Triage**: asks TrustOps how each exception must be handled (ALLOW / ESCALATE / DENY) and routes it.
    ✋ A preparer proposes; a CPA reviewer who did not propose it approves, rejects or returns it (maker-checker, POL-06).
 6. **AG-05 Report Composer**: Finance Reconciliation Report + TrustOps Governance Report for the same run (PDF/XLSX/CSV/JSON).
-7. **AG-06 Query Assistant**: Ask LedgerSight, read-only questions with citations; other clients, SQL and write requests refused.
+7. **AG-06 Query Assistant**: FinTwin, read-only questions with citations; other clients, SQL and write requests refused by rules.
+   Greetings and "what can you do" get a normal reply. Optionally (`LEDGERSIGHT_ASSISTANT_MODEL=vertex`) Gemini understands
+   free wording and words the answer; every number and ID it writes must be in the exact result, otherwise the rules' text is shown.
 8. **Counterparties / Trace / Audit trail / Review pack**: links to customers/vendors with evidence, per-transaction lineage,
    Ed25519 hash-chained evidence, offline verifier (`python -m ledgersight.verify_pack`).
 
@@ -73,5 +75,9 @@ bash tests/e2e/run_all.sh               # browser checks incl. DESIGN_RULES.md (
 | `AVOCET_TRUST_PROXY` | `1` behind Cloud Run / a trusted load balancer: rate-limit sign-in by the client address the proxy appends to `X-Forwarded-For` (set by `deploy/cloudrun.sh`; leave unset locally) |
 | `AVOCET_PUBLIC_URL` | base URL used in invitation links |
 | `AVOCET_STORAGE_DURABLE` | `1` only when the data folder is on durable storage (shown on Data & security and `/readyz`) |
+| `LEDGERSIGHT_STATE_GCS_URI` | `gs://bucket/prefix`: keep the data folder in Cloud Storage (restored at start-up, every change synced) |
+| `LEDGERSIGHT_ASSISTANT_MODEL` | `vertex` = FinTwin uses Gemini on Vertex AI to understand questions and word answers (facts still from exact lookups); empty = rules only |
+| `LEDGERSIGHT_VERTEX_MODEL`, `LEDGERSIGHT_VERTEX_LOCATION` | model and region for FinTwin (default `gemini-2.5-flash`, `europe-west1`); the route `vertex:<model>` must be in `allowed_model_routes` |
+| `LEDGERSIGHT_ASSISTANT_BUDGET`, `GOOGLE_CLOUD_PROJECT` | seconds FinTwin may spend on the model per question (default 8, then rules); project (else taken from the service account) |
 
 Design rules for the UI are in `DESIGN_RULES.md`; production status in `PRODUCTION.md`.

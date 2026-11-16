@@ -142,6 +142,19 @@ next to TrustOps): service ledgersight in europe-west1, bucket gs://trustops-uat
 signing key file is synced with the data (Secret Manager not set up). The old us-east4 service and its bucket
 were deleted on 2026-11-16 after the move. Without the setting nothing changes.
 
+## FinTwin as a normal chat (2026-11-16, tests in tests/test_fintwin_model.py)
+User choice: "AI phrasing on exact data". Small talk (`query.smalltalk`: hi/hello/thanks/help/who are you/bye) is answered
+without any model, status CHAT (no data badges in the chat); before a run it explains the next step (`NO_RUN_TEXT`, the
+stale "Run Match first" is gone). Write/SQL/other-client questions are still refused by `query.classify` + the gate, and the
+model is never called for them. With LEDGERSIGHT_ASSISTANT_MODEL=vertex and route `vertex:<model>` in
+allowed_model_routes (`vertex:gemini-2.5-flash` added): `assistant_model.understand` sends only the question, intent list,
+this run's ids/case ids/types (no amounts, no names) and the JSON reading is validated (`canonical_question` turns it into
+the plain question the rules already answer); `assistant_model.phrase` words the exact result and `query.grounded` drops
+it unless every number and ID is in that result (`ai_worded`, `answer_rules`; UI: "Written by AI from the records below").
+One 8 s budget (LEDGERSIGHT_ASSISTANT_BUDGET); timeout/error = rules, only the error type is logged. The gate event carries
+the model route and a signed `query.answered` event records what produced the answer. google-genai==3.3.0, Vertex mode,
+service account, europe-west1. Data & security `ai_note` / `model_routes_in_use` follow the setting. Off = unchanged.
+
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
 falls back to preparer). Accounts already on file keep their role. Cloud Run is set to owner_reviewer for the demo.

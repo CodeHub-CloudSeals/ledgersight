@@ -45,7 +45,7 @@
      "rule": "A payment in a different currency from its bill is never converted or auto-matched without an approved exchange-rate source. It goes to a CPA reviewer."}
   ],
   "forbidden_actions": ["ledger.post", "bank.payment", "email.send", "model_route.change", "credential.manage"],
-  "allowed_model_routes": [null, "deterministic", "us-approved-small-model"],
+  "allowed_model_routes": [null, "deterministic", "us-approved-small-model", "vertex:gemini-2.5-flash"],
   "allowed_data_classes": ["synthetic"],
   "role_labels": {"owner_reviewer": "CPA reviewer", "preparer": "Staff preparer", "support": "Support"},
   "role_actions": {

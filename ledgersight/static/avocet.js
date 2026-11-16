@@ -2607,10 +2607,12 @@ function renderAskLog() {
   put("ask-out", mine.map(({ q, a }) => el("div", { class: "qa" },
     el("div", { class: "q-bubble" }, q),
     !a ? el("div", { class: "a-bubble" }, el("span", { class: "typing" }, el("i"), el("i"), el("i"))) : el("div", { class: "a-bubble" },
-      el("div", { class: "row" },
+      // 2026-11-16: small talk ("hi", "thanks", "what can you do") is a plain chat reply, without data badges
+      a.status === "CHAT" ? null : el("div", { class: "row" },
         el("span", { class: "badge " + ({ ANSWERED: "PASS", REFUSED: "DENY" }[a.status] || "UNKNOWN") }, nice(a.status)),
         a.trustops ? el("span", { class: "badge " + a.trustops.decision, title: `${a.trustops.policy_id} ${nice(a.trustops.policy_name)}` }, `TrustOps ${a.trustops.decision} · ${a.trustops.policy_id}`) : null),
       el("div", { class: "a" }, rich(a.answer)),
+      a.ai_worded ? el("div", { class: "muted small ai-note", title: "The wording is from Gemini on Vertex AI; every figure and ID was checked against the exact result" }, "Written by AI from the records below") : null,
       a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c, i) =>
         el("td", {}, (a.columns[i] === "Exception" || a.columns[i] === "Case") && c && c !== "—"
           ? el("button", { class: "linkbtn", title: "Open this case in the review queue", onclick: () => { closeAsk(); openCase(String(c)); } }, String(c)) : String(c))))))) : null,

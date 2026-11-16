@@ -1,16 +1,23 @@
 """Ask LedgerSight (AG-06): read-only, intent-limited questions over one client book.
 
-No language model and no free-form database access. A question is classified,
-TrustOps decides whether it may be answered, and only then is it mapped to one of
-a fixed set of intents over the current run. Every answer cites the source rows,
-run and rule it came from. Nothing here can change data.
+No free-form database access. A question is classified by rules (write, SQL and other-client
+questions are refused here, never by a model), TrustOps decides whether it may be answered, and
+only then is it mapped to one of a fixed set of intents over the current run. Every figure comes
+from those intents and cites the source rows, run and rule it came from. Nothing here can change data.
+
+Since 2026-11-16 an optional language model (ledgersight/assistant_model.py, Gemini on Vertex AI,
+LEDGERSIGHT_ASSISTANT_MODEL=vertex) may pick the intent for a freely worded question and word the
+answer; a worded answer is kept only if every number and ID in it is in the exact result (`grounded`).
+Greetings, thanks and "what can you do" are answered here without any model (`smalltalk`).
 
 Supported: unmatched / exception lists (by type, status, date), why X was flagged,
 what is outstanding on X, who approved X, matches, run summary.
 """
 from __future__ import annotations
 
+import json
 import re
+from decimal import Decimal, InvalidOperation
 
 SQL = re.compile(r"\b(select\s+.+\s+from|insert\s+into|delete\s+from|drop\s+table|update\s+\w+\s+set|union\s+select|alter\s+table|truncate)\b|;\s*--|\bor\s+1\s*=\s*1\b", re.I | re.S)
 WRITE = re.compile(r"\b(post|approve|accept|reject|return|pay|transfer|delete|remove|update|change|modify|email|send|mark|"
@@ -244,13 +251,20 @@ def _date_filter(q):
     return None, ""
 
 
+NO_RUN_TEXT = ("There's no reconciliation run for this client yet. Upload the bank statement and the general ledger on "
+               "Sources, then run reconciliation on the Reconciliation page. After that I can answer questions like "
+               "“show unmatched transactions” or “why was this item flagged?”.")
+
+
 def answer(question: str, ctx: dict) -> dict:
     q = (question or "").strip()
     if not q:
         return help_(ctx)
+    kind = smalltalk(q)
+    if kind:
+        return smalltalk_answer(kind, ctx)
     if not ctx.get("run"):
-        return {"status": "NO_DATA", "intent": "no_run", "answer": "There is no reconciliation run for this book yet. Run Match first.",
-                "rows": [], "columns": [], "citations": []}
+        return {"status": "NO_DATA", "intent": "no_run", "answer": NO_RUN_TEXT, "rows": [], "columns": [], "citations": []}
     c = _Ctx(ctx)
     up = q.upper()
     known = set(c.lines) | {e["id"] for e in c.exc} | {e.get("approval_id") for e in c.exc if e.get("approval_id")} \
@@ -423,7 +437,7 @@ def _summary(c: _Ctx):
 def suggestions(ctx: dict) -> list[str]:
     run = ctx.get("run")
     if not run:
-        return ["Give me a summary of this run"]
+        return ["What can you do?", "Give me a summary of this run"]
     exc = run["result"]["exceptions"]
     out = ["Show unmatched transactions", "Show open exceptions"]
     client = ctx.get("client") or {}
@@ -456,3 +470,112 @@ def help_(ctx: dict):
             "answer": "I answer read-only questions about this client book: unmatched items, why a line was flagged, "
                       "what is outstanding, who approved something, matches and a run summary. You can filter by date (YYYY-MM-DD).",
             "rows": [], "columns": [], "citations": [], "suggestions": suggestions(ctx)}
+
+
+# ---- small talk (2026-11-16): answered without any model, so "hi" never gets "NO DATA" ---------------------
+GREETING = re.compile(r"^\s*(hi|hello|hey|hiya|howdy|yo|good\s+(morning|afternoon|evening|day)|greetings)\b"
+                      r"(\s+(there|fintwin|team|all|everyone))?[\s!.,]*$", re.I)
+THANKS = re.compile(r"^\s*(thanks|thank\s+you|thx|ty|cheers|great|perfect|ok(ay)?|cool|nice|got\s+it)\b"
+                    r"(\s+(so\s+much|a\s+lot|fintwin|very\s+much))?[\s!.,]*$", re.I)
+HELP_Q = re.compile(r"^\s*(help|what\s+can\s+you\s+do|what\s+do\s+you\s+do|what\s+can\s+i\s+ask(\s+you)?|"
+                    r"how\s+do\s+i\s+use\s+(you|this|fintwin)|how\s+does\s+this\s+work)[\s?!.]*$", re.I)
+IDENTITY = re.compile(r"^\s*(who|what)\s+are\s+you[\s?!.]*$", re.I)
+BYE = re.compile(r"^\s*(bye|goodbye|see\s+you|that'?s\s+all)\b[\s!.,]*$", re.I)
+
+
+def smalltalk(q: str) -> str | None:
+    """greeting | thanks | help | identity | bye, or None for a real question."""
+    for kind, rx in (("greeting", GREETING), ("thanks", THANKS), ("help", HELP_Q), ("identity", IDENTITY), ("bye", BYE)):
+        if rx.match(q or ""):
+            return kind
+    return None
+
+
+def smalltalk_answer(kind: str, ctx: dict) -> dict:
+    name = (ctx.get("client") or {}).get("name") or "this client"
+    has_run = bool(ctx.get("run"))
+    can = (f"I answer questions about {name}'s books: what's unmatched, why something was flagged, what's still "
+           "outstanding, who approved what, and a run summary. I'm read-only and show where every answer comes from.")
+    nxt = "" if has_run else (" There's no reconciliation run yet: upload the bank statement and general ledger on Sources, "
+                              "then run reconciliation on the Reconciliation page, and ask me again.")
+    text = {
+        "greeting": f"Hi! I'm FinTwin. {can}" + (nxt or " Try one of the questions below, or ask in your own words."),
+        "thanks": "You're welcome! Anything else you'd like to know about these books?",
+        "help": can + (nxt or " For example: “show open exceptions”, “why was HB006 flagged?” or “what is outstanding?”."),
+        "identity": ("I'm FinTwin, LedgerSight's assistant for this client book. I answer from the reconciliation records "
+                     "and show the sources. I can't approve, post, pay or change anything." + nxt),
+        "bye": "Bye! I'm here whenever you need me.",
+    }[kind]
+    return {"status": "CHAT", "intent": "smalltalk", "answer": text, "rows": [], "columns": [], "citations": [],
+            "suggestions": suggestions(ctx)}
+
+
+# ---- what the model may choose from, and the plain question each choice stands for ----------------------------
+TYPE_PHRASE = {"PARTIAL_RECEIPT": "partial receipt", "POSSIBLE_DUPLICATE": "duplicate", "MISSING_GL": "missing ledger",
+               "MISSING_RECEIPT": "missing receipt", "UNMATCHED_DEPOSIT": "deposit", "AMBIGUOUS": "ambiguous",
+               "OVERPAYMENT": "overpayment", "MISSING_BANK": "missing bank", "TAX_REVIEW": "tax", "FX_REVIEW": "fx"}
+
+
+def known_refs(run: dict | None) -> list[str]:
+    """Ids a question may name: exceptions, case ids, bank/ledger lines and approvals of this run (no amounts)."""
+    if not run:
+        return []
+    out = []
+    for e in run["result"]["exceptions"]:
+        out += [e["id"], e.get("case_id"), e.get("bank_id"), e.get("ledger_id"), e.get("approval_id")] + list(e.get("evidence_refs") or [])
+    for m in run["result"].get("matches", []):
+        out += [m.get("bank_id"), m.get("ledger_id")]
+    seen, refs = set(), []
+    for r in out:
+        if r and r not in seen:
+            seen.add(r)
+            refs.append(r)
+    return refs
+
+
+def canonical_question(u: dict) -> str | None:
+    """The plain question the deterministic rules already answer for a validated model reading, or None."""
+    i, ref = u["intent"], u.get("ref")
+    a, b = u.get("date_from"), u.get("date_to")
+    when = (f" between {a} and {b}" if a and b else f" since {a}" if a else f" until {b}" if b else "")
+    status = {"open": "open ", "accepted": "accepted ", "rejected": "rejected ", "returned": "returned "}.get(u.get("status") or "", "")
+    if i == "summary":
+        return "give me a summary of this run"
+    if i == "list_exceptions":
+        kinds = " ".join(TYPE_PHRASE[t] for t in u.get("types") or [] if t in TYPE_PHRASE)
+        return f"show {status}{kinds + ' ' if kinds else ''}exceptions{when}"
+    if i == "list_unmatched":
+        return f"show {status}unmatched transactions{when}"
+    if i == "explain" and ref:
+        return f"why was {ref} flagged"
+    if i == "who_approved":
+        return f"who approved {ref}" if ref else "who approved items"
+    if i == "outstanding":
+        return f"what is outstanding on {ref}" if ref else "what is outstanding"
+    if i == "list_matches":
+        return f"show matched transactions{when}"
+    return None
+
+
+# ---- a worded answer may only repeat what the exact result says ---------------------------------------------
+NUM = re.compile(r"(?<![\w.])\$?\d[\d,]*(?:\.\d+)?")
+ID_TOKEN = re.compile(r"\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b|\b[A-Z]{2,}\d+[A-Z0-9]*\b")
+
+
+def _numbers(s: str) -> set:
+    out = set()
+    for tok in NUM.findall(s or ""):
+        try:
+            out.add(Decimal(tok.replace("$", "").replace(",", "")))
+        except InvalidOperation:
+            continue
+    return out
+
+
+def grounded(text: str, payload: dict, extra_counts=()) -> bool:
+    """True when every number (amounts, counts, dates) and every ID in `text` appears in `payload`."""
+    src = json.dumps(payload, ensure_ascii=False, default=str)
+    allowed = _numbers(src) | {Decimal(n) for n in extra_counts}
+    if not _numbers(text) <= allowed:
+        return False
+    return all(t in src for t in ID_TOKEN.findall(text))
