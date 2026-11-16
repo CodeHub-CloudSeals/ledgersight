@@ -139,8 +139,8 @@ later; flushed at exit. An older revision that sees another owner stops writing.
 cloud_storage. Unchanged snapshots are not uploaded again. Hosted (moved 2026-11-16 from us-east4 to europe-west1,
 next to TrustOps): service ledgersight in europe-west1, bucket gs://trustops-uat-ledgersight-state-eu/ledgersight
 (versioned, 30-day history), image repo europe-west1/ledgersight, domain ledgersight.cloudseals.com mapped there. The
-signing key file is synced with the data (Secret Manager not set up). The old us-east4 service is frozen (ingress
-internal) as a fallback; its bucket trustops-uat-ledgersight-state is kept. Without the setting nothing changes.
+signing key file is synced with the data (Secret Manager not set up). The old us-east4 service and its bucket
+were deleted on 2026-11-16 after the move. Without the setting nothing changes.
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else
