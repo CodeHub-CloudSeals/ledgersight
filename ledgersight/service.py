@@ -28,6 +28,7 @@ from .config import load as load_config
 from .core import evidence, ingest, policy, query, recon, reports
 from .core.store import Store
 from . import trustops_client as trustops_api
+from . import cloud_sync
 
 SOURCES = load_config("sources.json")
 SOURCE_KINDS = [k["kind"] for k in SOURCES["kinds"]]
@@ -119,7 +120,11 @@ def svc_pdf_slots():
 class Service:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # Hosted: restore the data folder from Cloud Storage before the database is opened (2026-11-16).
+        self.sync = cloud_sync.start(DATA_DIR) if PERSIST else None
         self.store = Store(DATA_DIR / "ledgersight.db") if PERSIST else None
+        if self.sync and self.store:
+            self.store.on_change = self.sync.mark_dirty
         self._save_lock = threading.RLock()
         self._verify_cache: dict[str, tuple] = {}
         self._key, self.key_source = self._load_key()
@@ -133,6 +138,8 @@ class Service:
             self.security_log.events = self.store.load_events("_security")
         self._security_saved = len(self.security_log.events)
         self.region = os.environ.get("AVOCET_REGION_DECLARED", "local-development")
+        if self.sync and self.store:
+            self.sync.attach(self.store)   # a signing key file created above is uploaded with the first sync
 
     def _load_key(self):
         """Signing key: secret store (env) > key file kept with the data > ephemeral (no storage)."""
@@ -199,6 +206,8 @@ class Service:
         """True when the deployment declares durable storage (AVOCET_STORAGE_DURABLE=1, e.g. a mounted volume or
         Cloud SQL); False on Cloud Run without that declaration (the container disk is wiped on redeploy);
         None when unknown (local)."""
+        if cloud_sync.active() is not None:   # synced to Cloud Storage (LEDGERSIGHT_STATE_GCS_URI)
+            return cloud_sync.active().healthy()
         if os.environ.get("AVOCET_STORAGE_DURABLE") == "1":
             return True
         if os.environ.get("K_SERVICE"):  # set by Cloud Run
@@ -208,8 +217,13 @@ class Service:
     def ready(self) -> dict:
         checks = {"signer": self._key is not None, "storage": (self.store.healthy() if self.store else None),
                   "config": bool(policy.POLICIES) and bool(WORKSPACES), "audit_chain_matches_key": self._chains_verify()}
-        return {"ready": all(v is not False for v in checks.values()), "checks": checks,
-                "persistence": "sqlite" if self.store else "memory only", "durable_storage": self.storage_durable()}
+        out = {"ready": all(v is not False for v in checks.values()), "checks": checks,
+               "persistence": "sqlite" if self.store else "memory only", "durable_storage": self.storage_durable()}
+        if self.sync:
+            s = self.sync.status
+            out["cloud_storage"] = {"restored_objects": s["restored"], "last_sync": s["last_sync"],
+                                    "error": s["last_error"], "stopped": s["stopped"]}
+        return out
 
     def public_key_pem(self) -> bytes:
         return self._key.public_key().public_bytes(serialization.Encoding.PEM,

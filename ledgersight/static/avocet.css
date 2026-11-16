@@ -166,6 +166,7 @@ main{width:100%;max-width:1360px;padding:var(--sp-6) 28px 56px}
 button:disabled{opacity:.5;cursor:not-allowed}
 button.busy{position:relative;cursor:progress}
 button.busy::before{content:"";width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .7s linear infinite}
+#mapping.map-wait>*:not(.map-bar){opacity:.45;pointer-events:none;transition:opacity .15s}
 .linkbtn{background:none;border:0;color:var(--accent);font-weight:600;cursor:pointer;font-size:var(--fs-sm);padding:2px 4px;border-radius:var(--r-sm)}
 .linkbtn:hover{text-decoration:underline}
 .card-title .linkbtn{font-size:var(--fs-sm)}

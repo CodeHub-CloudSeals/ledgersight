@@ -1165,7 +1165,17 @@ async function openGoogleConnectModal() {
 function nextInQueue() {
   const f = S.queue.shift();
   if (!f) { if (S.queueTotal > 1) msg("up-msg", `All ${S.queueTotal} files done.`, "good"); S.queueTotal = 0; $("up-file").value = ""; offerRun(); return; }
-  uploadOne(f);
+  return uploadOne(f);
+}
+// After "Confirm & next file" (2026-11-16): the confirmed card stays on screen, dimmed, while the next file is read,
+// instead of hiding it and showing the upload page for the second or two the server needs. The page data is
+// refreshed after the next card is drawn (not at the same time, so the refresh always sees the new upload).
+async function continueQueue(box, confirmed) {
+  if (!S.queue.length) { box.classList.add("hidden"); await refreshWs(); return nextInQueue(); }
+  box.classList.add("map-wait");
+  try { await nextInQueue(); } finally { box.classList.remove("map-wait"); }
+  if (S.upload === confirmed) box.classList.add("hidden");   // every remaining file was refused: nothing left to confirm
+  await refreshWs();
 }
 // Forget every half-finished upload on this page: pending mapping, messages, refusals, queue. Used when the
 // client's data is cleared (here or by a colleague) or another client is opened, so nothing stale remains.
@@ -1246,7 +1256,7 @@ async function uploadOne(f) {
     S.upload = r;
     if (r.routed === "document") { msg("up-msg", `${f.name} is a receipt or invoice. Fields extracted; check them, then confirm${left}.`, "good"); return renderDocConfirm(); }
     msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Check the columns at the top of the page, then confirm${left}.`, "good"); renderMapping();
-  } catch (e) { refused(f, e.message); msg("up-msg", ""); nextInQueue(); }
+  } catch (e) { refused(f, e.message); msg("up-msg", ""); return nextInQueue(); }
 }
 // "File 2 of 7" while a batch is being confirmed one by one.
 function batchPos() {
@@ -1285,11 +1295,11 @@ function renderMapping() {
   const confirm = (label) => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
     const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
     const body = { mapping }; if (orderSel) body.date_order = orderSel.value;
-    try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: body }); box.classList.add("hidden"); msg("up-msg", "");
+    try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: body }); msg("up-msg", "");
       toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
-      await refreshWs(); nextInQueue(); }
+      await continueQueue(box, u); }
     catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
-  }, "Importing…") }, label);
+  }, S.queue.length ? "Importing… then next file" : "Importing…") }, label);
   put(box,
     mapBar(`Confirm columns · ${u.filename}`, `${KIND[u.kind] || u.kind_label} · ${u.rows} records`,
       confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")),
@@ -1460,11 +1470,11 @@ document.addEventListener("visibilitychange", syncIfStale);
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};
   const type = el("select", {}, ["receipt", "vendor_invoice", "other"].map((t) => el("option", { value: t }, nice(t))));
-  const go = () => el("button", { class: "primary", onclick: async () => {
+  const go = () => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
         const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
-        try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } }); box.classList.add("hidden");
-          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await refreshWs(); nextInQueue(); }
-        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } } },
+        try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } });
+          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await continueQueue(box, u); }
+        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } }, S.queue.length ? "Linking… then next file" : "Linking…") },
     S.queue.length ? "Confirm & next file →" : "Confirm & link document");
   put(box, mapBar(`Confirm document · ${u.filename}`, `${u.pages} page${u.pages > 1 ? "s" : ""}`, go()),
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact PDF was already uploaded (${u.duplicate_of}). Confirming again replaces the same document. Nothing is counted twice.`) : null,

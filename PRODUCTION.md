@@ -7,7 +7,7 @@ Status as of 2026-11-12 (v1.0.0, after the readiness audit and the architecture 
 
 | Area | What is in place |
 |---|---|
-| Storage | SQLite database + file store in `AVOCET_DATA_DIR`. On a laptop or a server with a real disk, client books, uploads, runs, decisions and users survive restarts. **On Cloud Run without a mounted volume the data folder is temporary and is cleared on every redeploy or restart**; `/readyz` reports `"durable_storage": false` and the Data & security page says so. Set `AVOCET_STORAGE_DURABLE=1` only when `/data` really is durable |
+| Storage | SQLite database + file store in `AVOCET_DATA_DIR`. **Hosted (since 2026-11-16): synced to a private, versioned Cloud Storage bucket** (`LEDGERSIGHT_STATE_GCS_URI`, `ledgersight/cloud_sync.py`, the same approach as TrustOps): an empty data folder is restored from the bucket at start-up, every change is uploaded within about a second, and the last changes are flushed on shutdown, so redeploys and restarts keep the data. The database object is written with a generation check and an owner record, so an older revision still running during a rollout stops writing. `/readyz` shows `durable_storage` and `cloud_storage` (restored objects, last sync, error). Without the setting, Cloud Run's data folder is temporary and is cleared on every redeploy or restart |
 | Audit trail | Ed25519-signed, hash-chained, append-only; safe under concurrent requests; a cleared client's trail is archived, never deleted |
 | Signing key | From the secret store (`AVOCET_SIGNING_KEY_PEM`), else a key file kept with the data (owner-only permissions) |
 | Governance | Deny-by-default policy engine (POL-01…12) for people and agents; ALLOW / ESCALATE / DENY with policy id and version on every record |
@@ -33,9 +33,9 @@ content; anything that is not a recognised finance record is refused with the re
 | Live connectors | QuickBooks/Xero are PLANNED | Build and test OAuth connectors (read-only) |
 | Scanned documents | Image-only PDFs are refused | OCR intake with human confirmation |
 | Single sign-on | Local accounts, plus Google sign-in for one Workspace domain | SAML/OIDC for firms on other identity providers |
-| Durable hosted storage | Cloud Run's container disk is temporary | Mount a bucket/Filestore volume (`LEDGERSIGHT_BUCKET` in `deploy/cloudrun.sh`) or move to Cloud SQL |
+| Durable hosted storage | Done with Cloud Storage sync (above). A change made in the last second before a crash (not a normal shutdown) can be lost | Postgres when several instances are needed |
 | Backups | `python -m ledgersight.backup <folder>` makes a consistent online copy (database + files); not yet scheduled | Schedule it (e.g. Cloud Scheduler job) and test a restore |
-| Deploys | During a rollout two revisions briefly serve with separate data folders | Deploy only when idle until storage is shared |
+| Deploys | During a rollout the new revision restores the data and takes ownership; anything the old revision writes after that moment is not kept | Deploy when idle to be safe |
 | Monitoring | JSON request logs with request id on stdout (Cloud Logging); startup/liveness probes on /readyz and /healthz | Alerts on /readyz failures and error rates |
 | Independent review | Security controls are self-tested | External penetration test before client data |
 | Policy editing | Rulebooks are read-only in the app | Versioned policy publishing with approval |

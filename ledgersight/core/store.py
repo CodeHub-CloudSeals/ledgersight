@@ -32,6 +32,7 @@ class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self.on_change = None   # called after every write (hosted: schedules the Cloud Storage sync)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -54,6 +55,10 @@ class Store:
                 out.close()
         return dest
 
+    def _changed(self) -> None:
+        if self.on_change:
+            self.on_change()
+
     # ---- workspaces ----
     def save_workspace(self, wid: str, state: dict) -> None:
         body = json.dumps(state, default=str, separators=(",", ":"))
@@ -61,6 +66,7 @@ class Store:
             self._db.execute("INSERT INTO workspaces (id, state, updated_at) VALUES (?, ?, ?) "
                              "ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at",
                              (wid, body, _now()))
+        self._changed()
 
     def load_workspace(self, wid: str) -> dict | None:
         row = self._db.execute("SELECT state FROM workspaces WHERE id=?", (wid,)).fetchone()
@@ -79,6 +85,7 @@ class Store:
             except Exception:
                 self._db.execute("ROLLBACK")
                 raise
+        self._changed()
 
     def load_events(self, log: str) -> list[dict]:
         return [json.loads(r[0]) for r in self._db.execute("SELECT event FROM events WHERE log=? ORDER BY seq", (log,))]
@@ -94,6 +101,7 @@ class Store:
                 n += 1
                 name = f"{base}-{n}"
             self._db.execute("UPDATE events SET log=? WHERE log=?", (name, log))
+        self._changed()
         return name
 
     def archived_logs(self, log: str) -> list[str]:
@@ -105,6 +113,7 @@ class Store:
             self._db.execute("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) "
                              "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                              (key, json.dumps(value, default=str), _now()))
+        self._changed()
 
     def get(self, key: str, default=None):
         row = self._db.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()

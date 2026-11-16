@@ -128,6 +128,16 @@ breaker (TRUSTOPS_BREAKER_SECONDS=15) after a connection failure, failed status 
 stops on the breaker and after 2 s; decisions stay fail-closed. FinTwin explains a TrustOps refusal (paused /
 not authorised for this client / can't be reached / rule X) instead of the read-only text. PDF confirm: field
 objects ({"value":...}) are reduced to their value; anything else is 422, never 500.
+"Confirm & next file" keeps the card on screen (dimmed, `map-wait`) while the next file is read (`continueQueue`); the
+page data refreshes after the next card is drawn, so the upload page no longer flashes between files.
+
+## Hosted storage in Cloud Storage (2026-11-16, tests in tests/test_cloud_sync.py)
+Like TrustOps: with LEDGERSIGHT_STATE_GCS_URI=gs://bucket/prefix, `cloud_sync.start` restores an empty AVOCET_DATA_DIR
+(db snapshot + uploaded files) before the Store opens and writes `owner.json`; `Store.on_change` marks it dirty and a
+background thread uploads a SQLite backup snapshot (generation check) and mirrors files (new and deleted) about 1 s
+later; flushed at exit. An older revision that sees another owner stops writing. /readyz: durable_storage +
+cloud_storage. Hosted: bucket trustops-uat-ledgersight-state (us-east4, versioned), signing key from Secret Manager
+(ledgersight-signing-key). Without the setting nothing changes (local, tests).
 
 ## Google sign-in role
 New Google sign-ins get AVOCET_GOOGLE_DEFAULT_ROLE (preparer by default; owner_reviewer = CPA reviewer; anything else

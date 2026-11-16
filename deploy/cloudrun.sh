@@ -58,7 +58,13 @@ done
 #   export LEDGERSIGHT_BUCKET=<bucket>   then the deploy adds a volume at /data and declares durable storage.
 #   Note: SQLite on a bucket mount suits a single low-traffic instance only; Cloud SQL is the long-term home.
 EXTRA_FLAGS=()
-if [ -n "${LEDGERSIGHT_BUCKET:-}" ]; then
+# RECOMMENDED (2026-11-16): sync the data folder to Cloud Storage, like TrustOps keeps its state in GCS.
+#   export LEDGERSIGHT_STATE_GCS_URI=gs://<private versioned bucket in $REGION>/ledgersight
+# The app restores /data from the bucket at start-up and uploads every change (ledgersight/cloud_sync.py), so data
+# survives redeploys and restarts. The service account needs roles/storage.objectUser on that bucket.
+if [ -n "${LEDGERSIGHT_STATE_GCS_URI:-}" ]; then
+  EXTRA_FLAGS+=(--update-env-vars "LEDGERSIGHT_STATE_GCS_URI=${LEDGERSIGHT_STATE_GCS_URI}")
+elif [ -n "${LEDGERSIGHT_BUCKET:-}" ]; then
   EXTRA_FLAGS+=(--execution-environment gen2 --add-volume "name=data,type=cloud-storage,bucket=${LEDGERSIGHT_BUCKET}"
                 --add-volume-mount "volume=data,mount-path=/data" --update-env-vars "AVOCET_STORAGE_DURABLE=1")
 fi

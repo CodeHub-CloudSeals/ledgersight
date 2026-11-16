@@ -9,3 +9,5 @@ pdfplumber==0.11.10
 Pillow==13.0.0
 google-auth==2.62.1
 requests==2.34.2
+# Hosted durability: the data folder is synced to Cloud Storage (ledgersight/cloud_sync.py, LEDGERSIGHT_STATE_GCS_URI)
+google-cloud-storage==3.17.1
