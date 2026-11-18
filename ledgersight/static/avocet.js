@@ -2539,6 +2539,9 @@ function renderRunsList(target) {
   const items = (S.runs && S.runs.items) || [];
   if (!items.length) return put(box, empty("No runs yet", "Run a reconciliation; every run is listed here with who ran it and its review items."));
   const f = S.runFilter || (S.runFilter = { day: "", month: "", by: "" });
+  // 2026-11-18 (lead review): "Run by" is a reviewer's filter; staff preparers don't get it (the column stays)
+  const byFilter = isCPA();
+  if (!byFilter) f.by = "";
   // filters use the viewer's local dates, like every date on the page
   const shown = items.filter((r) => (!f.day || localDay(r.created_at) === f.day) && (!f.month || localDay(r.created_at).startsWith(f.month)) && (!f.by || r.created_by === f.by));
   const people = [...new Set(items.map((r) => r.created_by).filter(Boolean))].sort();
@@ -2553,7 +2556,7 @@ function renderRunsList(target) {
         onchange: (e) => { f.day = e.target.value; if (f.day) f.month = ""; redraw(); } })),
       el("label", {}, "Month ", el("input", { type: "month", class: "runs-month", value: f.month, "aria-label": "Runs in this month",
         onchange: (e) => { f.month = e.target.value; if (f.month) f.day = ""; redraw(); } })),
-      el("label", {}, "Run by ", by),
+      byFilter ? el("label", {}, "Run by ", by) : null,
       (f.day || f.month || f.by) ? el("button", { class: "linkbtn", onclick: () => { S.runFilter = { day: "", month: "", by: "" }; redraw(); } }, "Clear filters") : null,
       el("span", { class: "muted small" }, `${shown.length} of ${items.length} run${items.length === 1 ? "" : "s"}`)),
     shown.length ? el("div", { class: "tablewrap" }, el("table", { class: "runs-table" },
@@ -2563,9 +2566,9 @@ function renderRunsList(target) {
         el("td", { class: "small" }, fmtDateTime(r.created_at)), el("td", { class: "small" }, niceActor(r.created_by)),
         el("td", { class: "small" }, Object.values(r.files || {}).join(", ") || "–"),
         el("td", { class: "small" }, `${r.review_items}`, r.review_items ? " · " : "", rv(r)),
-        el("td", { class: "runs-act" },
+        el("td", { class: "runs-act" }, el("div", { class: "runs-act-in" },
           S.run && S.run.id === r.id ? el("span", { class: "muted small" }, "Showing") : el("button", { class: "secondary", onclick: () => switchRun(r.id) }, "Show this run"),
-          el("button", { class: "linkbtn", onclick: () => { S.repRunId = r.id; S.repRun = null; go("reports"); } }, "Reports")))))) :
+          el("button", { class: "linkbtn", onclick: () => { S.repRunId = r.id; S.repRun = null; go("reports"); } }, "Reports"))))))) :
       empty("No runs match", "Change or clear the filters."));
 }
 // Overview: review items across ALL runs, and which run the page shows (the latest by default).

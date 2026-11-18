@@ -2758,7 +2758,12 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .runs-filter input,.runs-filter select{min-height:var(--ds-h);padding:0 12px}
 .runs-table tr.on td{background:var(--accent-soft)}
 .runs-table td .badge{margin-left:6px}
-.runs-act{display:flex;gap:8px;align-items:center;white-space:nowrap}
+.runs-act{white-space:nowrap;width:1%}
+.runs-act-in{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+.tablewrap .runs-table td.small:not(.mono){min-width:0;max-width:none;overflow-wrap:normal}
+.tablewrap .runs-table td:nth-child(2),.tablewrap .runs-table td:nth-child(3){white-space:nowrap}
+.tablewrap .runs-table td:nth-child(4){min-width:180px;overflow-wrap:anywhere}
+.runs-fold.stages-fold{overflow:visible}
 .rv{display:inline-block;margin-right:6px;font-size:12px}
 .rv-approved{color:var(--ok)}.rv-rejected{color:var(--bad)}.rv-sent{color:var(--accent)}.rv-open,.rv-returned{color:var(--warn)}
 .ov-allruns{margin:0 0 14px}
@@ -2799,3 +2804,5 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .send-report .sr-group{margin:10px 0;padding:8px 10px;border-left:3px solid var(--bad,#d33);background:var(--soft,rgba(0,0,0,.03));border-radius:6px}
 .send-report .sr-group .muted{margin-top:4px;word-break:break-word}
 .dialog .send-report{max-height:55vh;overflow:auto}
+.runs-fold .sf-hide,.runs-fold[open] .sf-show{display:none}
+.runs-fold[open] .sf-hide{display:inline}

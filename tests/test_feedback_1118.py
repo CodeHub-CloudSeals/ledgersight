@@ -159,3 +159,10 @@ def test_run_picker_at_the_top_and_send_report_in_the_ui():
     assert "function renderRunBars(" in JS and "S.runPinned" in JS and '"/trace" + (S.run ? `?run_id=' in JS
     assert "function sendReport(" in JS and '"notsent"' in JS and "Not sent" in JS
     assert "Send selected to TrustOps" not in JS
+
+
+def test_run_by_filter_only_for_reviewers_and_actions_not_clipped():
+    css = (ROOT / "ledgersight" / "static" / "avocet.css").read_text(encoding="utf-8")
+    assert "const byFilter = isCPA();" in JS and 'byFilter ? el("label", {}, "Run by ", by) : null' in JS
+    assert '"Run by", "Files"' in JS                                         # the column stays for everyone
+    assert ".runs-act{display:flex" not in css and ".runs-act-in{display:flex" in css   # a flex <td> broke the table
