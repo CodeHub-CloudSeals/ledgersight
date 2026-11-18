@@ -131,6 +131,20 @@ objects ({"value":...}) are reduced to their value; anything else is 422, never 
 "Confirm & next file" keeps the card on screen (dimmed, `map-wait`) while the next file is read (`continueQueue`); the
 page data refreshes after the next card is drawn, so the upload page no longer flashes between files.
 
+## Feedback 2026-11-18 (tests in tests/test_feedback_1118.py; TrustOps tests/e2e/test_app_batch_1811.py)
+Bulk send = ONE request to TrustOps (`trustops_client.decide_many` -> POST /v1/decisions/batch, 60 s timeout, TrustOps
+saves its state once); before, 70+ separate calls each waited for a full state.json upload, some passed the 6 s timeout,
+the breaker opened and the rest failed as "could not be reached". Every submit carries `reuse_pending`: TrustOps returns
+the item still waiting for that resource instead of creating a second copy (lost answer + Try again). A TrustOps
+without the batch endpoint (404/405) is asked item by item (`decide_each`; tests patch decide_many = decide_each).
+UI: button "Send to TrustOps"; count says why others can't be sent (already sent / decided); after a send with
+failures a dialog lists the not-sent/skipped items grouped by reason and the queue opens on a "Not sent" chip; the bell
+text is "Not sent: case X did not reach TrustOps" + reason, and drops once the item was sent again. Locked sources text
+is plain ("These files can't be cleared. N review items ... Start next period"). Run picker at the TOP of
+Reconciliation, Review queue and Trace (`renderRunBars`, ids rc-/exc-/tr-runbar); "All runs" list folded under it on
+Reconciliation. Pages follow the latest run unless the person picked an earlier one (`S.runPinned`). Trace takes
+?run_id= (an earlier run uses the lines stored with it).
+
 ## Hosted storage in Cloud Storage (2026-11-16, tests in tests/test_cloud_sync.py)
 Like TrustOps: with LEDGERSIGHT_STATE_GCS_URI=gs://bucket/prefix, `cloud_sync.start` restores an empty AVOCET_DATA_DIR
 (db snapshot + uploaded files) before the Store opens and writes `owner.json`; `Store.on_change` marks it dirty and a

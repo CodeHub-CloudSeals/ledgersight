@@ -23,6 +23,7 @@ def tops(monkeypatch):
     monkeypatch.setenv("TRUSTOPS_URL", "https://trustops.example.test")
     monkeypatch.setenv("TRUSTOPS_KEY", "tok_test_key")
     monkeypatch.setattr(trustops_client, "decide", fake.decide)
+    monkeypatch.setattr(trustops_client, "decide_many", trustops_client.decide_each)
     monkeypatch.setattr(trustops_client, "status", fake.status)
     fake.access = {"tops-notify@demo.test": "reviewer", "tops-prep@demo.test": "preparer"}
     monkeypatch.setattr(trustops_client, "app_access", lambda email, max_age=60: fake.access.get(email))
@@ -181,7 +182,7 @@ def test_sender_is_told_when_the_approver_did_not_receive_it(tops, cpa, prep, mo
     r = _send(prep, run, e0)
     assert r.status_code == 200 and r.json()["trustops_review"]["status"] == "NOT_SENT"
     mine = [it for it in _items(prep) if it["kind"] == "NOT_RECEIVED" and it["exception_id"] == e0["id"]]
-    assert mine and "did not receive it" in mine[0]["note"] and "TrustOps is down" in mine[0]["note"] and mine[0]["by"] == "TrustOps"
+    assert mine and "Not sent to" in mine[0]["note"] and "TrustOps is down" in mine[0]["note"] and mine[0]["by"] == "TrustOps"
     assert not [it for it in _items(cpa) if it["kind"] == "NOT_RECEIVED"]          # only the sender is told
     # TrustOps refuses the chosen approver. 2026-11-16: the approver goes in the same call (assign_to), so TrustOps
     # refuses the item as a whole and it is never left unassigned there.

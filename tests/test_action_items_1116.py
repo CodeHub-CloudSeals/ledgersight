@@ -28,6 +28,7 @@ def tops(monkeypatch):
     monkeypatch.setenv("TRUSTOPS_URL", "https://trustops.example.test")
     monkeypatch.setenv("TRUSTOPS_KEY", "tok_test_key")
     monkeypatch.setattr(trustops_client, "decide", fake.decide)
+    monkeypatch.setattr(trustops_client, "decide_many", trustops_client.decide_each)
     monkeypatch.setattr(trustops_client, "status", fake.status)
     monkeypatch.setattr(trustops_client, "app_access", lambda email, max_age=60: "reviewer")
     monkeypatch.setattr(trustops_client, "reviewers", lambda max_age=30: [
@@ -174,7 +175,7 @@ def test_bulk_send_to_trustops(tops, cpa, prep):
     signed = [e for e in appmod.svc.ws["client-a"].log.events if e["action"] == "exception.sent_to_trustops" and e["run_id"] == run["id"]]
     assert len(signed) == len(ids)                                                                          # each one signed
     assert all(e["trustops_review"]["assigned_to"] == "approver@firm.test" for e in _excs(cpa, run))
-    assert "function sendSelected(" in JS and "Select all" in JS and "Send selected to TrustOps" in JS
+    assert "function sendSelected(" in JS and "Select all" in JS and "Send to TrustOps" in JS
 
 
 def test_nobody_sends_or_reassigns_an_item_to_themself(tops, cpa):

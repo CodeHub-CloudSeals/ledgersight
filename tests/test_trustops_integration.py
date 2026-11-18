@@ -41,6 +41,7 @@ def tops(monkeypatch):
     monkeypatch.setenv("TRUSTOPS_URL", "https://trustops.example.test")
     monkeypatch.setenv("TRUSTOPS_KEY", "tok_test_key")
     monkeypatch.setattr(trustops_client, "decide", fake.decide)
+    monkeypatch.setattr(trustops_client, "decide_many", trustops_client.decide_each)
     monkeypatch.setattr(trustops_client, "status", fake.status)
     fake.access = {"tops-owner@demo.test": "reviewer"}
     monkeypatch.setattr(trustops_client, "app_access", lambda email, max_age=60: fake.access.get(email))

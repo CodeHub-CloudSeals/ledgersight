@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LedgerSight</title>
 <link rel="icon" href="/static/logo.svg">
-<link rel="stylesheet" href="/static/avocet.css?v=20261116b">
+<link rel="stylesheet" href="/static/avocet.css?v=20261118a">
 </head>
 <body>
 
@@ -186,6 +186,11 @@
       <div class="page-head"><div><h2>Reconciliation</h2>
         <p class="sub">Fixed, explainable rules match what agrees exactly. Anything uncertain is held back for a person, never guessed.</p></div>
         <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div></div>
+      <div id="rc-runbar" class="runbar hidden"></div>
+      <details class="card gap stages-fold runs-fold" id="runs-card">
+        <summary><span class="sf-t">All runs</span><span class="sf-sum muted small">every run of this client · filter by day, month or who ran it</span><span class="sf-more">Show</span></summary>
+        <div id="runs-list"></div>
+      </details>
       <div id="recon-ready"></div>
       <div id="tiles" class="tiles"></div>
       <!-- At-a-glance first (agent workflow), then the detail behind it (run stages) -->
@@ -203,7 +208,6 @@
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
         <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Select a matched row to compare the bank and ledger lines.</div></div>
       </div>
-      <div class="card gap"><div class="card-title">Runs <span class="muted small">every run of this client · filter by day, month or who ran it</span></div><div id="runs-list"></div></div>
     </section>
 
     <!-- ================= Agents ================= -->
@@ -226,6 +230,7 @@
     <section class="panel" id="p-exceptions">
       <div class="page-head"><div><h2>Review queue</h2>
         <p class="sub">Only what needs a person. Each item shows the source rows, the rule that raised it, the TrustOps decision and a suggested next step. Decisions are recorded and signed. Nothing is posted.</p></div></div>
+      <div id="exc-runbar" class="runbar hidden"></div>
       <div id="exc-list"></div>
     </section>
 
@@ -258,6 +263,7 @@
     <section class="panel" id="p-trace">
       <div class="page-head"><div><h2>Trace a transaction</h2>
         <p class="sub">Follow any bank transaction end to end. See the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
+      <div id="tr-runbar" class="runbar hidden"></div>
       <div class="trace-grid">
         <div class="card"><div class="card-title">Bank transactions</div><div id="trace-list" class="muted">Import files first.</div></div>
         <div id="trace-view" class="card"><div class="muted">Select a line on the left.</div></div>
@@ -364,7 +370,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="/static/vendor/motion.min.js"></script>
 <script src="/static/vendor/chart.umd.min.js"></script>
-<script src="/static/avocet.js?v=20261116c"></script>
+<script src="/static/avocet.js?v=20261118a"></script>
 <script src="/static/ui-plus.js"></script>
 <script src="/static/login-motion.js"></script>
 </body>

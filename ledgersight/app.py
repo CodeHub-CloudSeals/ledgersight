@@ -766,13 +766,13 @@ def party_link(wid: str, pid: str, line_id: str, body: dict = Body(...), u=Depen
 
 
 @app.get("/v1/workspaces/{wid}/trace")
-def trace_index(wid: str, u=Depends(current_user)):
-    return handle(svc.trace_index, u, wid)
+def trace_index(wid: str, run_id: str | None = None, u=Depends(current_user)):
+    return handle(svc.trace_index, u, wid, run_id)
 
 
 @app.get("/v1/workspaces/{wid}/trace/{line_id}")
-def trace(wid: str, line_id: str, u=Depends(current_user)):
-    return handle(svc.trace, u, wid, line_id)
+def trace(wid: str, line_id: str, run_id: str | None = None, u=Depends(current_user)):
+    return handle(svc.trace, u, wid, line_id, run_id)
 
 
 @app.get("/v1/workspaces/{wid}/evidence")

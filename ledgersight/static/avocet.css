@@ -2787,3 +2787,15 @@ body.side-mini .sidebar:not(.peek) .side-ask{grid-template-columns:40px;justify-
 .ss-rej{margin-top:6px;font-size:12px;color:var(--warn)}.ss-rej.ok{color:var(--muted)}
 .ss-clear[disabled]{opacity:.45;cursor:not-allowed;text-decoration:none}
 .ss-locked{margin-top:10px}
+
+/* 2026-11-18 (user feedback): run picker at the top of Reconciliation, Review queue and Trace */
+.runbar{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:10px 16px;margin:0 0 14px;border:1px solid var(--line);border-radius:14px;background:var(--card,var(--panel,#fff))}
+.runbar .runbar-l{display:inline-flex;align-items:center;gap:8px;font-weight:600}
+.runbar .runbar-pick{min-width:260px;max-width:100%}
+.runbar .grow{flex:1}
+.runs-fold{margin-bottom:14px}
+.runs-fold #runs-list{padding:14px 22px}
+/* bulk send result: why items were not sent */
+.send-report .sr-group{margin:10px 0;padding:8px 10px;border-left:3px solid var(--bad,#d33);background:var(--soft,rgba(0,0,0,.03));border-radius:6px}
+.send-report .sr-group .muted{margin-top:4px;word-break:break-word}
+.dialog .send-report{max-height:55vh;overflow:auto}

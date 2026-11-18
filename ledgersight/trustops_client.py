@@ -59,7 +59,7 @@ def console_link(path: str = "") -> str | None:
     return f"{url()}/portal/{path}" if url() else None
 
 
-def _call(method: str, path: str, body: dict | None = None) -> dict:
+def _call(method: str, path: str, body: dict | None = None, timeout: float | None = None) -> dict:
     if breaker_open():
         raise Unreachable("TrustOps could not be reached")
     req = urllib.request.Request(url() + path, method=method,
@@ -67,7 +67,7 @@ def _call(method: str, path: str, body: dict | None = None) -> dict:
                                  headers={"Content-Type": "application/json", "X-TrustOps-Key": key(),
                                           "User-Agent": "LedgerSight"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:   # noqa: S310 - fixed https origin from settings
+        with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as r:   # noqa: S310 - fixed https origin from settings
             out = json.loads(r.read() or b"{}")
     except urllib.error.HTTPError:
         raise                                       # TrustOps answered: it is up
@@ -94,6 +94,50 @@ def decide(actor_type: str, actor_id: str, action: str, **ctx) -> dict:
                 "error": err, "reason": msg or f"TrustOps answered HTTP {code}"}
     except Exception:
         return {"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "reason": "TrustOps could not be reached"}
+
+
+def decide_each(bodies: list[dict]) -> list[dict]:
+    """One decide() per body (TrustOps without POST /v1/decisions/batch)."""
+    return [decide(b["actor"]["type"], b["actor"]["id"], b["action"],
+                   **{k: v for k, v in b.items() if k not in ("actor", "action")}) for b in bodies]
+
+
+BATCH_TIMEOUT = float(os.environ.get("TRUSTOPS_BATCH_TIMEOUT", "60"))
+
+
+def decide_many(bodies: list[dict]) -> list[dict]:
+    """2026-11-18: several items in one request (POST /v1/decisions/batch): TrustOps stores its state once for all of
+    them, so a bulk send no longer times out item by item. One answer per body, in order, shaped like decide().
+    A TrustOps without the batch endpoint (404/405) is asked item by item, as before."""
+    if not bodies:
+        return []
+    try:
+        out = _call("POST", "/v1/decisions/batch", {"items": bodies}, timeout=BATCH_TIMEOUT).get("results") or []
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 405):
+            return decide_each(bodies)
+        if e.code == 401:
+            return [{"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "reason": "TrustOps rejected the LedgerSight key"}] * len(bodies)
+        err, msg = _error_body(e)
+        return [{"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "error": err,
+                 "reason": msg or f"TrustOps answered HTTP {e.code}. Nothing was sent; try again."}] * len(bodies)
+    except Unreachable:
+        return [{"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE",
+                 "reason": "TrustOps did not answer in time. Try again: an item that did arrive is not sent twice."}] * len(bodies)
+    except Exception:
+        return [{"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "reason": "TrustOps could not be reached"}] * len(bodies)
+    res = []
+    for i in range(len(bodies)):
+        r = out[i] if i < len(out) and isinstance(out[i], dict) else None
+        if r is None:
+            res.append({"decision": "DENY", "policy_id": "TRUSTOPS_UNAVAILABLE", "reason": "TrustOps gave no answer for this item"})
+        elif r.get("ok"):
+            res.append({k: v for k, v in r.items() if k != "ok"})
+        else:
+            code = int(r.get("status") or 0)
+            res.append({"decision": "DENY", "policy_id": "TRUSTOPS_REFUSED" if 400 <= code < 500 else "TRUSTOPS_UNAVAILABLE",
+                        "error": r.get("error"), "reason": r.get("message") or f"TrustOps answered HTTP {code}"})
+    return res
 
 
 def _error_body(e: urllib.error.HTTPError) -> tuple[str | None, str | None]:

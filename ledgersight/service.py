@@ -675,10 +675,10 @@ class Service:
         return {"kinds": kinds, "connectors": conns, "status_labels": SOURCES["status_labels"],
                 # 2026-11-16: files under review work cannot be cleared (see clear_source)
                 "locked": bool(work), "locked_reason": (
-                    f"{work} review item{'s' if work != 1 else ''} already {'have' if work != 1 else 'has'} decisions, proposals, "
-                    "proof or approvals in progress, so these files can't be removed. To start again, a CPA reviewer starts "
-                    "a new period (Overview > Start next period, or Data & security > Clear this client's data); the audit trail is "
-                    "archived, never deleted.") if work else None,
+                    # 2026-11-18 (user feedback): plain words, one sentence each
+                    f"{work} review item{'s' if work != 1 else ''} from these files {'are' if work != 1 else 'is'} already being "
+                    "worked on (sent to TrustOps, decided or with proof attached). To use new files, a CPA reviewer starts "
+                    "a new period: Overview > Start next period.") if work else None,
                 "not_accepted": SOURCES["not_accepted"], "accepted_extensions": sorted(ingest.ALLOWED_EXT | {".pdf", ".eml"})}
 
     # ---- runs ----------------------------------------------------------
@@ -1120,12 +1120,22 @@ class Service:
     def _submit_one(self, user, w, run, exc, to: str | None = None) -> dict:
         """Send one review item to TrustOps for approval (approval happens only in TrustOps).
         2026-11-16: the chosen approver goes in the same call (assign_to), so the item is never unassigned in TrustOps."""
+        b = self._submit_body(user, w, run, exc, to)
+        t = trustops_api.decide("human", user.user_id, "submit_for_review",
+                                **{k: v for k, v in b.items() if k not in ("actor", "action")})
+        return self._record_submit(user, exc, t, to, b["resource"])
+
+    def _submit_body(self, user, w, run, exc, to: str | None) -> dict:
+        """What TrustOps receives for one review item. reuse_pending (2026-11-18): if an earlier send did arrive but the
+        answer was lost (timeout), TrustOps returns that waiting item instead of creating a second one."""
         ref = f"{w.id}|{run['id']}|{exc['id']}"
         hist = exc.get("trustops_history") or []
         context = {"resubmission": len(hist), "resubmission_of": hist[-1].get("decision_id")} if hist else None
-        t = trustops_api.decide("human", user.user_id, "submit_for_review", client=w.id, resource=ref, context=context,
-                                assign_to=to, amount_minor=abs(int(exc["amount_cents"])), currency="USD",
-                                **self.review_details(w, run, exc))
+        return {"actor": {"type": "human", "id": user.user_id}, "action": "submit_for_review", "client": w.id,
+                "resource": ref, "context": context, "assign_to": to, "reuse_pending": True,
+                "amount_minor": abs(int(exc["amount_cents"])), "currency": "USD", **self.review_details(w, run, exc)}
+
+    def _record_submit(self, user, exc, t: dict, to: str | None, ref: str) -> dict:
         if t.get("decision_id"):
             exc["trustops_review"] = {"decision_id": t["decision_id"], "status": "PENDING", "policy_id": t.get("policy_id"),
                                       "submitted_by": user.user_id, "submitted_at": _ts(), "ref": ref,
@@ -1184,12 +1194,17 @@ class Service:
         if note:   # what the sender says goes to the approver with the item (review_details shows it)
             exc["proposal_note"], exc["proposed_by"] = note, user.user_id
         tr = self._submit_one(user, w, run, exc, to)
+        return {"exception_id": exc_id, "trustops_review": self._after_send(user, w, run, exc, tr, to)}
+
+    def _after_send(self, user, w, run, exc, tr: dict, to: str) -> dict:
+        """Bell + signed record for one send. A send that did not arrive says why, in plain words (2026-11-18)."""
+        run_id, exc_id = run["id"], exc["id"]
         missed = None   # 2026-11-13 action items: the sender is told (bell) when the approver did not receive it
         if tr["status"] != "PENDING" and tr.get("error") in self.APPROVER_ERRORS:
             missed = (f"TrustOps did not accept it: {to} could not be made the approver ({tr.get('reason')}). "
                       "Choose the approver again on the item.")
         elif tr["status"] != "PENDING":
-            missed = f"{to} did not receive it: {tr.get('reason') or 'TrustOps could not be reached'}. Press Try again on the item."
+            missed = f"Not sent to {to}. Reason: {tr.get('reason') or 'TrustOps could not be reached'}. Press Try again on the item."
         if missed:
             tr["missed"] = missed
             tr["missed_ref"] = f"missed:{exc_id}:{uuid.uuid4().hex[:8]}"
@@ -1202,7 +1217,7 @@ class Service:
                          action="exception.sent_to_trustops", policy_decision="ALLOW:TRUSTOPS_SUBMITTED", policy_id="TRUSTOPS",
                          approval_id=tr["decision_id"], source_line_refs=exc.get("evidence_refs") or [],
                          matching_rule_id=exc.get("rule_id"), workflow_pack="cpa-bank-reconciliation", trace_id=run.get("trace_id"))
-        return {"exception_id": exc_id, "trustops_review": tr}
+        return tr
 
     BULK_MAX = 200
 
@@ -1226,7 +1241,8 @@ class Service:
         revs = trustops_api.reviewers()
         to = self._check_approver(user, to, revs)           # checked once, before anything is sent
         by_id = {x["id"]: x for x in run["result"]["exceptions"]}
-        results = []
+        note = " ".join(str(note or "").split())[:1000]
+        results, todo = [], []
         for eid in ids:
             exc = by_id.get(eid)
             if not exc:
@@ -1236,9 +1252,17 @@ class Service:
             if why:
                 results.append({"exception_id": eid, "result": "skipped", "reason": why})
                 continue
-            tr = self.send_to_trustops(user, wid, run_id, eid, note, to, _revs=revs)["trustops_review"]
-            results.append({"exception_id": eid, "result": "sent" if tr["status"] == "PENDING" else "not_sent",
-                            "reason": tr.get("missed"), "trustops_review": tr})
+            if note:
+                exc["proposal_note"], exc["proposed_by"] = note, user.user_id
+            results.append({"exception_id": eid})
+            todo.append((results[-1], exc))
+        # 2026-11-18: all items go to TrustOps in one request (it stores its state once), not one request per item:
+        # 70+ separate requests took minutes and the later ones timed out as "TrustOps could not be reached".
+        answers = trustops_api.decide_many([self._submit_body(user, w, run, exc, to) for _, exc in todo])
+        for (row, exc), t in zip(todo, answers):
+            tr = self._after_send(user, w, run, exc, self._record_submit(user, exc, t, to, f"{w.id}|{run['id']}|{exc['id']}"), to)
+            row.update({"result": "sent" if tr["status"] == "PENDING" else "not_sent", "reason": tr.get("missed"),
+                        "trustops_review": tr})
         count = {k: sum(1 for r in results if r["result"] == k) for k in ("sent", "not_sent", "skipped")}
         return {"to": to, "results": results, **count}
 
@@ -1465,7 +1489,10 @@ class Service:
             if e.get("action") == "exception.trustops_not_received":   # only for the person who sent it
                 if e.get("delegated_by") != user.user_id:
                     continue
-                x, note = by_id.get(e.get("approval_id"), ({}, None))
+                # 2026-11-18: once the item was sent again (or decided), the old "not sent" warning leaves the bell
+                if e.get("approval_id") not in by_id:
+                    continue
+                x, note = by_id[e["approval_id"]]
                 items.append({"seq": seq, "kind": "NOT_RECEIVED", "by": "TrustOps", "at": e.get("timestamp_utc"), "run_id": e.get("run_id"),
                               "ref": e.get("approval_id"), "exception_id": x.get("id"), "case_id": x.get("case_id"), "type": x.get("type"),
                               "note": note or "", "lines": e.get("source_line_refs") or [], "via": "TrustOps"})
@@ -1638,10 +1665,22 @@ class Service:
         return rec
 
     # ---- end-to-end trace of one transaction --------------------------------
-    def trace_index(self, user, wid):
+    @staticmethod
+    def _trace_run(w, run_id: str | None):
+        """2026-11-18 (user feedback): Trace can show any run, not only the latest."""
+        if run_id:
+            if run_id not in w.runs:
+                raise ValueError("Run not found")
+            return w.runs[run_id]
+        return list(w.runs.values())[-1] if w.runs else None
+
+    def trace_index(self, user, wid, run_id: str | None = None):
         w = self.gate(user, wid, "workspace.read")
-        run = list(w.runs.values())[-1] if w.runs else None
-        bank = w.batches.get("bank", {}).get("rows", [])
+        run = self._trace_run(w, run_id)
+        latest = list(w.runs)[-1] if w.runs else None
+        # an earlier run is shown with the bank lines it was run on (kept with the run)
+        bank = ([r for r in run["lines"].values() if r.get("kind") == "bank"] if run and run["id"] != latest and run.get("lines")
+                else w.batches.get("bank", {}).get("rows", []))
         out = []
         for b in bank:
             st, label = "IMPORTED", "Imported, not yet matched"
@@ -1655,19 +1694,22 @@ class Service:
                     st, label = "MATCHED", f"matched to {m['ledger_id']}"
             out.append({"id": b["id"], "date": str(b["date"]), "description": b["description"],
                         "amount_cents": b["amount_cents"], "status": st, "label": label})
-        return {"run_id": run["id"] if run else None, "lines": out}
+        return {"run_id": run["id"] if run else None, "latest_run": latest, "lines": out}
 
-    def trace(self, user, wid, line_id):
+    def trace(self, user, wid, line_id, run_id: str | None = None):
         w = self.gate(user, wid, "workspace.read", refs=[line_id])
+        run = self._trace_run(w, run_id)
         line, kind = None, None
         for k in ("bank", "ledger", "ar", "ap"):
             for r in w.batches.get(k, {}).get("rows", []):
                 if r["id"] == line_id:
                     line, kind = r, k
+        if run and run.get("lines") and (run_id or not line) and line_id in run["lines"]:
+            line = {k: v for k, v in run["lines"][line_id].items() if k != "kind"}
+            kind = run["lines"][line_id].get("kind")
         if not line:
             raise KeyError(line_id)
-        up = next((u for u in w.uploads.values() if u.get("sha256") == line["source_sha256"]), {})
-        run = list(w.runs.values())[-1] if w.runs else None
+        up = next((u for u in w.uploads.values() if u.get("sha256") == line.get("source_sha256")), {})
         steps = [{"stage": "Source", "title": f"Row {line['source_row']} of {up.get('filename', 'source file')}",
                   "detail": {k: str(v) for k, v in line.items() if k not in ("source_sha256", "ref_norm")},
                   "who": up.get("uploaded_by"), "when": up.get("uploaded_at"),

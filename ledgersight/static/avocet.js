@@ -236,7 +236,7 @@ function applyRole() {
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
-  S.run = null; S.agents = null; S.anim = null; S.runs = null; S.repRunId = null; S.repRun = null; renderPipelines(); resetIntakeUi();
+  S.run = null; S.agents = null; S.anim = null; S.runs = null; S.repRunId = null; S.repRun = null; S.runPinned = false; renderPipelines(); resetIntakeUi();
   const w = await api(W());
   S.wsMeta = w;
   renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
@@ -263,7 +263,7 @@ const STEPS = [["Import", "import"], ["Confirm columns", "import"], ["Reconcile"
 async function progress() {
   S.wsList = await api("/v1/workspaces");
   // every run (2026-11-16): Overview totals across all runs and the runs list on Reconciliation stay current
-  loadRuns().then(() => { renderAllRunsSummary(); renderRunsList("runs-list"); });
+  loadRuns().then(() => { renderAllRunsSummary(); renderRunsList("runs-list"); renderRunBars(); });
   const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
   const st = w.status;
   const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0,
@@ -702,7 +702,7 @@ async function openParty(pid) {
 
 // ---------------- trace ----------------
 async function renderTraceList(selected) {
-  let d; try { d = await api(W("/trace")); } catch (_) { return; }
+  let d; try { d = await api(W("/trace" + (S.run ? `?run_id=${encodeURIComponent(S.run.id)}` : ""))); } catch (_) { return; }
   if (!d.lines.length) return put("trace-list", el("div", { class: "muted" }, "Import a bank statement first."));
   put("trace-list", el("div", { class: "muted small" }, d.run_id ? `Status from reconciliation run ${d.run_id}` : el("span", {}, "Not reconciled yet. ", el("a", { href: "#recon", "data-go": "recon" }, "Run reconciliation"), " to see each outcome.")),
     el("table", { class: "tl" }, d.lines.map((l) => el("tr", { class: "click" + (l.id === selected ? " sel-row" : ""), onclick: () => openTrace(l.id), title: l.description },
@@ -714,7 +714,7 @@ async function openTrace(id) {
   if (!document.getElementById("p-trace").classList.contains("active")) go("trace");
   renderTraceList(id);
   put("trace-view", el("div", { class: "muted" }, "Loading…"));
-  let t; try { t = await api(W(`/trace/${encodeURIComponent(id)}`)); } catch (e) { return put("trace-view", el("div", { class: "msg err" }, e.message)); }
+  let t; try { t = await api(W(`/trace/${encodeURIComponent(id)}` + (S.run ? `?run_id=${encodeURIComponent(S.run.id)}` : ""))); } catch (e) { return put("trace-view", el("div", { class: "msg err" }, e.message)); }
   const fmt = (v) => v == null || v === "" ? "—" : typeof v === "object" ? Object.entries(v).filter(([, c]) => c).map(([f, c]) => f === c ? f : `${f} ← “${c}”`).join(", ") : String(v);
   const when = (x) => x ? fmtDateTime(x) : "";
   const who = (w) => { if (!w) return null; w = String(w).replace(/\s*\(deterministic\)$/, "");
@@ -803,6 +803,7 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "home") renderOverview();
   if (t.dataset.tab === "evidence") renderEvidence();
   if (t.dataset.tab === "trace") renderTraceList();
+  if (["recon", "exceptions", "trace"].includes(t.dataset.tab)) loadRuns().then(() => { renderRunBars(); renderRunsList("runs-list"); });
   if (t.dataset.tab === "parties") renderParties();
   if (t.dataset.tab === "reports") renderReports();
   if (t.dataset.tab === "rules") renderRules();
@@ -940,7 +941,7 @@ async function renderSources() {
           `${k.rejected_rows} of ${k.rows_received} rows rejected · see Import health`) : null);
   });
   put("src-status", el("div", { class: "ss-grid" }, tiles),
-    s.locked ? el("div", { class: "msg ss-locked" }, el("b", {}, "Files are locked. "), s.locked_reason) : null);
+    s.locked ? el("div", { class: "msg ss-locked" }, el("b", {}, "These files can't be cleared. "), s.locked_reason) : null);
   const nOn = s.kinds.filter((k) => k.status !== "NOT_CONNECTED").length;
   const ready = s.kinds.filter((k) => k.required).every((k) => k.status !== "NOT_CONNECTED");
   put("ss-sum", el("b", {}, `${nOn} of ${s.kinds.length}`), " imported", el("span", { class: "ss-dot2 " + (ready ? "is-ready" : "is-wait") }),
@@ -1371,7 +1372,7 @@ async function loadNotifications(quiet) {
 function notifText(it) {
   const who = it.by === S.me.user_id ? "You" : (it.by_name || niceActor(it.by) || "Someone");
   // 2026-11-13 action items: the approver did not get what this person sent (only the sender sees this)
-  if (it.kind === "NOT_RECEIVED") return `Not received: ${it.case_id ? "case " + it.case_id : it.exception_id || "your review item"} did not reach the approver in TrustOps`;
+  if (it.kind === "NOT_RECEIVED") return `Not sent: ${it.case_id ? "case " + it.case_id : it.exception_id || "your review item"} did not reach TrustOps`;
   if (it.kind === "SENT") return `${who} sent ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} to TrustOps for approval`;
   if (it.via === "TrustOps") return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} in TrustOps`;
   return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"}`;
@@ -1763,10 +1764,14 @@ function bulkBar(shown) {
   tropsReviewers().then((items) => { for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
   const note = el("input", { class: "bulk-note", maxlength: 1000, placeholder: "Note for the approver (optional)", "aria-label": "Note for the approver" });
   const btn = el("button", { class: "primary tro-send", type: "button", onclick: (ev) => sendSelected(ev.currentTarget, pick, note) },
-    el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Send selected to TrustOps");
+    el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Send to TrustOps");
+  // 2026-11-18 (user feedback): say why the other items in this list can't be selected
+  const waiting = shown.filter((x) => (x.trustops_review || {}).status === "PENDING").length;
+  const decided = shown.filter((x) => !(x.status === "OPEN" || x.status === "RETURNED")).length;
+  const why = [waiting ? `${waiting} already sent, waiting for approval` : "", decided ? `${decided} already decided` : ""].filter(Boolean).join(" · ");
   const sync = () => {
     const n = S.excSel.size;
-    count.textContent = n ? `${n} of ${can.length} selected` : `${can.length} can be sent`;
+    count.textContent = (n ? `${n} of ${can.length} selected` : `${can.length} can be sent`) + (why ? ` (${why})` : "");
     all.checked = n === can.length; all.indeterminate = n > 0 && n < can.length;
     btn.disabled = !n || !pick.value; btn.title = !n ? "Select items first" : !pick.value ? "Choose who to send them to first" : "";
     document.querySelectorAll("#exc-list input.exc-sel").forEach((c) => { c.checked = S.excSel.has(c.dataset.id); });
@@ -1793,11 +1798,39 @@ async function sendSelected(btn, pick, noteEl) {
     try {
       const r = await api(W(`/runs/${S.run.id}/send-to-trustops`), { method: "POST", json: { exception_ids: ids, to: pick.value, note: noteEl.value.trim() } });
       S.excSel = new Set();
-      const parts = [`${r.sent} sent to ${r.to}`]; if (r.skipped) parts.push(`${r.skipped} skipped`); if (r.not_sent) parts.push(`${r.not_sent} not sent (see the items)`);
-      toast(parts.join(" · ") + ".", r.not_sent ? "bad" : "good");
-      S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); loadNotifications(true);
+      const parts = [`${r.sent} sent to ${r.to}`]; if (r.skipped) parts.push(`${r.skipped} skipped`); if (r.not_sent) parts.push(`${r.not_sent} not sent`);
+      S.run = await api(W(`/runs/${S.run.id}`));
+      if (r.not_sent) S.excFilter = "notsent";   // 2026-11-18: show exactly which items did not go, with the reason
+      renderExceptions(); renderResults && renderResults(); loadNotifications(true);
+      if (r.not_sent || r.skipped) sendReport(r, parts.join(" · ") + ".");
+      else toast(parts.join(" · ") + ".", "good");
     } catch (e) { toast(e.message, "bad"); }
   }, "Sending…");
+}
+// 2026-11-18 (user feedback "what is the reason for not sent, not shown anywhere"): after a bulk send, one dialog lists
+// every item that did not go and why, grouped by reason. The items stay under the "Not sent" chip with Try again.
+function sendReport(r, head) {
+  const exc = (id) => (S.run.result.exceptions.find((x) => x.id === id) || {});
+  const groups = new Map();
+  for (const it of r.results || []) {
+    if (it.result === "sent") continue;
+    const tr = it.trustops_review || {};
+    const why = it.result === "skipped" ? it.reason : (tr.reason || it.reason || "TrustOps could not be reached");
+    const k = `${it.result === "skipped" ? "Skipped" : "Not sent"}: ${why}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(exc(it.exception_id).case_id || it.exception_id);
+  }
+  const body = el("div", { class: "send-report" }, el("p", {}, head),
+    ...[...groups].map(([why, ids]) => el("div", { class: "sr-group" }, el("b", {}, `${why} (${ids.length})`),
+      el("div", { class: "muted small" }, ids.join(", ")))),
+    r.not_sent ? el("p", { class: "muted small" }, "Items not sent are listed under “Not sent”. Press Try again on an item, or select them and send again. An item that already arrived in TrustOps is never sent twice.") : null);
+  const close = () => overlay.remove();
+  const overlay = el("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    el("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": "Send result" },
+      el("div", { class: "dialog-title" }, r.not_sent ? "Some items were not sent" : "Send result"), el("div", { class: "dialog-body" }, body),
+      el("div", { class: "dialog-actions" }, el("button", { class: "primary", onclick: close }, "OK"))));
+  document.body.append(overlay);
+  overlay.querySelector(".dialog-actions button").focus();
 }
 function tropsReviewer(x, tr) {
   const cur = tr.assigned_to || "";
@@ -1906,7 +1939,10 @@ function renderExceptions() {
   if (S.excFilter === "returned" && isCPA()) S.excFilter = "open";
   // 2026-11-13 (user request): one chip for decided items is split into Approved and Rejected (here or in TrustOps).
   if (S.excFilter === "decided") S.excFilter = "approved";
-  const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "returned" ? x.status === "RETURNED" || S.excSeen.has(x.id)
+  const notSent = (x) => isOpen(x) && (x.trustops_review || {}).status === "NOT_SENT";
+  const nNotSent = all.filter(notSent).length;
+  if (S.excFilter === "notsent" && !nNotSent) S.excFilter = "open";
+  const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "notsent" ? notSent(x) : S.excFilter === "returned" ? x.status === "RETURNED" || S.excSeen.has(x.id)
     : S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id)
     : S.excFilter === "approved" ? x.status === "ACCEPTED" : S.excFilter === "rejected" ? x.status === "REJECTED" : !isOpen(x));
   const nRet = all.filter((x) => x.status === "RETURNED").length;
@@ -1918,6 +1954,7 @@ function renderExceptions() {
   const tchip = (k, label, n) => el("button", { class: "pl-chip" + (S.excType === k ? " on" : ""), "aria-pressed": String(S.excType === k),
     "data-type": k, onclick: () => { S.excType = S.excType === k ? "all" : k; renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
   const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), isCPA() ? null : chip("returned", "Returned to me", nRet),
+    nNotSent ? chip("notsent", "Not sent", nNotSent, "pl-rej") : null,
     chip("approved", "Approved", all.filter((x) => x.status === "ACCEPTED").length),
     chip("rejected", "Rejected", all.filter((x) => x.status === "REJECTED").length, "pl-rej"), chip("all", "All", all.length),
     types.length > 1 ? [el("span", { class: "exc-sep", "aria-hidden": "true" }),   // el() flattens one level only
@@ -2461,14 +2498,40 @@ function renderRunPicker(sel, current, onPick) {
   sel.value = current || ""; sel.disabled = items.length < 2; sel.onchange = () => onPick(sel.value);
 }
 // Show another run on the Reconciliation, Review queue, Overview and Reports pages (the latest stays the default).
-async function switchRun(id) {
+async function switchRun(id, auto) {
   if (!id || (S.run && S.run.id === id)) return;
   try { S.run = await api(W(`/runs/${id}`)); } catch (e) { toast(e.message, "err"); return; }
-  S.repRunId = id; S.repRun = S.run; S.excRun = id;
-  renderRun(); renderExceptions(); progress(); renderRunsList("runs-list");
-  if (isActive("reports")) renderReports();
   const latest = S.runs && S.runs.latest_run === id;
-  toast(latest ? `Showing the latest run, ${id}.` : `Showing ${id}, an earlier run. Choose the latest run to return to it.`, "good");
+  S.runPinned = !auto && !latest;   // a run picked by the person stays; otherwise the pages follow the latest run
+  S.repRunId = id; S.repRun = S.run; S.excRun = id;
+  renderRun(); renderExceptions(); progress(); renderRunsList("runs-list"); renderRunBars();
+  if (isActive("reports")) renderReports();
+  if (isActive("trace")) { put("trace-view", el("div", { class: "muted" }, "Select a line on the left.")); renderTraceList(); }
+  if (!auto) toast(latest ? `Showing the latest run, ${id}.` : `Showing ${id}, an earlier run. Choose the latest run to return to it.`, "good");
+}
+// 2026-11-18 (user feedback): the run is chosen at the TOP of Reconciliation, Review queue and Trace (one picker each,
+// all showing the same run). Until the person picks an earlier run, the pages follow the latest run, so a run made by
+// a colleague (or in another tab) is shown instead of an older one.
+function renderRunBars() {
+  const R = S.runs, items = (R && R.items) || [];
+  const newest = items.find((r) => r.id === (R && R.latest_run));
+  if (S.run && newest && S.run.id !== newest.id && !S.runPinned && String(newest.created_at) > String(S.run.created_at || "")) {
+    switchRun(newest.id, true); return;
+  }
+  for (const id of ["rc-runbar", "exc-runbar", "tr-runbar"]) {
+    const box = $(id); if (!box) continue;
+    if (!items.length || !S.run) { put(box); box.classList.add("hidden"); continue; }
+    box.classList.remove("hidden");
+    const sel = el("select", { class: "runbar-pick", "aria-label": "Run shown" });
+    const r = items.find((x) => x.id === S.run.id) || {};
+    put(box, el("label", { class: "runbar-l" }, el("span", { class: "muted small" }, "Run"), sel),
+      r.latest ? el("span", { class: "badge PASS" }, "Latest") : el("span", { class: "badge OPEN" }, "Earlier run"),
+      r.review_items != null ? el("span", { class: "muted small" }, `${r.review_items} review item${r.review_items === 1 ? "" : "s"} · ${Object.values(r.files || {}).join(", ")}`) : null,
+      el("span", { class: "grow" }),
+      !r.latest && R.latest_run ? el("button", { class: "linkbtn", onclick: () => switchRun(R.latest_run) }, "Show the latest run") : null,
+      items.length > 1 ? el("span", { class: "muted small" }, `${items.length} runs`) : null);
+    renderRunPicker(sel, S.run.id, (v) => switchRun(v));
+  }
 }
 const localDay = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 function renderRunsList(target) {
