@@ -71,6 +71,14 @@ class Workspace:
         self.started_at = _ts()
         self.saved_events = 0  # how many evidence events are already in durable storage
         self.notif_seen: dict[str, int] = {}  # user_id -> newest evidence seq that person has seen in Notifications
+        # 2026-11-18 (user request): runs are numbered per client, RUN-0001, RUN-0002, ... The counter carries over a
+        # new period (reset), so a number is never used twice for a client: TrustOps items are linked by
+        # client|run|item, and a reused number could be matched to an older item there.
+        self.run_seq = 0
+
+    def next_run_id(self) -> str:
+        self.run_seq = max(self.run_seq, max((int(r[4:]) for r in self.runs if r[4:].isdigit()), default=0)) + 1
+        return f"RUN-{self.run_seq:04d}"
 
     # ---- durable state (everything except file bytes, which live on disk) ----
     def to_state(self) -> dict:
@@ -78,7 +86,7 @@ class Workspace:
                 "digests": [[k, s, uid] for (k, s), uid in self.digests.items()],
                 "tables": {k: [list(h), [list(r) for r in rows]] for k, (h, rows) in self.tables.items()},
                 "party_reviews": self.party_reviews, "runs": self.runs, "held": self.held, "started_at": self.started_at,
-                "notif_seen": self.notif_seen}
+                "notif_seen": self.notif_seen, "run_seq": self.run_seq}
 
     @classmethod
     def from_state(cls, wid: str, key, state: dict, events: list[dict], files_dir: Path) -> "Workspace":
@@ -100,6 +108,7 @@ class Workspace:
             r["batch_key"] = tuple(r.get("batch_key") or ())
         w.started_at = state.get("started_at", w.started_at)
         w.notif_seen = {k: int(v) for k, v in (state.get("notif_seen") or {}).items()}
+        w.run_seq = int(state.get("run_seq") or 0)
         for uid in w.uploads:
             f = next(iter(files_dir.glob(f"{uid}.*")), None) if files_dir.exists() else None
             if f:
@@ -803,7 +812,7 @@ class Service:
                              "fix them and upload the corrected file (it replaces the old one), or confirm that you "
                              "have reviewed them and want to reconcile without them. Then run again.")
         b = w.batches
-        rid = "RUN-" + uuid.uuid4().hex[:6]
+        rid = w.next_run_id()
         trace = "TR-" + uuid.uuid4().hex[:12]
         steps: list[dict] = []
         ctx = {}
@@ -2204,6 +2213,7 @@ class Service:
         archived = self.store.archive_events(wid) if self.store else None
         shutil.rmtree(DATA_DIR / TENANT / wid, ignore_errors=True)
         new = Workspace(wid, self._key)
+        new.run_seq = max(old.run_seq, max((int(r[4:]) for r in old.runs if r[4:].isdigit()), default=0))   # never reused
         new.log.append(tenant_id=TENANT, workspace_id=wid, actor_type="human", actor_id=user.user_id,
                        action="workspace.reset", policy_decision="ALLOW:OK",
                        workflow_pack="cpa-bank-reconciliation",
