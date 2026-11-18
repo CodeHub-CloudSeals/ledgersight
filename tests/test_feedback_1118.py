@@ -166,3 +166,19 @@ def test_run_by_filter_only_for_reviewers_and_actions_not_clipped():
     assert "const byFilter = isCPA();" in JS and 'byFilter ? el("label", {}, "Run by ", by) : null' in JS
     assert '"Run by", "Files"' in JS                                         # the column stays for everyone
     assert ".runs-act{display:flex" not in css and ".runs-act-in{display:flex" in css   # a flex <td> broke the table
+
+
+def test_runs_are_numbered_and_numbers_are_never_reused(cpa):
+    cpa.post(WS + "/reset", headers=H)
+    first = pack_run(cpa)["id"]
+    assert first.startswith("RUN-") and len(first) == 8 and first[4:].isdigit()
+    from ledgersight.service import Workspace
+    fresh = Workspace("client-a", appmod.svc._key)
+    assert fresh.next_run_id() == "RUN-0001" and fresh.next_run_id() == "RUN-0002"
+    ids = [r["id"] for r in cpa.get(WS + "/runs", headers=H).json()["items"]]
+    assert all(i.startswith("RUN-") and len(i) == 8 and i[4:].isdigit() for i in ids)
+    cpa.post(WS + "/reset", headers=H)                     # a new period continues the numbering
+    again = pack_run(cpa)["id"]
+    assert int(again[4:]) > int(max(ids)[4:])
+    w = appmod.svc.ws["client-a"]
+    assert w.to_state()["run_seq"] == int(again[4:])
