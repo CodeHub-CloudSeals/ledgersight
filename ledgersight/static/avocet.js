@@ -14,7 +14,42 @@ function el(tag, attrs, ...kids) {
   return e;
 }
 const put = (id, ...kids) => { const n = typeof id === "string" ? $(id) : id; n.replaceChildren(...kids.flat().filter((k) => k != null)); };
+// Like put, but updates the existing nodes in place (text, attributes, children) and only replaces what changed type.
+// Used for parts that re-render several times a second (the agent workflow during a run): the browser closes an open
+// right-click menu when the element under it is removed, so those parts must keep their elements.
+function morph(from, to) {
+  if (from.nodeType !== to.nodeType || from.nodeName !== to.nodeName) { from.replaceWith(to); return; }
+  if (from.nodeType === 3) { if (from.data !== to.data) from.data = to.data; return; }
+  if (from.nodeType !== 1) return;
+  for (const a of [...from.attributes]) if (!to.hasAttribute(a.name)) from.removeAttribute(a.name);
+  for (const a of to.attributes) if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+  morphKids(from, ...to.childNodes);
+}
+function morphKids(parent, ...kids) {
+  const next = kids.flat().filter((k) => k != null).map((k) => (typeof k === "string" ? document.createTextNode(k) : k));
+  const cur = [...parent.childNodes];
+  next.forEach((n, i) => (cur[i] ? morph(cur[i], n) : parent.append(n)));
+  cur.slice(next.length).forEach((n) => n.remove());
+}
 const usd = (c) => (c < 0 ? "-" : "") + "$" + (Math.abs(c) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 });
+// 2026-11-16 action items: one date format in LedgerSight and TrustOps. Dates "16 Nov 2026"; date-times
+// "16 Nov 2026, 14:05" in the viewer's local time. A plain ISO date (2026-10-09, a bank line date) is a calendar
+// day, never shifted by time zone. Unix seconds (TrustOps times) are accepted too.
+const _toDate = (v) => v instanceof Date ? v : typeof v === "number" ? new Date(v < 1e12 ? v * 1000 : v) : new Date(v);
+function fmtDate(v) {
+  if (v == null || v === "") return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  if (m) return `${+m[3]} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+m[2] - 1]} ${m[1]}`;
+  const d = _toDate(v); if (isNaN(d)) return String(v);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+function fmtDateTime(v) {
+  if (v == null || v === "") return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return fmtDate(v);
+  const d = _toDate(v); if (isNaN(d)) return String(v);
+  return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+const fmtTime = (v) => { const d = _toDate(v); return isNaN(d) ? "" : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }); };
 // Readable names on screen. Display only: the technical codes stay unchanged in config, the audit trail and exports.
 const ACRONYM = new Set(["GL", "AR", "AP", "CPA", "CSV", "JSON", "PDF", "OK", "ID", "AI", "LLM", "SHA", "URL", "MFA", "KYC", "OCR",
   "QBO", "OFX", "QFX", "XLSX", "TSV", "EML", "UTC", "API", "SSO", "US", "SAP"]);
@@ -46,10 +81,19 @@ const niceList = (v) => /^[a-z0-9_.]+(, ?[a-z0-9_.]+)*$/.test(String(v || "")) ?
 function niceActor(id) {
   const a = S.agents && S.agents.agents.find((x) => x.actor_id === id);
   if (a) return `${a.name} Agent`;
+  const d = (S.demoPeople || []).find((x) => x.user_id === id);   // local demo: "Staff Preparer", not "staff-preparer"
+  if (d) return d.name;
+  if (S.me && id === S.me.user_id && S.me.display_name) return S.me.display_name;
   return String(id ?? "").startsWith("agent:") ? `${nice(String(id).slice(6))} Agent` : id;
 }
 function niceDecision(d) { const [k, ...r] = String(d ?? "").split(":"); return r.length ? `${k} · ${nice(r.join(":"))}` : k; }
-const msg = (id, text, kind) => { const n = $(id); n.textContent = text || ""; n.className = "msg " + (kind || ""); };
+// Success messages ("good"/"ok") fade out after 8 s (2026-11-13); errors and notes stay until replaced.
+const msg = (id, text, kind) => {
+  const n = $(id); clearTimeout(n._fade); clearTimeout(n._gone);
+  n.textContent = text || ""; n.className = "msg " + (kind || "");
+  if (text && (kind === "good" || kind === "ok")) n._fade = setTimeout(() => { n.classList.add("fading");
+    n._gone = setTimeout(() => { n.textContent = ""; n.className = "msg"; }, 450); }, 8000);
+};
 
 async function api(path, opts = {}) {
   const o = { method: opts.method || "GET", headers: { "x-ledgersight": "1" }, credentials: "same-origin" };
@@ -66,7 +110,8 @@ async function api(path, opts = {}) {
   if (r.status === 401 && path !== "/v1/login") { showLogin(); }
   if (!r.ok) {
     const d = body && body.detail;
-    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${nice(d.reason_code)}${d.policy_id ? " · " + d.policy_id : ""}` : `HTTP ${r.status}`;
+    const text = typeof d === "string" ? d : d && d.reason_code ? `DENY · ${nice(d.reason_code)}${d.policy_id ? " · " + d.policy_id : ""}`
+      : r.status === 403 ? "You don't have access to this." : r.status >= 500 ? "Something went wrong on the server. Please try again." : "That didn't work. Please try again.";
     const err = new Error(text); err.status = r.status; err.body = body; throw err;
   }
   if (o.method === "POST" && S.ws && path.startsWith("/v1/workspaces")) setTimeout(progress, 0);
@@ -93,13 +138,15 @@ async function onGoogleCredential(resp) {
   try {
     await api("/v1/login/google", { method: "POST", json: { credential: resp.credential } });
     await boot();
-  } catch (e) { msg("lg-msg", e.message, "err"); }
+  } catch (e) {  // one plain message for any refusal; the reason is in the server's security log, not on screen
+    msg("lg-msg", e.status === 0 ? e.message : "We couldn't sign you in with this Google account. Use your CloudSeals work account, or ask your administrator for access.", "err");
+  }
 }
 async function setUpGoogleSignIn(clientId) {
   try {
     await loadScript("https://accounts.google.com/gsi/client");
     google.accounts.id.initialize({ client_id: clientId, callback: onGoogleCredential });
-    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", width: 280 });
+    google.accounts.id.renderButton($("g_id_button"), { theme: "outline", size: "large", shape: "rectangular", logo_alignment: "center", width: Math.max(220, Math.min(400, ($("lg-card").clientWidth || 440) - 62)) });
     $("lg-google").classList.remove("hidden");
   } catch (_) { /* password sign-in still works without this */ }
 }
@@ -122,6 +169,7 @@ async function boot() {
   await authConfig;
   try { S.me = await api("/v1/me"); } catch (_) { showLogin(); return; }
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  applyTrustOpsNav();
   $("logout").classList.toggle("hidden", !!S.noLogin);
   $("me-name").parentElement.classList.toggle("hidden", !!S.noLogin);
   $("act-as-wrap").classList.toggle("hidden", !S.noLogin);
@@ -136,62 +184,299 @@ async function boot() {
   S.wsList = await api("/v1/workspaces");
   put("ws-select", S.wsList.map((w) => el("option", { value: w.id }, proper(w.name))));
   S.ws = S.wsList[0] && S.wsList[0].id;
-  document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer" || !!S.noLogin);
+  document.querySelector('[data-tab="team"]').classList.toggle("hidden", S.me.role !== "owner_reviewer");   // Users: the CPA reviewer (admin), in every mode
+  applyRole();
   await switchWs();
   const fromHash = location.hash.slice(1);
   if (fromHash === "ask") openAsk();
   else if (fromHash && document.getElementById("p-" + fromHash)) go(fromHash);
+  else if (!canOpen((document.querySelector(".sidebar nav .tab.active") || {}).dataset?.tab)) go("home");
 }
 const ROLE_NAME = { owner_reviewer: "CPA reviewer", preparer: "Staff preparer", support: "Support" };
+// CPA reviewer vs staff preparer. The reviewer sees every page. The preparer does the work (sources, reconciliation,
+// review queue proposals, counterparties, trace, reports, rulebooks) and does not see the governance and admin
+// pages. The server refuses those views for a preparer too (POL-02, governance.read); hiding them is not the control.
+const GOV_TABS = new Set(["agents", "controls", "evidence", "trust", "team"]);
+const isCPA = () => !!(S.me && S.me.role === "owner_reviewer");
+// With TrustOps connected (2026-11-13, Naveen's integration) rules, guardrails and the audit trail live in
+// TrustOps: those pages are not opened here by anyone, and nothing links to them. Agents stays (user request
+// 2026-11-13): it is LedgerSight's own live view of its six agents, read from /agents.
+const TROPS_TABS = new Set(["rules", "controls", "evidence"]);
+const tropsOn = () => !!(S.me && S.me.trustops && S.me.trustops.connected);
+const canOpen = (tab) => !(tropsOn() && TROPS_TABS.has(tab)) && (isCPA() || !GOV_TABS.has(tab));
+function applyRole() {
+  document.body.classList.toggle("role-preparer", !isCPA());
+  document.querySelectorAll(".sidebar nav .tab").forEach((t) => {
+    if (t.dataset.tab !== "team") t.classList.toggle("hidden", !canOpen(t.dataset.tab));
+  });
+  // a group label with nothing visible under it is hidden as well
+  document.querySelectorAll(".sidebar nav .navlabel").forEach((lab) => {
+    let n = lab.nextElementSibling, any = false;
+    while (n && !n.classList.contains("navlabel")) { if (n.classList.contains("tab") && !n.classList.contains("hidden")) any = true; n = n.nextElementSibling; }
+    lab.classList.toggle("hidden", !any);
+  });
+  const chip = $("period-chip");
+  chip.title = isCPA() ? "Reporting period: click to choose the month" : "Reporting period. A CPA reviewer sets it.";
+  chip.classList.toggle("ro", !isCPA());
+  const steps = document.querySelectorAll("#ov-how .how > a"), tro = tropsOn() ? S.me.trustops : null;
+  if (steps.length === 5) {
+    const agents = canOpen("agents") ? "agents" : "recon";
+    steps[1].dataset.go = agents; steps[1].href = "#" + agents;
+    // step 3: the rules live in TrustOps when it is connected (opens the TrustOps console)
+    if (tro) { delete steps[2].dataset.go; steps[2].href = tro.console_url || "#home"; steps[2].target = "_blank"; steps[2].rel = "noopener"; }
+    else { steps[2].dataset.go = "rules"; steps[2].href = "#rules"; steps[2].removeAttribute("target"); }
+    put(steps[3].querySelector(".tx"), el("b", {}, tro ? "An approver decides in TrustOps" : isCPA() ? "You decide the problems" : "You propose resolutions"),
+      el("span", {}, tro ? "Each flagged item is approved or rejected in TrustOps; the result shows here." : isCPA() ? "Approve, reject or return each flagged item." : "A CPA reviewer then approves, rejects or returns each one."),
+      el("em", { class: tro ? "who to" : "who you" }, tro ? "TRUSTOPS" : "YOU"));
+    put(steps[4].querySelector(".tx > span"), tro ? "Finance report here; the governance record is kept in TrustOps." : "Finance report and governance report, with proof.");
+  }
+  const active = document.querySelector(".sidebar nav .tab.active");
+  if (active && !canOpen(active.dataset.tab)) go("home");
+}
 $("ws-select").onchange = async (e) => { S.ws = e.target.value; await switchWs(); };
 
 async function switchWs() {
-  S.run = null; S.agents = null; S.anim = null; renderPipelines(); resetIntakeUi();
+  S.run = null; S.agents = null; S.anim = null; S.runs = null; S.repRunId = null; S.repRun = null; S.runPinned = false; renderPipelines(); resetIntakeUi();
   const w = await api(W());
   S.wsMeta = w;
   renderStatus(w); renderHealth(w.uploads); renderDocs(w.documents); renderHeld(w.held);
   if (w.runs.length) S.run = await api(W(`/runs/${w.runs[w.runs.length - 1].id}`));
   renderRun(); renderExceptions(); renderControls(); await renderEvidence(); await renderTrust();
   S.asks = S.asks.filter((x) => x.ws === S.ws); renderAskLog(); if (S.askOpen) renderAsk(); if (isActive("reports")) renderReports();
-  if (S.me.role === "owner_reviewer" && !S.noLogin) renderTeam();
+  if (S.me.role === "owner_reviewer") renderTeam();
   fillProfile(w);
   await progress();
+  S.notif = null; closeNotif(); await loadNotifications(true);   // a new client or person: start from that book's list
 }
 
 // ---------------- progress: stepper + overview ----------------
-S.exported = (() => { try { return JSON.parse(localStorage.getItem("ls-exported") || "{}"); } catch (_) { return {}; } })();
-function markExported() {  // the Report step is done once this run's report has been downloaded (remembered in this browser)
+// The Report step is done once a report or review pack for the latest run has been downloaded. The server reads that
+// from the signed audit trail (status.report_delivered), so every browser and colleague sees the same thing; the
+// in-memory flag only bridges the moment between the click and the server recording the download.
+S.exported = {};
+function markExported() {
   if (!S.run) return;
   S.exported[S.ws + S.run.id] = true;
-  try { localStorage.setItem("ls-exported", JSON.stringify(S.exported)); } catch (_) {}
-  setTimeout(progress, 300);
+  setTimeout(progress, 300); setTimeout(progress, 1500);
 }
 const STEPS = [["Import", "import"], ["Confirm columns", "import"], ["Reconcile", "recon"], ["Review", "exceptions"], ["Report", "reports"]];
 async function progress() {
   S.wsList = await api("/v1/workspaces");
+  // every run (2026-11-16): Overview totals across all runs and the runs list on Reconciliation stay current
+  loadRuns().then(() => { renderAllRunsSummary(); renderRunsList("runs-list"); renderRunBars(); });
   const w = S.wsList.find((x) => x.id === S.ws); if (!w) return;
   const st = w.status;
-  const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0, !!S.exported[S.ws + st.last_run]];
+  const done = [st.uploads > 0, st.bank && st.ledger, st.runs > 0, st.runs > 0 && st.open_exceptions === 0,
+    !!st.report_delivered || !!S.exported[S.ws + st.last_run]];
   const cur = done.indexOf(false);
-  const kids = [];
-  STEPS.forEach(([name, tab], i) => {
-    if (i) kids.push(el("span", { class: "bar" + (done[i - 1] ? " done" : "") }));
-    kids.push(el("button", { class: "step" + (done[i] ? " done" : i === cur ? " cur" : ""), onclick: () => go(tab) },
-      el("span", { class: "dot" }, done[i] ? "✓" : String(i + 1)), name));
-  });
-  put("stepper", kids);
-  const nr = $("nav-review"); nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions);
+  // Compact month-end progress on Overview: one segment per step (click to open that page) + the current step.
+  const nDone = done.filter(Boolean).length;
+  put("stepper",
+    el("span", { class: "mp-k" }, "Month-end"),
+    el("div", { class: "mp-segs" }, STEPS.map(([name, tab], i) => {
+      const state = done[i] ? "done" : i === cur ? "current" : "to do";
+      return el("button", { type: "button", class: "step" + (done[i] ? " done" : i === cur ? " cur" : ""), title: `${i + 1}. ${name}: ${state}`,
+        "aria-label": `Step ${i + 1}, ${name}: ${state}`, onclick: () => go(tab) }, el("i", {}));
+    })),
+    el("span", { class: "mp-cur" }, cur < 0 ? el("b", {}, "All 5 steps done") : [el("b", {}, STEPS[cur][0]), ` · step ${cur + 1} of ${STEPS.length}`]),
+    el("span", { class: "mp-n" }, `${nDone}/${STEPS.length} done`));
+  // the review count waits for the agents too (2026-11-13): it appears with the other figures when the replay ends
+  const nr = $("nav-review"), running = !!(S.anim && S.anim.mode !== "upload");
+  if (!running) { nr.textContent = st.open_exceptions || ""; nr.classList.toggle("hidden", !st.open_exceptions); }
   // Nothing to clear -> the clear buttons are off (they come back as soon as a file is imported or a run exists).
   const hasData = st.uploads > 0 || st.runs > 0;
-  $("clear-all").disabled = !hasData; $("clear-all").title = hasData ? "" : "Nothing imported yet";
+  // 2026-11-13 action items: no "Clear all imported files" on Sources; each file has its own Clear
   $("reset-btn").disabled = S.me.role !== "owner_reviewer" || !hasData; $("reset-btn").title = hasData ? "" : "Nothing to clear yet";
   $("page-sub").textContent = proper(w.period || "");  // top bar: client + period only
   const opt = [...$("ws-select").options].find((o) => o.value === w.id); if (opt) opt.textContent = proper(w.name);
+  $("ws-av").textContent = proper(w.name).split(/[\s\-_.()]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("") || "–";
   S.status = st;
   renderReadiness();
   renderOverview();
 }
-["exp-csv", "exp-pack", "exp-print"].forEach((id) => $(id).addEventListener("click", markExported));
+
+// ---------------- dashboard visuals ----------------
+// Presentation only. Every figure is read from the run and status already loaded (S.run, S.wsList, S.events);
+// nothing here calculates money differently or invents data. Charts are plain SVG (no external libraries: CSP).
+const REDUCE = !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+const SVG_NS = "http://www.w3.org/2000/svg";
+function sv(tag, attrs, ...kids) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null) e.setAttribute(k, v);
+  for (const c of kids.flat()) if (c != null) e.append(c);
+  return e;
+}
+// Numbers count up from their previous value (only when they change), ending on the exact formatted value.
+S.kv = S.kv || {};
+function counter(key, value, fmt) {
+  const span = el("span", { class: "num" }, fmt(value));
+  const from = S.kv[key]; S.kv[key] = value;
+  if (REDUCE || from === value || typeof value !== "number") return span;
+  const start = typeof from === "number" ? from : 0, t0 = performance.now(), dur = 750;
+  span.textContent = fmt(start);
+  (function step(t) {
+    if (!span.isConnected && t - t0 > 50) { span.textContent = fmt(value); return; }
+    const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    span.textContent = k < 1 ? fmt(Math.round(start + (value - start) * e)) : fmt(value);
+    if (k < 1) requestAnimationFrame(step);
+  })(t0);
+  return span;
+}
+const compactUsd = (c) => {
+  const v = Math.abs(c) / 100, s = c < 0 ? "-" : "";
+  return v >= 1e6 ? `${s}$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${s}$${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k` : `${s}$${Math.round(v)}`;
+};
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const shortDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? `${+m[3]} ${MON[+m[2] - 1]}` : d; };  // 9 Oct (2026-11-16)
+const KPI_ICON = {
+  sources: "M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 7v5c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12v5c0 1.7 3.6 3 8 3s8-1.3 8-3v-5",
+  matched: "M9 12.5l2 2 4-4.5M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
+  review: "M3 13h5l2 3h4l2-3h5M5.5 5h13l2.5 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z",
+  variance: "M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8h14M8 21h8",
+  unexplained: "M12 3l9 16H3zM12 10v4M12 17h.01",
+  propose: "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4",
+  returned: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  waiting: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
+};
+function kpiIcon(name) {
+  return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" },
+    sv("path", { d: KPI_ICON[name] }));
+}
+const GO_ICON = () => sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: "M7 17 17 7M8 7h9v9" }));
+function kpiCard({ icon, label, value, tone, sub, viz, extra, wide, cls, link, linkLabel }) {
+  // link: an existing page; the round arrow opens it (navigation only)
+  return el("div", { class: "kw" + (tone ? " " + tone : "") + (wide ? " kw-wide" : "") + (cls ? " " + cls : "") },
+    el("div", { class: "kw-top" }, el("span", { class: "kw-k" }, label),
+      link ? el("button", { type: "button", class: "kw-go", title: linkLabel || "Open", "aria-label": linkLabel || "Open", onclick: () => (link === "exceptions" ? openReview() : go(link)) }, GO_ICON())
+        : el("span", { class: "kw-ico" }, kpiIcon(icon))),
+    el("div", { class: "kw-mid" }, el("div", { class: "kw-v" }, value), viz ? el("div", { class: "kw-viz" }, viz) : null),
+    extra || null,
+    sub ? el("div", { class: "kw-s" }, sub) : null);
+}
+// small radial progress (0..1)
+function ring(frac, cls) {
+  const r = 15, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac || 0));
+  const arc = sv("circle", { cx: 18, cy: 18, r, class: "rg-v " + (cls || ""), "stroke-dasharray": `${c * f} ${c}`, transform: "rotate(-90 18 18)" });
+  if (!REDUCE) arc.style.setProperty("--len", String(c));
+  return sv("svg", { class: "ring", viewBox: "0 0 36 36", "aria-hidden": "true" }, sv("circle", { cx: 18, cy: 18, r, class: "rg-t" }), arc);
+}
+function sparkline(values, cls) {
+  if (!values || values.length < 2) return null;
+  const W = 120, H = 34, min = Math.min(...values, 0), max = Math.max(...values, 0), span = max - min || 1;
+  const pts = values.map((v, i) => [i / (values.length - 1) * W, H - 3 - (v - min) / span * (H - 6)]);
+  const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const zero = H - 3 - (0 - min) / span * (H - 6);
+  return sv("svg", { class: "spark " + (cls || ""), viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" },
+    sv("line", { x1: 0, x2: W, y1: zero, y2: zero, class: "sp-zero" }),
+    sv("path", { d: d + ` L${W} ${zero} L0 ${zero} Z`, class: "sp-area" }),
+    sv("path", { d, class: "sp-line", pathLength: "1" }),
+    sv("circle", { cx: pts[pts.length - 1][0], cy: pts[pts.length - 1][1], r: 2.6, class: "sp-dot" }));
+}
+// Bank/ledger lines in the book currency (foreign-currency lines are kept out of the totals and raised for FX review).
+const inBase = (run, l) => !l.currency || l.currency === ((run.result && run.result.base_currency) || "USD");
+// Running (bank minus ledger) by date, but only if it adds up to the run's own variance; otherwise no sparkline.
+function varianceSeries(run) {
+  const r = run.result, lines = Object.values(run.lines).filter((l) => inBase(run, l));
+  const sum = (k) => lines.filter((l) => l.kind === k).reduce((s, l) => s + l.amount_cents, 0);
+  if (sum("bank") !== r.bank_net_cents || sum("ledger") !== r.ledger_net_cents) return null;
+  const byDate = {};
+  lines.forEach((l) => { if (l.kind === "bank" || l.kind === "ledger") byDate[l.date] = (byDate[l.date] || 0) + (l.kind === "bank" ? l.amount_cents : -l.amount_cents); });
+  const dates = Object.keys(byDate).sort();
+  let cum = 0; const out = dates.map((d) => (cum += byDate[d]));
+  out.dates = dates;
+  return out.length && out[out.length - 1] === r.variance_cents ? out : null;
+}
+
+// Cash movement: money in and money out on the bank statement, per day (from the imported bank lines).
+function cashFlowChart(run) {
+  const bank = Object.values(run.lines).filter((l) => l.kind === "bank" && inBase(run, l));
+  if (!bank.length) return empty("No bank transactions in this run", "");
+  const days = {};
+  bank.forEach((l) => { const d = days[l.date] = days[l.date] || { in: 0, out: 0, n: 0 }; if (l.amount_cents >= 0) d.in += l.amount_cents; else d.out += -l.amount_cents; d.n++; });
+  const keys = Object.keys(days).sort();
+  const totIn = keys.reduce((s, k) => s + days[k].in, 0), totOut = keys.reduce((s, k) => s + days[k].out, 0);
+  const W = 720, H = 230, L = 54, R = 12, T = 14, B = 30, pw = W - L - R, ph = H - T - B;
+  let acc = 0; const cum = keys.map((k) => (acc += days[k].in - days[k].out));  // running net on the statement; ends at bank net
+  const maxIn = Math.max(...keys.map((k) => days[k].in), ...cum, 0), maxOut = Math.max(...keys.map((k) => days[k].out), ...cum.map((v) => -v), 0);
+  const tot = (maxIn + maxOut) || 1, y0 = T + ph * (maxIn / tot), sc = ph / tot;
+  const slot = pw / keys.length, bw = Math.max(4, Math.min(16, slot * 0.32));
+  const g = sv("g", {});
+  [maxIn, -maxOut].forEach((v) => { if (!v) return; const y = y0 - v * sc;
+    g.append(sv("line", { x1: L, x2: W - R, y1: y, y2: y, class: "cf-grid" }), sv("text", { x: L - 8, y: y + 4, class: "cf-ax", "text-anchor": "end" }, compactUsd(v))); });
+  g.append(sv("line", { x1: L, x2: W - R, y1: y0, y2: y0, class: "cf-zero" }), sv("text", { x: L - 8, y: y0 + 4, class: "cf-ax", "text-anchor": "end" }, "$0"));
+  const ticks = new Set([0, keys.length - 1, Math.round((keys.length - 1) / 2)]);
+  keys.forEach((k, i) => {
+    const cx = L + slot * i + slot / 2, d = days[k];
+    if (d.in) { const b = sv("rect", { x: cx - bw - 1, y: y0 - d.in * sc, width: bw, height: Math.max(1, d.in * sc), rx: 3, class: "cf-in" }); b.style.animationDelay = `${i * 35}ms`; g.append(b); }
+    if (d.out) { const b = sv("rect", { x: cx + 1, y: y0, width: bw, height: Math.max(1, d.out * sc), rx: 3, class: "cf-out" }); b.style.animationDelay = `${i * 35 + 60}ms`; g.append(b); }
+    if (ticks.has(i)) g.append(sv("text", { x: cx, y: H - 8, class: "cf-ax", "text-anchor": "middle" }, shortDate(k)));
+    const hit = sv("rect", { x: L + slot * i, y: T, width: slot, height: ph, class: "cf-hit" });
+    hit.dataset.i = i; g.append(hit);
+  });
+  const pts = keys.map((k, i) => [L + slot * i + slot / 2, y0 - cum[i] * sc]);
+  g.append(sv("path", { d: pts.map((q, i) => (i ? "L" : "M") + q[0].toFixed(1) + " " + q[1].toFixed(1)).join(" "), class: "cf-net", pathLength: "1" }));
+  pts.forEach((q) => g.append(sv("circle", { cx: q[0].toFixed(1), cy: q[1].toFixed(1), r: 2.6, class: "cf-net-dot" })));
+  g.querySelectorAll(".cf-hit").forEach((h) => g.append(h));  // hover targets stay on top
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "cf-svg", role: "img", "aria-label": `Bank money in ${usd(totIn)} and money out ${usd(totOut)} by day` }, g);
+  const tip = el("div", { class: "cf-tip", "aria-hidden": "true" });
+  const wrap = el("div", { class: "cf-wrap" }, svg, tip);
+  svg.addEventListener("pointermove", (ev) => {
+    const h = ev.target.closest && ev.target.closest(".cf-hit"); if (!h) { tip.classList.remove("on"); return; }
+    const k = keys[+h.dataset.i], d = days[k];
+    put(tip, el("b", {}, shortDate(k)), el("span", { class: "in" }, `In ${usd(d.in)}`), el("span", { class: "out" }, `Out ${usd(d.out)}`),
+      el("span", {}, `Running net ${usd(cum[+h.dataset.i])}`), el("span", {}, `${d.n} transaction${d.n === 1 ? "" : "s"}`));
+    const box = wrap.getBoundingClientRect(), hb = h.getBoundingClientRect();
+    tip.style.left = `${Math.min(box.width - 150, Math.max(0, hb.left - box.left + hb.width / 2 - 70))}px`;
+    tip.classList.add("on");
+    g.querySelectorAll(".cf-hit.on").forEach((x) => x.classList.remove("on")); h.classList.add("on");
+  });
+  svg.addEventListener("pointerleave", () => { tip.classList.remove("on"); g.querySelectorAll(".cf-hit.on").forEach((x) => x.classList.remove("on")); });
+  const viz = window.LSCharts ? LSCharts.flow({ keys, days, cum, label: svg.getAttribute("aria-label"), fmtAxis: compactUsd, fmtDate: shortDate, usd }) : wrap;
+  return el("div", {},
+    el("div", { class: "cf-stats" },
+      el("div", {}, el("span", { class: "lg in" }), el("span", { class: "k" }, "Money in"), el("b", {}, usd(totIn))),
+      el("div", {}, el("span", { class: "lg out" }), el("span", { class: "k" }, "Money out"), el("b", {}, usd(totOut))),
+      el("div", {}, el("span", { class: "lg net" }), el("span", { class: "k" }, "Running net"), el("b", {}, usd(run.result.bank_net_cents))),
+      el("div", {}, el("span", { class: "k" }, "Days with activity"), el("b", {}, String(keys.length)))),
+    viz);
+}
+
+// Match coverage: bank transactions matched, raised for review, or neither; plus bank vs ledger totals.
+function coverageChart(run) {
+  const r = run.result;
+  const bankIds = Object.values(run.lines).filter((l) => l.kind === "bank" && inBase(run, l)).map((l) => l.id);
+  if (!bankIds.length) return empty("No bank transactions in this run", "");
+  const matchedIds = new Set(r.matches.map((m) => m.bank_id));
+  const matched = r.matches.length;
+  const review = Math.min(Math.max(0, bankIds.length - matched), new Set(r.exceptions.map((x) => x.bank_id).filter((id) => id && !matchedIds.has(id))).size);
+  const other = Math.max(0, bankIds.length - matched - review);
+  const matchedReview = new Set(r.exceptions.map((x) => x.bank_id).filter((id) => id && matchedIds.has(id))).size;
+  const segs = [["Matched", matched, "seg-m"], ["Unmatched, raised for review", review, "seg-r"], ["Unmatched, not raised", other, "seg-o"]].filter((s) => s[1] > 0);
+  const total = bankIds.length, R = 52, C = 2 * Math.PI * R;
+  let acc = 0;
+  const arcs = segs.map(([, n, cls], i) => {
+    const len = n / total * C, a = sv("circle", { cx: 64, cy: 64, r: R, class: "dn " + cls, "stroke-dasharray": `${Math.max(0, len - 2)} ${C}`, "stroke-dashoffset": String(-acc), transform: "rotate(-90 64 64)" });
+    a.style.animationDelay = `${i * 120}ms`; acc += len; return a;
+  });
+  const pct = Math.round(matched / total * 100);
+  const donut = el("div", { class: "dn-wrap" },
+    window.LSCharts ? LSCharts.donut({ segs, total, label: `${matched} of ${total} bank transactions matched` }) :
+    sv("svg", { viewBox: "0 0 128 128", class: "dn-svg", role: "img", "aria-label": `${matched} of ${total} bank transactions matched` },
+      sv("circle", { cx: 64, cy: 64, r: R, class: "dn-track" }), arcs),
+    el("div", { class: "dn-mid" }, el("b", {}, counter("cov-pct", pct, (n) => `${n}%`)), el("span", {}, "matched")));
+  const legend = el("ul", { class: "dn-legend" }, segs.map(([k, n, cls]) =>
+    el("li", {}, el("span", { class: "lg " + cls }), el("span", { class: "k" }, k), el("b", {}, String(n)))),
+    matchedReview ? el("li", { class: "sub" }, el("span", { class: "k" }, "of the matched, still under review"), el("b", {}, String(matchedReview))) : null,
+    el("li", { class: "tot" }, el("span", { class: "k" }, "Bank transactions"), el("b", {}, String(total))));
+  const mx = Math.max(Math.abs(r.bank_net_cents), Math.abs(r.ledger_net_cents), 1);
+  const bar = (k, v, cls) => el("div", { class: "nb" }, el("div", { class: "nb-k" }, el("span", {}, k), el("b", {}, usd(v))),
+    el("div", { class: "nb-t" }, (() => { const f = el("i", { class: cls }); f.style.width = `${Math.abs(v) / mx * 100}%`; return f; })()));
+  return el("div", {},
+    el("div", { class: "dn-row" }, donut, legend),
+    el("div", { class: "nb-box" }, bar("Bank net", r.bank_net_cents, "b"), bar("Ledger net", r.ledger_net_cents, "l"),
+      el("div", { class: "nb-sum" }, el("span", {}, "Variance ", el("b", {}, usd(r.variance_cents))),
+        el("span", {}, "Unexplained ", el("b", { class: r.unexplained_variance_cents ? "bad" : "good" }, usd(r.unexplained_variance_cents))))));
+}
 
 // ---------------- overview dashboard ----------------
 function greeting() { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; }
@@ -212,40 +497,82 @@ async function renderOverview() {
     }
   }
   const next = !st.uploads ? ["Upload this period's files", "import"] : !(st.bank && st.ledger) ? ["Add the bank statement and ledger", "import"]
-    : !st.runs ? ["Run reconciliation", "recon"] : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
+    : !st.runs ? ["Run reconciliation", "recon"] : st.stale ? ["Run reconciliation again (files changed)", "recon"]
+    : st.open_exceptions ? reviewStep : ["Download the reports", "reports"];
   const done = st.runs && !st.open_exceptions;
-  put("ov-hero", el("div", {}, el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
-      el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
-      el("div", { class: "muted small" }, [w.industry, w.period].filter(Boolean).map(proper).join(" · "))),
-    el("div", { class: "next" }, el("span", { class: "muted small" }, "Next step"),
-      done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
-      el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →")));
   const r = S.run && S.run.result;
-  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank").length : 0;
+  const bankLines = S.run ? Object.values(S.run.lines).filter((l) => l.kind === "bank" && inBase(S.run, l)).length : 0;
   const pct = r && bankLines ? Math.round(r.matches.length / bankLines * 100) : null;
-  put("ov-kpis",
-    tile("Sources imported", `${SOURCE_KINDS.filter((k) => st[k]).length} / ${SOURCE_KINDS.length}`, "", st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed"),
-    tile("Matched automatically", r ? `${r.matches.length}` : "–", r ? "good" : "", r ? `${pct}% of ${bankLines} bank transactions` : "no run yet"),
-    tile("Awaiting review", r ? st.open_exceptions : "–", r && st.open_exceptions ? "amb" : r ? "good" : "", r ? `${r.exceptions.length} raised in total` : ""),
-    tile("Variance", r ? usd(r.variance_cents) : "–", "", r ? "bank net minus ledger net" : ""),
-    tile("Unexplained", r ? usd(r.unexplained_variance_cents) : "–", r ? (r.unexplained_variance_cents ? "bad" : "good") : "", r ? "after review items" : ""));
+  // Page header (replaces the big hero: match %, counts and period already live in the KPIs, top bar and progress line).
+  put("ov-hero",
+    el("div", { class: "ovh-l" },
+      el("div", { class: "greet" }, `${greeting()}, ${S.me.display_name}`),
+      el("h2", {}, proper(w.name), el("span", { class: "badge " + state[1] }, state[0])),
+      el("div", { class: "hero-meta" }, [w.industry, w.period].filter(Boolean).map(proper).concat(isCPA() ? [] : ["Your work as staff preparer"]).join(" · "))),
+    el("div", { class: "ovh-r" },
+      el("span", { class: "next-k" }, "Next step"),
+      el("div", { class: "next-btns" },
+        done && S.me.role === "owner_reviewer" ? el("button", { class: "secondary", id: "next-period", onclick: (e) => clearClient(e.currentTarget, true) }, "Start next period") : null,
+        el("button", { class: "primary", id: "next-step", onclick: () => next[1] === "exceptions" ? openReview() : go(next[1]) }, next[0] + " →"))));
+  const nSrc = SOURCE_KINDS.filter((k) => st[k]).length;
+  const decided = r ? r.exceptions.length - st.open_exceptions : 0;
+  const vSeries = r && S.run.id === st.last_run ? varianceSeries(S.run) : null;
+  const progBar = () => { const t = r.exceptions.length || 1, pt = el("div", { class: "pt" }), d = el("i", { class: "d" }), o = el("i", { class: "o" });
+    d.style.width = `${decided / t * 100}%`; o.style.width = `${st.open_exceptions / t * 100}%`; if (decided) pt.append(d); if (st.open_exceptions) pt.append(o);
+    return el("div", { class: "prog" }, pt, el("div", { class: "pl" }, el("span", {}, el("b", {}, String(decided)), " decided"), el("span", {}, el("b", {}, String(st.open_exceptions)), " open"))); };
+  const unx = r ? r.unexplained_variance_cents : null;
+  if (!isCPA()) prepKpis(r, st, nSrc); else put("ov-kpis",
+    kpiCard({ icon: "matched", label: "Matched automatically", tone: r ? "good" : "", cls: "kw-hero", link: "recon", linkLabel: "Open Reconciliation",
+      value: r ? counter("k-m", r.matches.length, String) : "–", viz: r ? ring(pct / 100, "ok") : null,
+      sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "kt-n" }, `${pct}%`), `of ${bankLines} bank transactions`) : "no run yet" }),
+    kpiCard({ icon: "review", label: "Awaiting review", tone: r && st.open_exceptions ? "amb" : r ? "good" : "", link: "exceptions", linkLabel: "Open the review queue",
+      value: r ? counter("k-o", st.open_exceptions, String) : "–",
+      sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "kt-n" }, String(r.exceptions.length)), "raised in total") : "",
+      extra: r && r.exceptions.length ? progBar() : null }),
+    kpiCard({ icon: "unexplained", label: "Unexplained variance", tone: r ? (unx ? "bad" : "good") : "", cls: r ? "kw-status " + (unx ? "bad" : "good") : "", link: "exceptions", linkLabel: "Open the review queue",
+      value: r ? counter("k-u", unx, usd) : "–",
+      sub: r ? el("span", { class: "kw-trend" }, el("span", { class: "chip " + (unx ? "bad" : "good") }, unx ? "Needs attention" : "Fully explained"), "after review items") : "" }),
+    kpiCard({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "", link: "import", linkLabel: "Open Sources",
+      value: el("span", {}, counter("k-src", nSrc, String), el("small", {}, ` / ${SOURCE_KINDS.length}`)),
+      sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
+      extra: el("div", { class: "segs lg", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }));
+  put("ov-var", r ? kpiCard({ icon: "variance", label: "Variance", cls: "kw-var", link: "recon", linkLabel: "Open Reconciliation", value: counter("k-v", r.variance_cents, usd),
+      sub: "bank net minus ledger net",
+      extra: el("div", {}, vSeries ? (window.LSCharts ? LSCharts.variance({ values: vSeries, dates: vSeries.dates, fmtDate: shortDate, usd })
+          : (() => { const sp = sparkline(vSeries, ""); sp.setAttribute("class", "spark spark-lg"); return sp; })()) : null,
+        el("div", { class: "kw-pair" }, el("span", {}, "Bank net", el("b", {}, usd(r.bank_net_cents))), el("span", {}, "Ledger net", el("b", {}, usd(r.ledger_net_cents))))) }) : null);
+  const cur = r && S.run.id === st.last_run;
+  $("ov-charts").classList.toggle("hidden", !cur);
+  if (cur) { put("ov-flow", cashFlowChart(S.run)); put("ov-cover", coverageChart(S.run)); }
   renderCaseCards(r && S.run.id === st.last_run ? r : null);
-  if (isActive("home")) { try { await renderEvidence(); } catch (_) { /* counts fall back to last loaded */ } }
-  const ev = S.events || [];
-  const cnt = (k) => ev.filter((e) => String(e.policy_decision).startsWith(k)).length;
-  put("ov-gov", el("div", { class: "kpis" }, [["ALLOW", cnt("ALLOW")], ["ESCALATE", cnt("ESCALATE")], ["DENY", cnt("DENY")], ["Evidence", S.verify || "–"]]
-      .map(([k, v]) => el("div", { class: "kpi" }, el("div", { class: "k" }, k), el("div", { class: "v" }, el("span", { class: "badge " + (k === "Evidence" ? v : k) }, String(v)))))),
-    el("div", { class: "muted small" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
-  const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
-  put("ov-activity", ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse().map((e) => el("li", {}, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)),
-    el("span", {}, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)} `,
-      el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0]),
-      e.policy_id ? el("span", { class: "muted" }, ` ${e.policy_id}`) : null))));
-  if (!ev.some((e) => !ROUTINE.has(e.action))) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
+  $("ov-how").classList.toggle("hidden", !!st.uploads);  // onboarding guide until the first file is in
   await loadAgents();
 }
+// Staff preparer: the same tiles, counting their own work. Read from the run already loaded; nothing invented.
+function prepKpis(r, st, nSrc) {
+  const cur = r && S.run.id === st.last_run, xs = cur ? r.exceptions : [];
+  const toPropose = xs.filter((x) => x.status === "OPEN" && !x.proposal_note).length;
+  const returned = xs.filter((x) => x.status === "RETURNED").length;
+  const waiting = xs.filter((x) => x.status === "OPEN" && x.proposal_note).length;
+  const toReturned = () => { S.excFilter = "returned"; S.excSeen = new Set(); go("exceptions"); renderExceptions(); };
+  const card = (o) => { const c = kpiCard(o); if (o.onGo) { const b = c.querySelector(".kw-go"); if (b) b.onclick = o.onGo; } return c; };
+  put("ov-kpis",
+    card({ icon: "propose", label: "To propose", tone: cur ? (toPropose ? "amb" : "good") : "", cls: "kw-hero", link: "exceptions", linkLabel: "Open the review queue",
+      value: cur ? counter("p-todo", toPropose, String) : "–",
+      sub: cur ? (toPropose ? "items waiting for your proposed resolution" : "every open item has your proposal") : "no run yet" }),
+    card({ icon: "returned", label: "Returned to me", tone: cur ? (returned ? "bad" : "good") : "", link: "exceptions", linkLabel: "Show items returned to me", onGo: toReturned,
+      value: cur ? counter("p-ret", returned, String) : "–",
+      sub: cur ? (returned ? "a CPA reviewer sent these back with a note" : "nothing sent back") : "" }),
+    card({ icon: "waiting", label: "Waiting for a CPA reviewer", tone: cur ? "" : "", link: "exceptions", linkLabel: "Open the review queue",
+      value: cur ? counter("p-wait", waiting, String) : "–",
+      sub: cur ? `${xs.length - xs.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length} of ${xs.length} decided` : "" }),
+    card({ icon: "sources", label: "Sources imported", tone: st.bank && st.ledger ? "good" : "", link: "import", linkLabel: "Open Sources",
+      value: el("span", {}, counter("k-src", nSrc, String), el("small", {}, ` / ${SOURCE_KINDS.length}`)),
+      sub: st.bank && st.ledger ? "bank and ledger present" : "bank and ledger needed",
+      extra: el("div", { class: "segs lg", "aria-hidden": "true" }, SOURCE_KINDS.map((k) => el("i", { class: st[k] ? "on" : "", title: KIND[k] || k }))) }));
+}
 // Exceptions grouped by what the client sees. Every case is a link to its detail in the review queue.
-const CASE_ORDER = ["UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
+const CASE_ORDER = ["INCOMPLETE_SOURCE", "UNMATCHED", "DUPLICATE", "PARTIAL", "TAX_REVIEW", "FX_REVIEW", "APPROVAL_REQUIRED"];
 function renderCaseCards(r) {
   const box = $("ov-cases");
   if (!r || !r.exceptions.length) { box.classList.add("hidden"); return; }
@@ -254,23 +581,30 @@ function renderCaseCards(r) {
   r.exceptions.forEach((x) => { (groups[x.client_status || "APPROVAL_REQUIRED"] = groups[x.client_status || "APPROVAL_REQUIRED"] || []).push(x); });
   const keys = CASE_ORDER.filter((k) => groups[k]).concat(Object.keys(groups).filter((k) => !CASE_ORDER.includes(k)));
   const isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
-  put(box, el("div", { class: "card-title" }, "Cases to review ", el("span", { class: "muted small" }, "click a case to open its detail and source rows"),
-      el("button", { class: "linkbtn", onclick: openReview }, "Review queue →")),
-    el("div", { class: "case-grid" }, keys.map((k) => {
+  const amt = (xs) => xs.reduce((sum, x) => sum + Math.abs(x.amount_cents), 0);
+  put(box, el("div", { class: "card-title" }, "Cases to review", el("button", { class: "pillbtn", title: "Open the review queue", onclick: openReview }, "View all")),
+    el("ul", { class: "case-list" }, keys.map((k) => {
       const xs = groups[k], open = xs.filter(isOpen).length;
-      return el("div", { class: "case-card" + (open ? " open" : ""), role: "button", tabindex: "0", title: "Open the first case in this group",
+      return el("li", { class: "case-row" + (open ? " open" : ""), role: "button", tabindex: "0", title: "Open the first case in this group",
           onclick: (ev) => { if (!ev.target.closest(".case-link")) openCase((xs.find(isOpen) || xs[0]).id); },
           onkeydown: (ev) => { if (ev.key === "Enter") openCase((xs.find(isOpen) || xs[0]).id); } },
-        el("div", { class: "cc-k" }, CASE_STATUS[k] || nice(k), el("span", { class: "badge " + (open ? "OPEN" : "ACCEPTED") }, open ? `${open} open` : "decided")),
-        el("div", { class: "cc-v" }, usd(xs.reduce((s, x) => s + Math.abs(x.amount_cents), 0))),
-        el("div", { class: "cc-list" }, xs.map((x) => caseLink(x.id, `${x.case_id || x.id} · ${TYPE_LABEL[x.type] || nice(x.type)}`))));
+        el("span", { class: "cr-ico " + (open ? "amb" : "ok") }, caseIcon(k)),
+        el("div", { class: "cr-main" },
+          el("div", { class: "cr-h" }, el("b", {}, CASE_STATUS[k] || nice(k)), el("span", { class: "cr-amt" }, usd(amt(xs)))),
+          el("div", { class: "cr-sub" }, el("span", { class: "badge " + (open ? "OPEN" : "ACCEPTED") }, open ? `${open} open` : "decided"),
+            el("span", { class: "cr-links" }, xs.map((x) => caseLink(x.id, x.case_id || x.id))))));
     })));
 }
+const CASE_ICON = { INCOMPLETE_SOURCE: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M12 12v4M12 18.5v.5", UNMATCHED: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 4 8M8 12h3M2 2l20 20", DUPLICATE: "M8 8h12v12H8zM4 16V4h12",
+  PARTIAL: "M21 12A9 9 0 1 1 12 3v9z", TAX_REVIEW: "M4 2v20l3-2 3 2 3-2 3 2 3-2 1 1V2l-1 1-3-2-3 2-3-2-3 2-3-2zM8 8h8M8 12h8M8 16h5",
+  FX_REVIEW: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20", APPROVAL_REQUIRED: "M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6zM8.5 12l2.5 2.5 4.5-5" };
+function caseIcon(k) { return sv("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, sv("path", { d: CASE_ICON[k] || CASE_ICON.APPROVAL_REQUIRED })); }
 let SOURCE_KINDS = ["bank", "ledger", "ar", "ap", "documents", "parties"];
 function fillProfile(w) {
   const reviewer = S.me.role === "owner_reviewer";
   [["pf-name", w.name], ["pf-period", w.period], ["pf-industry", w.industry || ""]].forEach(([id, v]) => { $(id).value = v; $(id).disabled = !reviewer; });
   $("pf-save").disabled = !reviewer; $("reset-btn").disabled = !reviewer;
+  $("ov-profile").classList.toggle("hidden", !reviewer);
   msg("pf-msg", reviewer ? "" : "Only a CPA reviewer can rename the client or clear its data.");
 }
 $("pf-save").onclick = (ev) => withBusy(ev.currentTarget, async () => {
@@ -368,7 +702,7 @@ async function openParty(pid) {
 
 // ---------------- trace ----------------
 async function renderTraceList(selected) {
-  let d; try { d = await api(W("/trace")); } catch (_) { return; }
+  let d; try { d = await api(W("/trace" + (S.run ? `?run_id=${encodeURIComponent(S.run.id)}` : ""))); } catch (_) { return; }
   if (!d.lines.length) return put("trace-list", el("div", { class: "muted" }, "Import a bank statement first."));
   put("trace-list", el("div", { class: "muted small" }, d.run_id ? `Status from reconciliation run ${d.run_id}` : el("span", {}, "Not reconciled yet. ", el("a", { href: "#recon", "data-go": "recon" }, "Run reconciliation"), " to see each outcome.")),
     el("table", { class: "tl" }, d.lines.map((l) => el("tr", { class: "click" + (l.id === selected ? " sel-row" : ""), onclick: () => openTrace(l.id), title: l.description },
@@ -380,9 +714,9 @@ async function openTrace(id) {
   if (!document.getElementById("p-trace").classList.contains("active")) go("trace");
   renderTraceList(id);
   put("trace-view", el("div", { class: "muted" }, "Loading…"));
-  let t; try { t = await api(W(`/trace/${encodeURIComponent(id)}`)); } catch (e) { return put("trace-view", el("div", { class: "msg err" }, e.message)); }
+  let t; try { t = await api(W(`/trace/${encodeURIComponent(id)}` + (S.run ? `?run_id=${encodeURIComponent(S.run.id)}` : ""))); } catch (e) { return put("trace-view", el("div", { class: "msg err" }, e.message)); }
   const fmt = (v) => v == null || v === "" ? "—" : typeof v === "object" ? Object.entries(v).filter(([, c]) => c).map(([f, c]) => f === c ? f : `${f} ← “${c}”`).join(", ") : String(v);
-  const when = (x) => x ? new Date(x).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  const when = (x) => x ? fmtDateTime(x) : "";
   const who = (w) => { if (!w) return null; w = String(w).replace(/\s*\(deterministic\)$/, "");
     return w.toLowerCase() === "trustops" ? "TrustOps" : w.startsWith("agent:") ? niceActor(w) : w.includes("@") ? w : nice(w); };
   const tidy = (x) => String(x || "").replace(/\b[A-Z]+(?:_[A-Z]+)+\b/g, (m) => nice(m));
@@ -411,7 +745,7 @@ async function openTrace(id) {
     t.related.length ? [el("div", { class: "th-sec" }, "Linked records", el("span", { class: "pl-n" }, t.related.length)),
       el("div", { class: "xrs" + (t.related.length > 1 ? " grid2" : "") }, t.related.map((r) => recCard(r.id, KIND_SHORT[r.kind] || labelFor(r.id))))] : null,
     el("details", { class: "xd th-ev" }, el("summary", {}, `Signed audit records (${t.events.length})`),
-      el("div", { class: "muted small", style: "margin:8px 0" }, `Each record is chained to the one before and signed. Whole chain: ${t.chain.reason}.`),
+      el("div", { class: "muted small my8" }, `Each record is chained to the one before and signed. Whole chain: ${t.chain.reason}.`),
       el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, ["#", "Time (UTC)", "Who", "Action", "Decision", "Record hash"].map((h) => el("th", {}, h))),
         t.events.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)), el("td", {}, niceActor(e.actor_id)), el("td", {}, nice(e.action)),
           el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, String(e.policy_decision).split(":")[0])), el("td", { class: "mono" }, e.event_hash.slice(0, 16) + "…")))))));
@@ -453,12 +787,14 @@ function recCard(id, kind) {
     const set = document.documentElement.dataset.theme;
     const dark = set ? set === "dark" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.dataset.theme = dark ? "light" : "dark";
+    const b = $("theme"); b.classList.remove("spin"); void b.offsetWidth; b.classList.add("spin");
     try { localStorage.setItem("ls-theme-v2", document.documentElement.dataset.theme); } catch (_) {}
   };
 })();
 
 // ---------------- tabs (each page has its own address, e.g. #reports) ----------------
 document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+  if (!canOpen(t.dataset.tab)) return go(t.dataset.tab);   // a staff preparer is sent to Overview instead
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "p-" + t.dataset.tab));
   if (location.hash.slice(1) !== t.dataset.tab) history.pushState(null, "", "#" + t.dataset.tab);
@@ -467,6 +803,7 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "home") renderOverview();
   if (t.dataset.tab === "evidence") renderEvidence();
   if (t.dataset.tab === "trace") renderTraceList();
+  if (["recon", "exceptions", "trace"].includes(t.dataset.tab)) loadRuns().then(() => { renderRunBars(); renderRunsList("runs-list"); });
   if (t.dataset.tab === "parties") renderParties();
   if (t.dataset.tab === "reports") renderReports();
   if (t.dataset.tab === "rules") renderRules();
@@ -474,23 +811,150 @@ document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
   if (t.dataset.tab === "recon") progress();  // never judge "ready to run" from stale status
   if (t.dataset.tab === "agents") startAgentMonitor(); else stopAgentMonitor();
 });
+// ---------------- shell: breadcrumb, collapsible sidebar, period chip (presentation only) ----------------
+function setCrumb(t) {
+  let g = t.previousElementSibling; while (g && !g.classList.contains("navlabel")) g = g.previousElementSibling;
+  $("crumb-group").textContent = g ? proper(g.textContent.trim().toLowerCase()).replace(/^\w/, (c) => c.toUpperCase()) : "";
+  $("crumb-page").textContent = (t.querySelector(".lbl-t") || t).textContent.trim();
+}
+document.querySelectorAll(".tab").forEach((t) => {
+  t.title = (t.querySelector(".lbl-t") || t).textContent.trim();
+  t.addEventListener("click", () => setCrumb(t));
+});
+setCrumb(document.querySelector(".tab.active") || document.querySelector(".tab"));
+(function sideMini() {
+  // Narrow windows (or a zoomed browser) start with the icon rail unless the user chose otherwise.
+  let saved = null; try { saved = localStorage.getItem("ls-side-mini"); } catch (_) {}
+  let on = saved === null ? matchMedia("(min-width:821px) and (max-width:1100px)").matches : saved === "1";
+  const apply = () => { document.body.classList.toggle("side-mini", on); const b = $("side-toggle");
+    b.title = b.ariaLabel = on ? "Expand menu" : "Collapse menu"; b.setAttribute("aria-expanded", String(!on)); };
+  apply();
+  const side = document.querySelector(".sidebar"), wide = matchMedia("(min-width:821px)");
+  // The collapsed rail never expands over the page: pages are opened straight from the icons, and a small dark label
+  // appears beside the icon under the pointer (or keyboard focus). Expanding is only via the toggle, and then the
+  // page content slides aside to make room (animated grid column, see avocet.css).
+  const tip = el("div", { class: "rail-tip", role: "tooltip", id: "rail-tip", "aria-hidden": "true" });
+  document.body.append(tip);
+  const hideTip = () => tip.classList.remove("on");
+  const showTip = (tab) => {
+    if (!on || !wide.matches || !tab) return hideTip();
+    const label = tab.querySelector(".lbl-t"); if (!label) return hideTip();
+    const count = tab.querySelector(".count"), n = count && count.textContent.trim();
+    tip.textContent = label.textContent.trim() + (n && n !== "0" ? ` · ${n}` : "");
+    const r = tab.getBoundingClientRect();
+    tip.style.left = `${Math.round(r.right + 14)}px`; tip.style.top = `${Math.round(r.top + r.height / 2)}px`;
+    tip.classList.add("on");
+  };
+  side.querySelectorAll(".tab").forEach((tb) => {
+    tb.addEventListener("mouseenter", () => showTip(tb));
+    tb.addEventListener("focus", () => { if (tb.matches(":focus-visible")) showTip(tb); });
+    tb.addEventListener("mouseleave", hideTip); tb.addEventListener("blur", hideTip);
+    tb.addEventListener("click", hideTip);
+  });
+  side.querySelector("nav").addEventListener("scroll", hideTip, { passive: true });
+  $("side-toggle").onclick = () => { on = !on; hideTip(); apply(); try { localStorage.setItem("ls-side-mini", on ? "1" : "0"); } catch (_) {} };
+})();
+// Reporting period: the chip opens a month picker (2026-11-13; it used to jump to Data & security).
+// The period labels the client book, reports and downloads; matching always uses the uploaded files.
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function parsePeriod(v) {
+  const m = String(v || "").match(/(January|February|March|April|May|June|July|August|September|October|November|December)\D*?(\d{4})/i);
+  return m ? { month: MONTHS.findIndex((x) => x.toLowerCase() === m[1].toLowerCase()), year: +m[2] } : null;
+}
+const periodOpen = () => !$("period-panel").classList.contains("hidden");
+function closePeriod() { $("period-panel").classList.add("hidden"); $("period-chip").setAttribute("aria-expanded", "false"); }
+function renderPeriod(year) {
+  const cur = parsePeriod($("page-sub").textContent), now = new Date();
+  const nav = (d, label) => el("button", { type: "button", class: "pp-nav", "aria-label": label, onclick: (e) => { e.stopPropagation(); renderPeriod(year + d); } }, d < 0 ? "‹" : "›");
+  put("period-panel",
+    el("div", { class: "pp-head" }, el("b", {}, "Reporting period"),
+      el("div", { class: "pp-year" }, nav(-1, "Previous year"), el("span", { id: "pp-year" }, String(year)), nav(1, "Next year"))),
+    el("div", { class: "pp-grid", role: "grid" }, ...MONTHS.map((m, i) => {
+      const sel = cur && cur.year === year && cur.month === i, today = now.getFullYear() === year && now.getMonth() === i;
+      return el("button", { type: "button", class: "pp-m" + (sel ? " on" : "") + (today ? " now" : ""), "aria-pressed": sel ? "true" : "false",
+        title: `${m} ${year}`, onclick: (e) => { e.stopPropagation(); setPeriod(`${m} ${year}`, e.currentTarget); } }, m.slice(0, 3));
+    })),
+    el("p", { class: "pp-note" }, "Labels the client book, reports and downloads. Matching always uses the files you upload."));
+}
+async function setPeriod(period, btn) {
+  if (period === $("page-sub").textContent) { closePeriod(); return; }
+  btn.classList.add("busy");
+  try {
+    const r = await api(W("/profile"), { method: "POST", json: { period } });
+    S.wsMeta = r; $("page-sub").textContent = period; if ($("pf-period")) $("pf-period").value = period;
+    closePeriod(); toast(`Reporting period set to ${period}. The change is recorded in the audit trail.`, "good");
+    await progress(); if (isActive("trust")) await renderEvidence();
+  } catch (e) { btn.classList.remove("busy"); toast(e.message, "bad"); }
+}
+$("period-chip").onclick = (e) => {
+  if (!isCPA()) return;   // a staff preparer sees the period; a CPA reviewer sets it
+  e.stopPropagation();
+  if (periodOpen()) { closePeriod(); return; }
+  const cur = parsePeriod($("page-sub").textContent);
+  renderPeriod(cur ? cur.year : new Date().getFullYear());
+  $("period-panel").classList.remove("hidden"); $("period-chip").setAttribute("aria-expanded", "true");
+  const f = $("period-panel").querySelector(".pp-m.on") || $("period-panel").querySelector(".pp-m"); if (f) f.focus();
+};
+$("period-panel").addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", () => { if (periodOpen()) closePeriod(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && periodOpen()) { closePeriod(); $("period-chip").focus(); } });
 function isActive(tab) { return document.getElementById("p-" + tab).classList.contains("active"); }
 
 // ---------------- import ----------------
+// One glyph per source type for the Source status tiles.
+const SRC_GLYPH = {
+  bank: "M3 10h18M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18M12 3l9 5H3z",
+  ledger: "M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h11M9 8h6",
+  ar: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 14l3-3 3 3M12 11v6",
+  ap: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 14l3 3 3-3M12 11v6",
+  documents: "M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7",
+  parties: "M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 20v-1a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+};
 const KIND = { bank: "Bank statement", ledger: "General ledger", ar: "Open invoices", ap: "Vendor bills", documents: "Supporting docs", parties: "Customer & vendor list" };
 function renderStatus() { renderSources(); }
 async function renderSources() {
   let s; try { s = await api(W("/sources")); } catch (_) { return; }
   s.kinds.forEach((k) => { KIND[k.kind] = k.label; });
+  S.srcLocked = s.locked ? s.locked_reason : null;
   SOURCE_KINDS = s.kinds.map((k) => k.kind);
-  put("src-status", s.kinds.map((k) => el("div", {}, el("span", {}, k.label, k.required ? null : el("span", { class: "muted small" }, " · optional")),
-    el("span", { class: "src-right" }, k.rows ? el("span", { class: "small muted" }, `${k.rows} rows `) : null,
-      el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, k.status === "NOT_CONNECTED" ? "Not yet" : nice(k.status)),
-      k.status !== "NOT_CONNECTED" ? el("button", { class: "linkbtn", title: "Remove this file", onclick: () => clearSource(k.kind) }, "Clear") : null),
-    k.envelope ? srcEnvelope(k.envelope) : null)));
-  put("connectors", el("table", {}, el("tr", {}, ["Connection", "Status", "What the label means"].map((h) => el("th", {}, h))),
-    s.connectors.map((c) => el("tr", {}, el("td", {}, c.name), el("td", {}, el("span", { class: "badge " + c.status }, nice(c.status))),
-      el("td", { class: "small muted" }, s.status_labels[c.status])))));
+  // Source status as a grid of tiles (2026-11-13): one per source, imported ones show file, dates, records and Clear.
+  const tiles = s.kinds.map((k) => {
+    const on = k.status !== "NOT_CONNECTED", e = k.envelope || {};
+    const tip = e.source_digest ? `${e.source_file || ""}\nSHA-256 ${e.source_digest}\nTenant ${e.tenant_id} · client ${e.client_id}` +
+      (e.period ? `\nPeriod ${e.period}` : "") + `\nAccess ${e.access === "READ_ONLY" ? "read-only" : nice(e.access || "")}` : "";
+    const meta = [e.date_range ? spanDates(e.date_range) : null, e.currency && e.currency.length ? e.currency.join(" / ") : null,
+      e.freshness_seconds != null ? `Imported ${ago(e.freshness_seconds)}` : null].filter(Boolean).join(" · ");
+    return el("div", { class: `ss-tile ${on ? "on" : "off"}${k.required ? " req" : ""}`, "data-kind": k.kind },
+      el("div", { class: "ss-head" }, el("span", { class: "ss-ico", "aria-hidden": "true" }, icon(SRC_GLYPH[k.kind] || SRC_GLYPH.documents)),
+        el("div", { class: "ss-titles" }, el("div", { class: "ss-name" }, k.label),
+          el("span", { class: "ss-req" }, k.required ? "Required" : "Optional")),
+        // 2026-11-16: files under review work can't be removed (the server refuses too); Start next period instead
+        on ? el("button", { class: "linkbtn ss-clear", title: s.locked ? s.locked_reason : "Remove this file", disabled: s.locked ? "" : null,
+          "aria-disabled": s.locked ? "true" : null, onclick: () => clearSource(k.kind) }, "Clear") : null),
+      on ? [el("div", { class: "ss-file", title: tip }, e.source_file || "—"), meta ? el("div", { class: "ss-meta" }, meta) : null]
+        : el("div", { class: "ss-meta" }, k.required ? "Needed to run reconciliation" : "Not imported yet"),
+      el("div", { class: "ss-bot" },
+        el("span", { class: "badge " + k.status, title: s.status_labels[k.status] }, on ? nice(k.status) : "Not yet"),
+        on ? el("span", { class: "ss-count" }, el("b", {}, String(k.rows || 0)), " records") : null),
+      k.rejected_rows ? el("div", { class: "ss-rej" + (k.rejections_acknowledged ? " ok" : "") },
+        k.rejections_acknowledged ? `${k.rejected_rows} rejected row${k.rejected_rows === 1 ? "" : "s"} reviewed` :
+          `${k.rejected_rows} of ${k.rows_received} rows rejected · see Import health`) : null);
+  });
+  put("src-status", el("div", { class: "ss-grid" }, tiles),
+    s.locked ? el("div", { class: "msg ss-locked" }, el("b", {}, "These files can't be cleared. "), s.locked_reason) : null);
+  const nOn = s.kinds.filter((k) => k.status !== "NOT_CONNECTED").length;
+  const ready = s.kinds.filter((k) => k.required).every((k) => k.status !== "NOT_CONNECTED");
+  put("ss-sum", el("b", {}, `${nOn} of ${s.kinds.length}`), " imported", el("span", { class: "ss-dot2 " + (ready ? "is-ready" : "is-wait") }),
+    ready ? "ready to reconcile" : "bank statement and ledger needed");
+  // Connections card removed from Sources (2026-11-13, user request); kept only if a page still has the container.
+  const live = s.connectors.filter((c) => c.status !== "PLANNED"), planned = s.connectors.filter((c) => c.status === "PLANNED");
+  if ($("connectors")) put("connectors", el("div", { class: "cn-grid" },
+    el("div", { class: "cn-list" }, el("div", { class: "cn-h" }, "In use"), live.map((c) => el("div", { class: "cn-row" },
+      el("div", { class: "cn-main" }, el("div", { class: "cn-name" }, c.name), el("div", { class: "cn-mean" }, s.status_labels[c.status])),
+      el("span", { class: "badge " + c.status }, nice(c.status))))),
+    planned.length ? el("div", { class: "cn-planned" },
+      el("div", { class: "cn-k" }, el("span", { class: "badge PLANNED" }, "Planned"), el("span", {}, s.status_labels.PLANNED || "Not available yet")),
+      el("div", { class: "cn-chips" }, planned.map((c) => el("span", { class: "cn-chip" }, c.name)))) : null));
   const sel = $("up-kind"), cur = sel.value;
   put(sel, el("option", { value: "auto" }, "Detect file type automatically"),
     s.kinds.map((k) => el("option", { value: k.kind }, `${k.label} · ${k.formats.filter((f) => f !== "PDF (text)").join(", ")}`)),
@@ -500,21 +964,34 @@ async function renderSources() {
 // Where these rows came from, in this client's context: file, fingerprint, when, currency, period, read-only.
 function srcEnvelope(e) {
   const fresh = e.freshness_seconds == null ? "" : ago(e.freshness_seconds);
-  return el("div", { class: "src-env", title: `Tenant ${e.tenant_id} · client ${e.client_id} · SHA-256 ${e.source_digest}` },
-    el("span", { class: "mono" }, e.source_file || "—"),
-    el("span", {}, `${e.row_count} rows`), e.currency && e.currency.length ? el("span", {}, e.currency.join(" / ")) : null,
-    e.date_range ? el("span", {}, `${e.date_range[0]} → ${e.date_range[1]}`) : null,
-    e.period ? el("span", {}, `period ${e.period}`) : null,
-    fresh ? el("span", {}, `imported ${fresh}`) : null,
-    el("span", { class: "mono" }, `sha ${String(e.source_digest).slice(0, 10)}…`),
-    el("span", { class: "badge PLANNED" }, e.access === "READ_ONLY" ? "Read-only" : nice(e.access)));
+  const tip = `${e.source_file || ""}\nSHA-256 ${e.source_digest}\nTenant ${e.tenant_id} · client ${e.client_id}` +
+    (e.period ? `\nPeriod ${e.period}` : "") + `\nAccess ${e.access === "READ_ONLY" ? "read-only" : nice(e.access)}`;
+  return el("div", { class: "src-env" },
+    el("div", { class: "ss-file", title: tip }, e.source_file || "—"),
+    el("div", { class: "ss-meta" }, [e.date_range ? spanDates(e.date_range) : null, e.currency && e.currency.length ? e.currency.join(" / ") : null,
+      fresh ? `Imported ${fresh}` : null].filter(Boolean).join("  ·  ")));
+}
+// 2026-10-01 → 2026-10-31 reads as "1 – 31 Oct 2026" (day month year, like every date since 2026-11-16)
+function spanDates([a, b]) {
+  const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const p = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ""); return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null; };
+  const x = p(a), y = p(b);
+  if (!x || !y) return `${fmtDate(a)} – ${fmtDate(b)}`;
+  if (x.y === y.y && x.m === y.m) return x.d === y.d ? `${x.d} ${M[x.m]} ${x.y}` : `${x.d} – ${y.d} ${M[x.m]} ${x.y}`;
+  if (x.y === y.y) return `${x.d} ${M[x.m]} – ${y.d} ${M[y.m]} ${x.y}`;
+  return `${x.d} ${M[x.m]} ${x.y} – ${y.d} ${M[y.m]} ${y.y}`;
 }
 async function clearSource(k) {
+  if (S.srcLocked) return msg("clear-msg", S.srcLocked, "err");
   try { const r = await api(W(`/sources/${k}/clear`), { method: "POST" });
     msg("clear-msg", `${KIND[k]} cleared` + (r.runs_withdrawn ? "; previous match results withdrawn, run Match again." : "."), "good");
     if (S.upload && (S.upload.kind === k || (k === "documents" && S.upload.kind === "pdf"))) resetIntakeUi();
     put("up-next"); S.run = null; await refreshWs(); renderRun(); renderExceptions(); renderResults(); }
-  catch (e) { msg("clear-msg", e.message, "err"); }
+  catch (e) {
+    const code = e.body && e.body.detail && e.body.detail.reason_code;
+    msg("clear-msg", code === "DECISIONS_EXIST" ? "This file can't be removed: review items built on it already have decisions, proposals, proof or approvals in progress. " +
+      "To start again, a CPA reviewer starts a new period (Overview > Start next period, or Data & security > Clear this client's data); the audit trail is archived, never deleted." : e.message, "err");
+  }
 }
 async function clearClient(btn, nextPeriod = false) {
   const name = proper((S.wsMeta && S.wsMeta.name) || "this client");
@@ -529,21 +1006,47 @@ async function clearClient(btn, nextPeriod = false) {
   }, "Clearing…");
   await progress();  // withBusy re-enables the button when it finishes; re-apply "nothing to clear"
 }
-$("clear-all").onclick = (e) => clearClient(e.currentTarget);
 function renderHealth(uploads) {
   const done = uploads.filter((u) => u.health);
   if (!done.length) return put("health", el("div", { class: "muted" }, "Nothing imported yet."));
+  // 2026-11-16 action items: a file with rejected rows is never shown as simply "validated". It says how many rows
+  // were left out, lists them with the reason, offers them as a CSV to fix, and asks a person to confirm before the
+  // run uses the file without them (the server refuses the run until then).
+  const stateOf = (u) => u.health.rejected.length
+    ? el("span", { class: "badge OPEN", title: "Some rows could not be imported" }, u.health.status_text || `Imported with ${u.health.rejected.length} of ${u.health.received} rows rejected`)
+    : el("span", { class: "badge " + (u.state === "VALIDATED" ? "ACCEPTED" : "OPEN") }, u.state === "VALIDATED" ? "Imported" : nice(u.state));
+  const withRej = done.filter((u) => u.health.rejected.length && u.state === "VALIDATED");
   put("health", el("table", {},
     el("tr", {}, ["Source", "File", "State", "Rows received", "Accepted", "Rejected", "Debits", "Credits", "Control total", "SHA-256"].map((h) => el("th", {}, h))),
     done.map((u) => el("tr", {},
-      el("td", {}, KIND[u.kind]), el("td", {}, u.filename), el("td", {}, el("span", { class: "badge " + (u.state === "VALIDATED" ? "ACCEPTED" : "OPEN") }, nice(u.state))),
+      el("td", {}, KIND[u.kind]), el("td", {}, u.filename), el("td", {}, stateOf(u)),
       el("td", { class: "num" }, u.health.received), el("td", { class: "num" }, u.health.accepted),
       el("td", { class: "num" + (u.health.rejected.length ? " neg" : "") }, u.health.rejected.length),
       el("td", { class: "num" }, usd(u.health.debit_cents)), el("td", { class: "num" }, usd(u.health.credit_cents)),
       el("td", {}, el("span", { class: "badge " + (u.health.control_total_ok ? "PASS" : "FAIL") }, u.health.control_total_ok ? "Balances" : "Mismatch")),
       el("td", { class: "mono" }, u.sha256.slice(0, 12) + "…")))),
-    done.some((u) => u.health.rejected.length) ? el("div", { class: "msg err" }, "Rejected rows: " +
-      done.flatMap((u) => u.health.rejected.map((r) => `row ${r.row}: ${r.reason}`)).join("; ")) : null);
+    withRej.map((u) => rejectedBox(u)));
+}
+// One file's rejected rows: what was left out and why, the next step, a CSV to fix, and the confirmation.
+function rejectedBox(u) {
+  const rej = u.health.rejected, ack = u.rejections_acknowledged;
+  const shown = rej.slice(0, 12);
+  return el("div", { class: "rej-box" + (ack ? " acked" : "") },
+    el("div", { class: "rej-h" }, el("b", {}, `${u.filename}: imported with ${rej.length} of ${u.health.received} rows rejected`),
+      ack ? el("span", { class: "badge PASS" }, `Reviewed by ${niceActor(ack.by)} · ${fmtDateTime(ack.at)}`) : el("span", { class: "badge OPEN" }, "Needs a decision before the run")),
+    el("div", { class: "muted small" }, "These rows are not in the totals and are not matched. Next step: download them, fix them in the original file and upload the corrected file (it replaces this one). " +
+      "Or, if they should stay out, confirm below; each one then appears in the run as a review item “Row could not be imported”."),
+    el("ul", { class: "plain rej-list" }, shown.map((r) => el("li", {}, el("b", {}, `Row ${r.row}`), `: ${r.reason}`)),
+      rej.length > shown.length ? el("li", { class: "muted" }, `…and ${rej.length - shown.length} more in the CSV.`) : null),
+    el("div", { class: "row" },
+      el("a", { class: "secondary btnlink", href: W(`/uploads/${u.id}/rejected.csv`), download: "" }, `Download ${rej.length} rejected row${rej.length === 1 ? "" : "s"} (CSV)`),
+      ack ? null : el("button", { class: "primary", onclick: async (e) => {
+        if (!(await confirmDialog("Reconcile without these rows?", `${rej.length} row${rej.length === 1 ? "" : "s"} of ${u.filename} will stay out of the totals. Each one is listed in the run as a review item. You can still upload a corrected file later.`, "Confirm", false))) return;
+        await withBusy(e.target, async () => {
+          try { await api(W(`/uploads/${u.id}/acknowledge-rejections`), { method: "POST", json: {} }); toast("Confirmed. You can run reconciliation now.", "good"); await refreshWs(); }
+          catch (err) { toast(err.message, "err"); }
+        }, "Saving…");
+      } }, "I've reviewed them: reconcile without these rows")));
 }
 // Several files can be chosen at once; each one is checked and confirmed in turn.
 S.queue = [];
@@ -663,7 +1166,17 @@ async function openGoogleConnectModal() {
 function nextInQueue() {
   const f = S.queue.shift();
   if (!f) { if (S.queueTotal > 1) msg("up-msg", `All ${S.queueTotal} files done.`, "good"); S.queueTotal = 0; $("up-file").value = ""; offerRun(); return; }
-  uploadOne(f);
+  return uploadOne(f);
+}
+// After "Confirm & next file" (2026-11-16): the confirmed card stays on screen, dimmed, while the next file is read,
+// instead of hiding it and showing the upload page for the second or two the server needs. The page data is
+// refreshed after the next card is drawn (not at the same time, so the refresh always sees the new upload).
+async function continueQueue(box, confirmed) {
+  if (!S.queue.length) { box.classList.add("hidden"); await refreshWs(); return nextInQueue(); }
+  box.classList.add("map-wait");
+  try { await nextInQueue(); } finally { box.classList.remove("map-wait"); }
+  if (S.upload === confirmed) box.classList.add("hidden");   // every remaining file was refused: nothing left to confirm
+  await refreshWs();
 }
 // Forget every half-finished upload on this page: pending mapping, messages, refusals, queue. Used when the
 // client's data is cleared (here or by a colleague) or another client is opened, so nothing stale remains.
@@ -683,8 +1196,8 @@ async function offerRun() {
   }
   put("up-next", el("div", { class: "callout gap next-run" },
     el("div", {}, el("b", {}, "Files imported. Bank statement and general ledger are ready."),
-      el("div", { class: "small" }, S.status.runs ? "Run again to include the files you just added." : "Next: match the bank statement to the ledger.")),
-    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); setTimeout(() => $("run-btn").click(), 250); } }, "Run reconciliation →")));
+      el("div", { class: "small" }, "Next: open Reconciliation and press Run reconciliation.")),
+    el("button", { class: "primary", onclick: () => { put("up-next"); go("recon"); } }, "Go to Reconciliation →")));
 }
 function guessKind(name) {
   const n = name.toLowerCase();
@@ -705,8 +1218,17 @@ const ACCEPTED_TEXT = "CSV, Excel (.xlsx), TSV, JSON, OFX/QFX/QBO bank downloads
 function refused(f, reason) {
   S.refusals = (S.refusals || []).concat([{ name: f.name, reason }]);
   put("up-refused", el("div", { class: "msg err" }, el("b", {}, "Not accepted"),
-    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`)))));
+    el("ul", { class: "plain small" }, S.refusals.map((x) => el("li", {}, el("b", {}, x.name), ` — ${x.reason}`))),
+    templateLinks("Check the expected columns in a sample template:")));
 }
+// Sample templates (2026-11-13): one CSV per file type, with the column names the importer reads and a few synthetic rows.
+const TEMPLATES = [["bank", "Bank statement"], ["ledger", "General ledger"], ["ar", "Open invoices"], ["ap", "Vendor bills"],
+  ["documents", "Documents list"], ["parties", "Customers & vendors"]];
+function templateLinks(lead) {
+  return el("div", { class: "tpl-row" }, el("span", { class: "tpl-k" }, lead),
+    TEMPLATES.map(([k, l]) => el("a", { class: "tpl-a", href: `/v1/templates/${k}.csv`, download: `ledgersight-template-${k}.csv` }, l)));
+}
+put("tpl-links", templateLinks("Sample templates:"));
 const kb = (n) => n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 function renderHeld(held) {
   const list = held || [];
@@ -716,7 +1238,7 @@ function renderHeld(held) {
     el("tr", {}, ["File", "Type", "Size", "Status", "Added by", "Added", "SHA-256"].map((h) => el("th", {}, h))),
     list.slice().reverse().map((h) => el("tr", {}, el("td", {}, h.filename), el("td", {}, h.extension ? h.extension.slice(1).toUpperCase() : "—"),
       el("td", { class: "num" }, kb(h.size)), el("td", {}, el("span", { class: "badge SIMULATED", title: h.note }, "Held · JSON conversion in development")),
-      el("td", { class: "small" }, h.uploaded_by), el("td", { class: "small" }, new Date(h.uploaded_at).toLocaleString()),
+      el("td", { class: "small" }, h.uploaded_by), el("td", { class: "small" }, fmtDateTime(h.uploaded_at)),
       el("td", { class: "mono" }, h.sha256.slice(0, 12) + "…"))))));
 }
 // One file from the device, Google Drive or an email. The SERVER decides what the file is from its content
@@ -734,32 +1256,67 @@ async function uploadOne(f) {
     const r = await agentsBusy({ "AG-01": "working", "AG-02": "queued" }, `Checking ${f.name}`, api(W("/uploads"), { method: "POST", form: fd }));
     S.upload = r;
     if (r.routed === "document") { msg("up-msg", `${f.name} is a receipt or invoice. Fields extracted; check them, then confirm${left}.`, "good"); return renderDocConfirm(); }
-    msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Confirm the mapping below${left}.`, "good"); renderMapping();
-  } catch (e) { refused(f, e.message); msg("up-msg", ""); nextInQueue(); }
+    msg("up-msg", `${f.name} recognised as ${KIND[r.kind] || r.kind_label} from its columns. Check the columns at the top of the page, then confirm${left}.`, "good"); renderMapping();
+  } catch (e) { refused(f, e.message); msg("up-msg", ""); return nextInQueue(); }
+}
+// "File 2 of 7" while a batch is being confirmed one by one.
+function batchPos() {
+  const n = S.queueTotal || 0;
+  return n > 1 ? `File ${n - S.queue.length} of ${n}` : "";
+}
+// The confirm action sits in a bar at the top of the card that stays on screen while scrolling the mapping,
+// and the card scrolls into view as soon as a file is read, so nobody has to hunt for the button.
+function mapBar(title, sub, btn) {
+  const pos = batchPos();
+  return el("div", { class: "map-bar" },
+    el("div", { class: "map-bar-l" }, el("div", { class: "map-title" }, title),
+      el("div", { class: "map-sub" }, [pos, sub].filter(Boolean).join("  ·  "))),
+    el("div", { class: "map-bar-r" }, btn));
+}
+function showMappingCard(box) {
+  box.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    const top = box.getBoundingClientRect().top;
+    if (top < 60 || top > window.innerHeight * 0.55) box.scrollIntoView({ behavior: "smooth", block: "start" });
+    const b = box.querySelector(".map-bar .primary"); if (b) b.focus({ preventScroll: true });
+  });
 }
 function renderMapping() {
   const u = S.upload, box = $("mapping");
-  box.classList.remove("hidden");
   const fields = Object.keys(u.proposed_mapping);
   const selects = {};
+  const required = new Set(u.required || []);
+  // Dates: say how they will be read. When the file cannot prove the day/month order, the person chooses it here.
+  const d = u.dates, askOrder = d && d.order !== "ISO" && !d.certain;
+  const orderSel = askOrder ? el("select", { "aria-label": "Date format", class: "map-order" },
+    el("option", { value: "MDY", selected: d.order === "MDY" }, "MM/DD/YYYY (US)"),
+    el("option", { value: "DMY", selected: d.order === "DMY" }, "DD/MM/YYYY (UK and most of the world)")) : null;
+  const dateLine = d ? el("div", { class: "map-dates" + (askOrder ? " ask" : "") },
+    el("div", {}, el("b", {}, "Dates"), el("span", { class: "muted" }, ` · ${d.reason}`)), orderSel) : null;
+  const confirm = (label) => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+    const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
+    const body = { mapping }; if (orderSel) body.date_order = orderSel.value;
+    try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: body }); msg("up-msg", "");
+      toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
+      await continueQueue(box, u); }
+    catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
+  }, S.queue.length ? "Importing… then next file" : "Importing…") }, label);
   put(box,
-    el("div", { class: "card-title" }, `Confirm column mapping · ${u.filename} (${u.rows} rows)`),
-    u.detection ? el("div", { class: "row small" }, el("span", { class: "badge PASS" }, `Recognised as ${KIND[u.kind] || u.kind_label}`),
+    mapBar(`Confirm columns · ${u.filename}`, `${KIND[u.kind] || u.kind_label} · ${u.rows} records`,
+      confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")),
+    u.detection ? el("div", { class: "row small gap" }, el("span", { class: "badge PASS" }, `Recognised as ${KIND[u.kind] || u.kind_label}`),
       el("span", { class: "muted" }, u.detection.method)) : null,
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact file was already imported (${u.duplicate_of}). Confirming will not add rows twice.`) : null,
-    el("div", { class: "muted small" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
+    el("div", { class: "muted small gap" }, `Suggested by ${u.mapping_method}. Change anything that is wrong, then confirm.`),
     el("table", {}, el("tr", {}, el("th", {}, "LedgerSight field"), el("th", {}, "Your column")),
       fields.map((f) => { const s = el("select", {}, el("option", { value: "" }, "— not mapped —"), u.header.map((h) => el("option", { value: h, selected: h === u.proposed_mapping[f] }, h))); selects[f] = s;
-        return el("tr", {}, el("td", {}, nice(f)), el("td", {}, s)); })),
-    el("div", { class: "card-title gap" }, "Preview"),
-    el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))),
-    el("div", { class: "row gap" }, el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
-      const mapping = {}; for (const f of fields) mapping[f] = selects[f].value || null;
-      try { const r = await api(W(`/uploads/${u.id}/mapping`), { method: "POST", json: { mapping } }); box.classList.add("hidden"); msg("up-msg", "");
-        toast(`${u.filename}: ${r.health ? r.health.accepted + " rows imported" : "imported"}${r.health && r.health.rejected.length ? `, ${r.health.rejected.length} rejected` : ""}.`, r.health && r.health.rejected.length ? "err" : "good");
-        await refreshWs(); nextInQueue(); }
-      catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); }
-    }, "Importing…") }, "Confirm mapping & import")));
+        return el("tr", {}, el("td", {}, nice(f), " ", el("span", { class: required.has(f) ? "map-req" : "ss-opt" }, required.has(f) ? "Required" : "Optional")),
+          el("td", {}, s)); })),
+    dateLine,
+    el("details", { class: "gap map-prev" }, el("summary", {}, `Preview first ${u.preview.length} rows`),
+      el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, u.header.map((h) => el("th", {}, h))), u.preview.map((r) => el("tr", {}, r.map((c) => el("td", {}, c))))))),
+    el("div", { class: "row gap" }, confirm(S.queue.length ? "Confirm & next file →" : "Confirm & import")));
+  showMappingCard(box);
 }
 // After any upload, confirmation or clear: redraw the Sources page AND refresh the book's status, so the
 // stepper, Overview and the Run button know the bank statement / ledger are now present.
@@ -775,21 +1332,152 @@ function staleUpload() {
   resetIntakeUi();
   msg("up-msg", `${name} is no longer on this client: its data was cleared. Upload it again if you still need it.`, "err");
 }
+// ---------------- notifications (preparer <-> CPA reviewer) ----------------
+// The server reads them from the signed audit trail: a proposal tells the CPA reviewer, an approve / reject /
+// return tells the staff preparer. Polled every 10 seconds while the page is visible (and on focus), so both
+// people stay in step; "seen" is stored on the server, so it is the same in every browser.
+S.notif = null;
+const NOTIF_WORD = { PROPOSED: "proposed a resolution for", APPROVED: "approved", REJECTED: "rejected", RETURNED: "returned", ATTACHED: "attached proof to", SENT: "sent", NOT_RECEIVED: "did not receive" };
+// The run's confirmation that its review items went to TrustOps for approval (2026-11-13).
+function tropsSentNote(run) {
+  if (!run || !run.trustops || !run.trustops.connected) return "";
+  const n = run.result.exceptions.filter((x) => (x.status === "OPEN" || x.status === "RETURNED") && !(x.trustops_review || {}).status).length;
+  return n ? ` Send ${n === 1 ? "it" : "them"} to TrustOps from the Review queue.` : "";
+}
+const NOTIF_ICON = { PROPOSED: "M4 20h4L19 9l-4-4L4 16z", APPROVED: "M5 12.5l4.5 4.5L19 7.5", REJECTED: "M7 7l10 10M17 7L7 17", RETURNED: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  ATTACHED: "M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l9-9a3.7 3.7 0 0 1 5.2 5.2l-9 9a1.8 1.8 0 0 1-2.6-2.6l8.3-8.3",
+  SENT: "M22 2L11 13M22 2l-7 20-4-9-9-4z", NOT_RECEIVED: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" };
+async function loadNotifications(quiet) {
+  if (!S.ws || !S.me) return;
+  let n; try { n = await api(W("/notifications")); } catch (_) { return; }
+  const before = S.notif, newest = n.items[0];
+  const fresh = before && newest && (!before.items[0] || newest.seq > before.items[0].seq);
+  S.notif = n;
+  const c = $("notif-count");
+  const was = c.classList.contains("hidden") ? 0 : +c.dataset.n || 0;
+  c.textContent = n.unread > 9 ? "9+" : String(n.unread); c.dataset.n = n.unread; c.classList.toggle("hidden", !n.unread);
+  $("notif-btn").classList.toggle("has-unread", !!n.unread);
+  if (n.unread > was) ringBell();
+  $("notif-btn").setAttribute("aria-label", n.unread ? `Notifications, ${n.unread} new` : "Notifications");
+  if (fresh) {
+    if (!quiet) toast(notifText(newest), newest.kind === "NOT_RECEIVED" ? "bad" : "good");
+    // the other person changed a case: bring this page's copy of the run up to date
+    if (S.run) {
+      try { S.run = await api(W(`/runs/${S.run.id}`)); } catch (_) { /* run withdrawn: the next sync handles it */ }
+      renderExceptions(); if (isActive("home")) renderOverview();
+    }
+  }
+  if (!$("notif-panel").classList.contains("hidden")) renderNotifPanel();
+}
+function notifText(it) {
+  const who = it.by === S.me.user_id ? "You" : (it.by_name || niceActor(it.by) || "Someone");
+  // 2026-11-13 action items: the approver did not get what this person sent (only the sender sees this)
+  if (it.kind === "NOT_RECEIVED") return `Not sent: ${it.case_id ? "case " + it.case_id : it.exception_id || "your review item"} did not reach TrustOps`;
+  if (it.kind === "SENT") return `${who} sent ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} to TrustOps for approval`;
+  if (it.via === "TrustOps") return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"} in TrustOps`;
+  return `${who} ${NOTIF_WORD[it.kind] || nice(it.kind)} ${it.case_id ? "case " + it.case_id : it.exception_id || "a review item"}`;
+}
+function renderNotifPanel() {
+  const n = S.notif || { items: [], unread: 0, for: isCPA() ? "reviewer" : "preparer" };
+  const when = (t) => { const s = (Date.now() - new Date(t).getTime()) / 1000; return s < 86400 ? ago(Math.max(1, s)) : fmtDateTime(t); };
+  put("notif-panel",
+    el("div", { class: "np-head" }, el("b", {}, "Notifications"),
+      el("span", { class: "muted small" }, tropsOn() ? "Items sent to TrustOps and its decisions" : n.for === "reviewer" ? "Proposals and proof from staff preparers" : "Decisions and proof from CPA reviewers")),
+    n.items.length ? el("ul", { class: "np-list" }, groupNotifs(n.items).map((it) => el("li", { class: "np-item k-" + it.kind + (it.unread ? " unread" : ""),
+        role: "button", tabindex: "0", title: "Open this case in the review queue",
+        onclick: () => openNotif(it), onkeydown: (e) => { if (e.key === "Enter") openNotif(it); } },
+      el("span", { class: "np-ico" }, icon(NOTIF_ICON[it.kind] || NOTIF_ICON.PROPOSED)),
+      el("div", { class: "np-b" }, el("div", { class: "np-t" }, notifText(it)),
+        it.note ? el("div", { class: "np-note" }, `“${it.note}”`) : null,
+        el("div", { class: "np-m" }, [when(it.at), it.times > 1 ? `${it.times} times` : null, it.ref].filter(Boolean).join(" · "))),
+      it.unread ? el("i", { class: "np-dot", "aria-label": "new" }) : null)))
+      : el("div", { class: "np-empty" }, el("b", {}, "Nothing yet"),
+        el("span", {}, tropsOn() ? "When review items are sent to TrustOps, or an approver decides one there, it shows up here."
+          : n.for === "reviewer" ? "When a staff preparer proposes a resolution, it shows up here."
+          : "When a CPA reviewer approves, rejects or returns an item, it shows up here.")));
+}
+function groupNotifs(items) {
+  const out = [], byKey = {};
+  for (const it of items) {          // newest first
+    const k = [it.kind, it.by, it.exception_id || it.ref, it.run_id].join("|");
+    if (byKey[k]) { byKey[k].times++; if (it.unread) byKey[k].unread = true; if (!byKey[k].note && it.note) byKey[k].note = it.note; continue; }
+    byKey[k] = { ...it, times: 1 }; out.push(byKey[k]);
+  }
+  return out;
+}
+function openNotif(it) {
+  closeNotif();
+  if (it.exception_id && S.run && S.run.result.exceptions.some((x) => x.id === it.exception_id)) openCase(it.exception_id);
+  else { go("exceptions"); if (it.run_id && S.run && it.run_id !== S.run.id) toast(`That was in an earlier run (${it.run_id}).`); }
+}
+function ringBell() {
+  const b = $("notif-btn"), c = $("notif-count");
+  b.classList.remove("ring", "bump"); c.classList.remove("bump"); void b.offsetWidth;
+  b.classList.add("ring"); c.classList.add("bump");
+  setTimeout(() => { b.classList.remove("ring"); c.classList.remove("bump"); }, 1200);
+}
+const NM = () => (window.Motion && window.Motion.animate && !reducedMotion() ? window.Motion : null);
+function animatePanelIn() {
+  const p = $("notif-panel"), M = NM();
+  if (!M) return;
+  M.animate(p, { opacity: [0, 1], scale: [0.86, 1], y: [-14, 0], filter: ["blur(8px)", "blur(0px)"], clipPath: ["circle(0% at 92% 0%)", "circle(150% at 92% 0%)"] },
+    { type: M.spring, visualDuration: 0.5, bounce: 0.22 });
+  const rows = [...p.querySelectorAll(".np-head, .np-item, .np-empty")];
+  rows.forEach((r) => { r.style.opacity = "0"; });
+  const a = M.animate(rows, { opacity: [0, 1], y: [12, 0], x: [6, 0] }, { type: M.spring, visualDuration: 0.42, bounce: 0.18, delay: M.stagger(0.045, { startDelay: 0.08 }) });
+  const clear = () => rows.forEach((r) => { r.style.opacity = ""; r.style.transform = ""; });
+  (a.finished || a).then(clear, clear);
+}
+async function openNotifPanel() {
+  const p = $("notif-panel");
+  p.classList.remove("hidden", "closing"); $("notif-btn").setAttribute("aria-expanded", "true"); $("notif-btn").classList.add("open");
+  renderNotifPanel(); animatePanelIn(); await loadNotifications(true);
+  // opening the list marks everything in it as seen (on the server, for this person only)
+  const top = S.notif && S.notif.items[0];
+  if (top && S.notif.unread) {
+    try { await api(W("/notifications/seen"), { method: "POST", json: { upto: top.seq } }); } catch (_) { return; }
+    S.notif.unread = 0; $("notif-count").classList.add("hidden"); $("notif-btn").setAttribute("aria-label", "Notifications");
+  }
+}
+function closeNotif() {
+  const p = $("notif-panel"), M = NM();
+  $("notif-btn").setAttribute("aria-expanded", "false"); $("notif-btn").classList.remove("open");
+  if (S.notif) S.notif.items.forEach((it) => { it.unread = false; });
+  if (p.classList.contains("hidden")) return;
+  if (!M) { p.classList.add("hidden"); return; }
+  p.classList.add("closing");   // already counts as closed: a quick re-open cancels the fade-out
+  const a = M.animate(p, { opacity: [1, 0], scale: [1, 0.9], y: [0, -10], filter: ["blur(0px)", "blur(6px)"], clipPath: ["circle(150% at 92% 0%)", "circle(0% at 92% 0%)"] },
+    { duration: 0.24, ease: [0.4, 0, 1, 1] });
+  const done = () => { if (p.classList.contains("closing")) { p.classList.add("hidden"); p.classList.remove("closing"); }
+    p.style.opacity = ""; p.style.transform = ""; p.style.filter = ""; p.style.clipPath = ""; };
+  (a.finished || a).then(done, done);
+}
+const notifOpen = () => { const p = $("notif-panel"); return !p.classList.contains("hidden") && !p.classList.contains("closing"); };
+$("notif-btn").onclick = (e) => { e.stopPropagation(); if (notifOpen()) closeNotif(); else openNotifPanel(); };
+document.addEventListener("click", (e) => { if (!e.target.closest(".notif-wrap") && notifOpen()) closeNotif(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && notifOpen()) { closeNotif(); $("notif-btn").focus(); } });
+setInterval(() => { if (document.visibilityState === "visible") loadNotifications(false); }, 10000);
+
 // Several people can work on the same client. When this tab comes back into view, re-read the client so a
 // clear, upload or run done elsewhere is reflected (at most every 3 seconds).
 let lastSync = 0;
 function syncIfStale() {
   if (!S.ws || !S.me || document.visibilityState === "hidden" || Date.now() - lastSync < 3000) return;
-  lastSync = Date.now(); refreshWs().catch(() => {});
+  lastSync = Date.now(); refreshWs().catch(() => {}); loadNotifications(false);
 }
 window.addEventListener("focus", syncIfStale);
 document.addEventListener("visibilitychange", syncIfStale);
 
 function renderDocConfirm() {
   const u = S.upload, box = $("mapping"), inputs = {};
-  box.classList.remove("hidden");
   const type = el("select", {}, ["receipt", "vendor_invoice", "other"].map((t) => el("option", { value: t }, nice(t))));
-  put(box, el("div", { class: "card-title" }, `Confirm document fields · ${u.filename} (${u.pages} page${u.pages > 1 ? "s" : ""})`),
+  const go = () => el("button", { class: "primary", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+        const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
+        try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } });
+          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await continueQueue(box, u); }
+        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } }, S.queue.length ? "Linking… then next file" : "Linking…") },
+    S.queue.length ? "Confirm & next file →" : "Confirm & link document");
+  put(box, mapBar(`Confirm document · ${u.filename}`, `${u.pages} page${u.pages > 1 ? "s" : ""}`, go()),
     u.duplicate_of ? el("div", { class: "msg err" }, `This exact PDF was already uploaded (${u.duplicate_of}). Confirming again replaces the same document. Nothing is counted twice.`) : null,
     u.unsafe_content.length ? el("div", { class: "exc REJECTED" }, el("div", { class: "type" }, "⚠ Instruction-like text found in this document"),
       el("div", { class: "small" }, "Treated as data only. No action was taken and none can be triggered from document text. Flagged in the evidence log:"),
@@ -799,12 +1487,8 @@ function renderDocConfirm() {
       ["vendor", "reference", "date", "amount"].map((k) => { const f = u.fields[k]; const i = el("input", { value: f.value }); inputs[k] = i;
         return el("tr", {}, el("td", {}, nice(k)), el("td", {}, i), el("td", { class: "small" }, f.page ? `p${f.page} · “${f.source_text}”` : f.source_text),
           el("td", {}, el("span", { class: "badge " + (f.confidence === "high" ? "PASS" : f.confidence === "none" ? "FAIL" : "UNKNOWN") }, f.confidence))); })),
-    el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type,
-      el("button", { class: "primary", onclick: async () => {
-        const fields = {}; for (const k in inputs) fields[k] = inputs[k].value;
-        try { await api(W(`/documents/${u.id}/confirm`), { method: "POST", json: { fields, doc_type: type.value } }); box.classList.add("hidden");
-          msg("up-msg", `Document linked to reference ${fields.reference}.`, "good"); await refreshWs(); nextInQueue(); }
-        catch (e) { if (e.status === 404) { staleUpload(); await refreshWs(); nextInQueue(); } else msg("up-msg", e.message, "err"); } } }, "Confirm & link document")));
+    el("div", { class: "row gap" }, el("span", { class: "small muted" }, "Document type"), type, go()));
+  showMappingCard(box);
 }
 function renderDocs(docs) {
   if (!docs || !docs.length) return put("docs", el("div", { class: "muted" }, "No supporting documents yet."));
@@ -814,7 +1498,10 @@ function renderDocs(docs) {
 }
 
 // ---------------- start here / trial home ----------------
-function go(tab) { document.querySelector(`[data-tab="${tab}"]`).click(); }
+function go(tab) {
+  if (!canOpen(tab)) tab = tab === "agents" ? "recon" : "home";   // a preparer never lands on a reviewer page
+  document.querySelector(`[data-tab="${tab}"]`).click();
+}
 window.addEventListener("popstate", () => {  // browser Back / Forward
   const h = location.hash.slice(1) || "home";
   if (h === "ask") return openAsk();
@@ -854,7 +1541,13 @@ $("run-btn").onclick = async (ev) => { await withBusy(ev.currentTarget, async ()
   msg("run-msg", "");
   await progress();  // re-read the client first: a colleague may have cleared it since this page loaded
   if (readiness()) { renderReadiness(); return msg("run-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.`, "good");
+  if (alreadyRun()) { renderReadiness(); return; }
+  try { const run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" }));
+    await S.replaying;  // 2026-11-13: numbers, tables and the toast appear only once the agent workflow has finished
+    S.run = run;
+    progress();  // now the sidebar review count catches up
+    toast(S.run.reused ? `These files were already reconciled as ${S.run.id}. Showing that run; nothing was run again.`
+      : `Reconciliation ${S.run.id} complete: ${S.run.result.matches.length} matched, ${S.run.result.exceptions.length} to review.` + tropsSentNote(S.run), "good");
     renderRun(); renderExceptions(); renderResults(); }
   catch (e) { msg("run-msg", e.message, "err"); }
 }, "Running…"); renderReadiness(); };  // withBusy re-enables the button; keep it off if files are missing
@@ -886,23 +1579,37 @@ function renderWorkflow() {
 const STAGE_BADGE = { DONE: "ACCEPTED", BLOCKED: "BLOCKED", NOT_RUN: "IDLE" };
 function renderStages() {
   const st = S.run && S.run.stages;
-  if (!st || !st.length) return put("stages", el("div", { class: "muted small" }, S.run ? "This run was created before stage tracking; run reconciliation again to see each stage."
-    : "Run a reconciliation to see Intake, Validate, Map, Reconcile, Exception and Complete with their real outputs."));
+  if (!st || !st.length) {
+    put("stages-sum", el("span", { class: "muted" }, S.run ? "not tracked for this run" : "no run yet"));
+    return put("stages", el("div", { class: "muted small" }, S.run ? "This run was created before stage tracking; run reconciliation again to see each stage."
+      : "Run a reconciliation to see Intake, Validate, Map, Reconcile, Exception and Complete with their real outputs."));
+  }
   const open = S.run.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
-  put("stages", el("ol", { class: "stages" }, st.map((s, i) => el("li", { class: "stage " + s.status },
-      el("div", { class: "sg-head" }, el("span", { class: "sg-n" }, String(i + 1)), el("b", {}, s.stage),
-        el("span", { class: "badge " + (s.stage === "Complete" && open ? "OPEN" : STAGE_BADGE[s.status] || "IDLE") },
-          s.stage === "Complete" && open ? `${open} open` : nice(s.status))),
-      el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
-        ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
-      s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null,
-      el("div", { class: "sg-meta muted" }, `${s.agents.join(" + ")} · ${(s.step_ids || []).join(", ")}`)))),
-    el("div", { class: "muted small" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
+  const state = (s) => (s.stage === "Complete" && open ? "open" : s.status === "DONE" ? "done" : s.status === "BLOCKED" ? "blocked" : "idle");
+  // One-line view: all six stages visible at a glance; details expand below.
+  put("stages-sum", st.map((s) => el("span", { class: "sf-st " + state(s) }, el("i", { "aria-hidden": "true" }), s.stage,
+    s.stage === "Complete" && open ? el("em", {}, `${open} open`) : null)));
+  put("stages", el("ol", { class: "stages stl" }, st.map((s, i) => el("li", { class: "stage " + s.status + " st-" + state(s) },
+      el("span", { class: "stl-dot", "aria-hidden": "true" }, state(s) === "done" ? "✓" : String(i + 1)),
+      el("div", { class: "stl-main" },
+        el("div", { class: "sg-head" }, el("b", {}, s.stage),
+          el("span", { class: "badge " + (s.stage === "Complete" && open ? "OPEN" : STAGE_BADGE[s.status] || "IDLE") },
+            s.stage === "Complete" && open ? `${open} open` : nice(s.status))),
+        el("div", { class: "sg-sum" }, rich(s.stage !== "Complete" ? s.summary || "" : open
+          ? `Reports ready; ${open} case(s) still awaiting a CPA decision, so they are not complete` : "Reports ready; every case has a CPA decision", false)),
+        s.case_ids && s.case_ids.length ? el("div", { class: "sg-cases" }, s.case_ids.map((c) => caseLink(c))) : null),
+      el("div", { class: "sg-meta" }, el("span", {}, s.agents.join(" + ")))))),   // step IDs stay in the audit log, not on screen
+    el("div", { class: "muted small stl-foot" }, `Run ${S.run.id} · trace ${S.run.trace_id} · rulebook ${S.run.rulebook_version || "–"}`));
 }
 function renderRun() {
   renderWorkflow(); renderReadiness(); renderStages();
+  if (S.anim && S.anim.mode !== "upload") {  // a run is being worked through: no figures until the last agent finishes
+    put("tiles", TILE_NAMES.map((k) => el("div", { class: "tile pending" }, el("div", { class: "k" }, k), el("div", { class: "v" }, el("span", { class: "skel" })))));
+    put("matches", empty("Matching…", "Matched bank and ledger lines appear when the agents finish."));
+    return;
+  }
   if (!S.run) { put("tiles"); put("matches", empty("No run yet", "Matched bank and ledger lines appear here after a run.")); return; }
-  const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN").length;
+  const r = S.run.result, open = r.exceptions.filter((e) => e.status === "OPEN" || e.status === "RETURNED").length;  // same rule as status and reports
   put("tiles",
     tile("Bank net movement", usd(r.bank_net_cents)), tile("Ledger net movement", usd(r.ledger_net_cents)),
     tile("Variance", usd(r.variance_cents), r.variance_cents ? "amb" : "good"),
@@ -913,28 +1620,60 @@ function renderRun() {
       el("td", {}, el("span", { class: "rid" }, m.bank_id)), el("td", {}, el("span", { class: "rid" }, m.ledger_id)), el("td", { class: "num" }, usd(m.amount_cents)),
       el("td", { class: "small" }, el("span", { class: "rule-id" }, m.rule_id), rich(m.why))))));
 }
+const TILE_NAMES = ["Bank net movement", "Ledger net movement", "Variance", "Variance unexplained", "Matched automatically", "Exceptions to review"];
 const tile = (k, v, cls, sub) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "k" }, k), el("div", { class: "v" }, v), sub ? el("div", { class: "s" }, sub) : null);
 
 // ---------------- exceptions ----------------
+// Suggested comments (2026-11-13): fixed wording picked by the person's role and the case type, never generated.
+// A click adds the text to the note; nothing is sent until the person presses Propose / Approve / Reject / Return.
+const SUGGEST_PREP = {
+  MISSING_GL: ["The supporting bill is attached; please approve booking this entry.", "Paid from the wrong account; to be reclassified."],
+  POSSIBLE_DUPLICATE: ["Confirmed duplicate charge; refund requested from the vendor.", "Not a duplicate: two separate purchases."],
+  PARTIAL_RECEIPT: ["Customer paid part; the balance stays open on the invoice."],
+  MISSING_RECEIPT: ["Receipt requested from the cardholder."],
+  UNMATCHED_DEPOSIT: ["Deposit identified as a customer payment; to be applied to the invoice."],
+  MISSING_BANK: ["Payment still in transit; expected on next month's statement."],
+  TAX_REVIEW: ["Ship-to and taxability facts attached for CPA determination."],
+  FX_REVIEW: ["Approved FX rate source attached for this payment."],
+};
+const SUGGEST_PREP_ANY = ["Timing difference; clears next period.", "Proof attached for review."];
+const SUGGEST_CPA = ["Evidence checks out.", "Please attach the supporting document.", "Amount differs from the source; please recheck.", "Book this in the next period."];
+function suggestChips(x, note, reviewer) {
+  const list = reviewer ? SUGGEST_CPA : [...(SUGGEST_PREP[x.type] || []), ...SUGGEST_PREP_ANY];
+  return el("div", { class: "xsug" }, el("span", { class: "xsug-k" }, "Suggested comments"),
+    list.map((s) => el("button", { type: "button", class: "xsug-c", onclick: () => {
+      const v = note.value.trim(); note.value = !v ? s : v.includes(s) ? v : `${v} ${s}`; note.focus(); } }, s)));
+}
 const TYPE_LABEL = { POSSIBLE_DUPLICATE: "Possible duplicate charge", PARTIAL_RECEIPT: "Partial payment received", MISSING_GL: "Bank debit not in ledger",
   MISSING_RECEIPT: "Expense missing receipt", UNMATCHED_DEPOSIT: "Deposit not in ledger", MISSING_BANK: "Ledger entry not in bank", AMBIGUOUS: "Ambiguous — engine abstained", OVERPAYMENT: "Overpayment",
-  TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing" };
+  TAX_REVIEW: "Potential state tax / nexus review", FX_REVIEW: "Foreign currency payment — approved FX rate missing",
+  CURRENCY_MISMATCH: "Line not in the book currency", REJECTED_SOURCE_ROW: "Row could not be imported" };
 // Client-facing case status (an open case is never shown as completed)
-const CASE_STATUS = { DUPLICATE: "Duplicate", PARTIAL: "Partial", UNMATCHED: "Unmatched", TAX_REVIEW: "Tax review", FX_REVIEW: "FX review", APPROVAL_REQUIRED: "Approval required" };
+const CASE_STATUS = { DUPLICATE: "Duplicate", PARTIAL: "Partial", UNMATCHED: "Unmatched", TAX_REVIEW: "Tax review", FX_REVIEW: "FX review", APPROVAL_REQUIRED: "Approval required",
+  INCOMPLETE_SOURCE: "Row not imported" };
 const caseStatus = (x) => x.status === "ACCEPTED" || x.status === "REJECTED" ? `${nice(x.status)} by ${x.reviewer}` : (CASE_STATUS[x.client_status] || nice(x.client_status || x.type));
 const FACT_LABEL = { invoice: "Invoice", customer: "Customer", ship_from_state: "Ships from", ship_to_state: "Ships to", invoice_date: "Invoice date",
   invoice_amount: "Invoice amount", currency: "Currency", bill_currency: "Bill currency", bill_amount: "Bill amount", paid_currency: "Paid in",
   paid_amount: "Amount paid", vendor_country: "Supplier country", vendor: "Supplier" };
 const INPUT_LABEL = { taxability: "Taxability in destination state", nexus_status: "Nexus status in destination state",
   dest_registration: "Seller registration in destination state", issue_date: "Effective (tax point) date" };
+// The refusal names the button that was pressed: one generic "approve" text for Approve, Reject and Return was wrong.
+const DECISION_VERB = { ACCEPT: "approve", REJECT: "reject", RETURN: "return" };
+const DENY_TITLE = { MAKER_CHECKER_SELF_APPROVAL: "Maker-checker", ROLE_NOT_AUTHORISED: "Role not authorised",
+  REQUIRED_ROLE_MISSING: "CPA reviewer required", AGENT_CANNOT_APPROVE: "Agents cannot decide" };
 const DENY_TEXT = {
-  MAKER_CHECKER_SELF_APPROVAL: "You proposed this resolution, so you cannot approve it yourself (maker-checker rule).",
-  ROLE_NOT_AUTHORISED: "Your role cannot decide review items. A CPA reviewer must decide.",
-  REQUIRED_ROLE_MISSING: "TrustOps escalated this item to a CPA reviewer.", AGENT_CANNOT_APPROVE: "Agents can never approve.",
+  MAKER_CHECKER_SELF_APPROVAL: (v) => v === "return"
+    ? "You proposed this resolution. Return to preparer is how a CPA reviewer sends work back to you, so you can't use it on your own proposal. A CPA reviewer who didn't propose it decides (maker-checker rule)."
+    : `You proposed this resolution, so you can't ${v} it yourself. A CPA reviewer who didn't propose it decides (maker-checker rule).`,
+  ROLE_NOT_AUTHORISED: (v) => `Only a CPA reviewer can ${v} review items. As a staff preparer you can propose a resolution for a reviewer instead.`,
+  REQUIRED_ROLE_MISSING: () => "TrustOps escalated this item to a CPA reviewer.",
+  AGENT_CANNOT_APPROVE: () => "Agents can never approve, reject or return review items.",
 };
-function denyText(e) {
+function denyText(e, decision) {
   const d = e.body && e.body.detail;
-  return d && d.reason_code ? `TrustOps DENY · ${nice(d.reason_code)} · ${d.policy_id || ""}. ${DENY_TEXT[d.reason_code] || ""} The refusal is recorded in the audit trail.` : e.message;
+  if (!(d && d.reason_code)) return e.message;
+  const v = DECISION_VERB[decision] || "decide", txt = DENY_TEXT[d.reason_code];
+  return `TrustOps DENY · ${DENY_TITLE[d.reason_code] || nice(d.reason_code)} · ${d.policy_id || ""}. ${txt ? txt(v) : ""} The refusal is recorded in the audit trail.`;
 }
 function govLine(t) {
   if (!t) return null;
@@ -942,42 +1681,321 @@ function govLine(t) {
     el("span", {}, `${t.policy_id} ${nice(t.policy_name)}`), t.required_role ? el("span", {}, `· needs a ${t.required_role_label || t.required_role}`) : null,
     el("span", { class: "muted small" }, `· policy set ${t.policy_version}`));
 }
+// Who proposed, returned and decided this case, in order, with each step's note and signed id. Shown once a case has
+// more than one step (e.g. proposed -> returned -> proposed again -> approved), so the maker-checker story reads in one place.
+const TRAIL_WORD = { ACCEPT: "Approved", REJECT: "Rejected", RETURN: "Returned to preparer" };
+function reviewTrail(x) {
+  const steps = [...(x.proposals || []).map((p) => ({ at: p.at, by: p.by, what: "Proposed", note: p.note, id: p.proposal_id, k: "prop" })),
+    ...(x.history || []).map((h) => ({ at: h.at, by: h.by, what: TRAIL_WORD[h.decision] || nice(h.decision), note: h.note, id: h.approval_id, k: h.decision })),
+    ...(x.attachments || []).map((a) => ({ at: a.at, by: a.by, what: "Proof attached", note: a.filename, id: a.id, k: "proof" }))]
+    .sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  if (steps.length < 2) return null;
+  return el("div", { class: "xtrail" }, el("div", { class: "xs-k" }, "Review trail"),
+    el("ol", {}, steps.map((s) => el("li", { class: "t-" + s.k },
+      el("b", {}, s.what), ` by ${niceActor(s.by)}`, s.note ? ` · “${s.note}”` : "",
+      el("span", { class: "muted small" }, ` · ${fmtDateTime(s.at)}${s.id ? " · " + s.id : ""}`)))));
+}
+// Proof on a review item: a receipt, bill, statement extract or email. Both roles can add it while the item is
+// open; the server stores it unopened, fingerprints and signs it. Files download; nothing is opened in the page.
+const PROOF_ACCEPT = ".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.txt,.eml";
+const kbSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+function proofList(x) {
+  const list = x.attachments || [];
+  if (!list.length) return null;
+  return el("div", { class: "xproof" }, el("div", { class: "xs-k" }, `Proof · ${list.length} file${list.length === 1 ? "" : "s"}`),
+    el("ul", {}, list.map((a) => el("li", {},
+      el("span", { class: "pf-ext" }, (a.extension || "").replace(".", "").toUpperCase() || "FILE"),
+      el("div", { class: "pf-b" },
+        el("a", { class: "pf-name", href: W(`/runs/${S.run.id}/exceptions/${x.id}/attachments/${a.id}`), download: "",
+          title: `SHA-256 ${a.sha256}` }, a.filename),
+        el("div", { class: "pf-m" }, `${kbSize(a.size)} · added by ${niceActor(a.by)} · ${fmtDateTime(a.at)} · ${a.id}`),
+        a.note ? el("div", { class: "pf-note" }, `“${a.note}”`) : null)))));
+}
+function proofButton(x, out, note) {
+  const input = el("input", { type: "file", accept: PROOF_ACCEPT, class: "hidden", "aria-label": "Choose a proof file" });
+  const btn = el("button", { class: "secondary xproof-btn", title: "Attach a receipt, bill, statement extract or email (PDF, image, Excel, CSV, TXT, EML; up to 10 MB)",
+    onclick: () => input.click() }, "Attach proof");
+  input.onchange = () => withBusy(btn, async () => {
+    const f = input.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f); fd.append("note", note.value || "");
+    try {
+      const a = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/attachments`), { method: "POST", form: fd });
+      (x.attachments = x.attachments || []).push(a); S.excSeen.add(x.id);
+      toast(`${a.filename} attached to ${x.case_id || x.id}. Fingerprinted and recorded in the audit trail.`, "good");
+      renderExceptions();
+    } catch (e) { out.textContent = e.message; out.className = "msg err"; }
+    input.value = "";
+  }, "Uploading…");
+  return [btn, input];
+}
+// When TrustOps is connected, governance (rules, guardrails, agents, audit trail, approvals) lives in TrustOps.
+function applyTrustOpsNav() {
+  const t = S.me && S.me.trustops;
+  if (!t || !t.connected) return;
+  ["rules", "controls", "evidence"].forEach((k) => { const b = document.querySelector(`#tabs .tab[data-tab="${k}"]`); if (b) { b.classList.add("hidden"); b.style.display = "none"; } });
+  const last = document.querySelector('#tabs .tab[data-tab="evidence"]');
+  if (last && !document.getElementById("trustops-link") && t.console_url) {
+    const a = el("a", { id: "trustops-link", class: "tab", href: t.console_url, target: "_blank", rel: "noopener" },
+      el("span", { class: "ico" }, "⛨"), "TrustOps ↗");
+    last.after(a);
+  }
+}
+// TrustOps approval status for one review item (approval happens in TrustOps, never here)
+// Who reviews this item in TrustOps. The list of Admins and Approvers comes from TrustOps Team & access.
+async function tropsReviewers() {
+  if (!S.trRevs || Date.now() - S.trRevs.at > 30000) {
+    try { S.trRevs = { at: Date.now(), items: (await api("/v1/trustops/reviewers")).items || [] }; }
+    catch (e) { S.trRevs = { at: Date.now(), items: [] }; }
+  }
+  // 2026-11-16: never offer yourself as the approver (maker-checker; the server and TrustOps refuse it too)
+  const me = String((S.me && S.me.user_id) || "").toLowerCase();
+  return S.trRevs.items.filter((r) => String(r.email || "").toLowerCase() !== me);
+}
+// 2026-11-16 action items: select several review items (or all) and send them to one approver in one go.
+// Each item still becomes its own TrustOps decision and its own signed record; decided or already-sent items are skipped.
+const sendable = (x) => (x.status === "OPEN" || x.status === "RETURNED") && (x.trustops_review || {}).status !== "PENDING";
+function bulkBar(shown) {
+  const can = shown.filter(sendable);
+  if (!can.length) return null;
+  S.excSel = new Set([...(S.excSel || [])].filter((id) => can.some((x) => x.id === id)));
+  const count = el("span", { class: "bulk-n" });
+  const all = el("input", { type: "checkbox", class: "bulk-all", "aria-label": "Select all items that can be sent" });
+  const pick = el("select", { class: "tro-assign", "aria-label": "Send selected to" }, el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+  tropsReviewers().then((items) => { for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  const note = el("input", { class: "bulk-note", maxlength: 1000, placeholder: "Note for the approver (optional)", "aria-label": "Note for the approver" });
+  const btn = el("button", { class: "primary tro-send", type: "button", onclick: (ev) => sendSelected(ev.currentTarget, pick, note) },
+    el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Send to TrustOps");
+  // 2026-11-18 (user feedback): say why the other items in this list can't be selected
+  const waiting = shown.filter((x) => (x.trustops_review || {}).status === "PENDING").length;
+  const decided = shown.filter((x) => !(x.status === "OPEN" || x.status === "RETURNED")).length;
+  const why = [waiting ? `${waiting} already sent, waiting for approval` : "", decided ? `${decided} already decided` : ""].filter(Boolean).join(" · ");
+  const sync = () => {
+    const n = S.excSel.size;
+    count.textContent = (n ? `${n} of ${can.length} selected` : `${can.length} can be sent`) + (why ? ` (${why})` : "");
+    all.checked = n === can.length; all.indeterminate = n > 0 && n < can.length;
+    btn.disabled = !n || !pick.value; btn.title = !n ? "Select items first" : !pick.value ? "Choose who to send them to first" : "";
+    document.querySelectorAll("#exc-list input.exc-sel").forEach((c) => { c.checked = S.excSel.has(c.dataset.id); });
+  };
+  all.onchange = () => { S.excSel = all.checked ? new Set(can.map((x) => x.id)) : new Set(); sync(); };
+  pick.onchange = sync;
+  S.bulkSync = sync;
+  setTimeout(sync, 0);
+  return el("div", { class: "bulk-bar" }, el("label", { class: "bulk-sel" }, all, el("span", {}, "Select all")), count,
+    el("span", { class: "grow" }), el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Send to "), pick), note, btn);
+}
+function selBox(x) {
+  if (!sendable(x)) return null;
+  return el("input", { type: "checkbox", class: "exc-sel", "data-id": x.id, "aria-label": `Select ${x.case_id || x.id}`,
+    onchange: (e) => { S.excSel = S.excSel || new Set(); e.target.checked ? S.excSel.add(x.id) : S.excSel.delete(x.id); S.bulkSync && S.bulkSync(); } });
+}
+async function sendSelected(btn, pick, noteEl) {
+  const ids = [...(S.excSel || [])];
+  if (!ids.length) return toast("Select at least one review item.", "bad");
+  if (!pick.value) return toast("Choose who to send them to first.", "bad");
+  if (!(await confirmDialog(`Send ${ids.length} item${ids.length === 1 ? "" : "s"} to ${pick.value}?`,
+    "Each item goes to TrustOps for approval with your note. Items already sent or decided are skipped.", "Send", false))) return;
+  await withBusy(btn, async () => {
+    try {
+      const r = await api(W(`/runs/${S.run.id}/send-to-trustops`), { method: "POST", json: { exception_ids: ids, to: pick.value, note: noteEl.value.trim() } });
+      S.excSel = new Set();
+      const parts = [`${r.sent} sent to ${r.to}`]; if (r.skipped) parts.push(`${r.skipped} skipped`); if (r.not_sent) parts.push(`${r.not_sent} not sent`);
+      S.run = await api(W(`/runs/${S.run.id}`));
+      if (r.not_sent) S.excFilter = "notsent";   // 2026-11-18: show exactly which items did not go, with the reason
+      renderExceptions(); renderResults && renderResults(); loadNotifications(true);
+      if (r.not_sent || r.skipped) sendReport(r, parts.join(" · ") + ".");
+      else toast(parts.join(" · ") + ".", "good");
+    } catch (e) { toast(e.message, "bad"); }
+  }, "Sending…");
+}
+// 2026-11-18 (user feedback "what is the reason for not sent, not shown anywhere"): after a bulk send, one dialog lists
+// every item that did not go and why, grouped by reason. The items stay under the "Not sent" chip with Try again.
+function sendReport(r, head) {
+  const exc = (id) => (S.run.result.exceptions.find((x) => x.id === id) || {});
+  const groups = new Map();
+  for (const it of r.results || []) {
+    if (it.result === "sent") continue;
+    const tr = it.trustops_review || {};
+    const why = it.result === "skipped" ? it.reason : (tr.reason || it.reason || "TrustOps could not be reached");
+    const k = `${it.result === "skipped" ? "Skipped" : "Not sent"}: ${why}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(exc(it.exception_id).case_id || it.exception_id);
+  }
+  const body = el("div", { class: "send-report" }, el("p", {}, head),
+    ...[...groups].map(([why, ids]) => el("div", { class: "sr-group" }, el("b", {}, `${why} (${ids.length})`),
+      el("div", { class: "muted small" }, ids.join(", ")))),
+    r.not_sent ? el("p", { class: "muted small" }, "Items not sent are listed under “Not sent”. Press Try again on an item, or select them and send again. An item that already arrived in TrustOps is never sent twice.") : null);
+  const close = () => overlay.remove();
+  const overlay = el("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) close(); } },
+    el("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": "Send result" },
+      el("div", { class: "dialog-title" }, r.not_sent ? "Some items were not sent" : "Send result"), el("div", { class: "dialog-body" }, body),
+      el("div", { class: "dialog-actions" }, el("button", { class: "primary", onclick: close }, "OK"))));
+  document.body.append(overlay);
+  overlay.querySelector(".dialog-actions button").focus();
+}
+function tropsReviewer(x, tr) {
+  const cur = tr.assigned_to || "";
+  const sel = el("select", { class: "tro-assign", "aria-label": "Reviewer in TrustOps", onchange: async () => {
+    sel.disabled = true;
+    if (!sel.value) return;
+    try { const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/reviewer`), { method: "POST", json: { to: sel.value } });
+      tr.assigned_to = r.assigned_to; toast(`Assigned to ${r.assigned_to} in TrustOps`, "good"); }
+    catch (e) { sel.value = cur; toast(e.message, "bad"); } finally { sel.disabled = false; } } },
+    cur ? el("option", { value: cur, selected: true }, cur) : el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+  tropsReviewers().then((items) => { for (const r of items) if (r.email !== cur) sel.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  return el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Reviewer "), sel);
+}
+// 2026-11-13 (user feedback): LedgerSight SENDS items to the approvers in TrustOps. The status bar says where it
+// went and when; a small refresh icon asks TrustOps for the latest answer (the bell also checks every 10 s).
+// "Approve in TrustOps" is shown only to someone who is an approver there; nobody else has access to TrustOps.
+const REFRESH_D = "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7";
+function tropsStatus(x, tops) {
+  const tr = x.trustops_review || {};
+  const refresh = el("button", { type: "button", class: "iconbtn tro-refresh", title: "Get the latest status from TrustOps", "aria-label": "Get the latest status from TrustOps",
+    onclick: async (ev) => {
+      const b = ev.currentTarget; b.classList.add("spin"); b.disabled = true;
+      try { S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults();
+        const now = S.run.result.exceptions.find((e) => e.id === x.id);
+        toast(now && now.status !== x.status ? `${x.case_id || x.id}: ${now.status === "ACCEPTED" ? "approved" : "rejected"} in TrustOps.` : "No decision yet. The approver hasn't answered in TrustOps.", "good");
+      } catch (e) { toast(e.message, "bad"); b.classList.remove("spin"); b.disabled = false; } } }, icon(REFRESH_D));
+  // No link to approve from here (2026-11-13, user request): the chosen approver is told in TrustOps.
+  const sentAt = tr.submitted_at ? fmtDateTime(tr.submitted_at) : "";
+  const to = tr.assigned_to ? tr.assigned_to : "TrustOps approvers";
+  // Not sent yet (or sending failed): the person chooses who it goes to and presses "Send to TrustOps".
+  if (!tr.status || tr.status === "NOT_SENT") {
+    // 2026-11-13 (user request): there is no "any approver"; a person must be chosen before Send is enabled.
+    const pick = el("select", { class: "tro-assign", "aria-label": "Send to", required: true,
+      onchange: () => { send.disabled = !pick.value; } }, el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+    tropsReviewers().then((items) => {
+      for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`));
+      if (!items.length) pick.firstChild.textContent = "No approvers in TrustOps yet";
+    });
+    const send = el("button", { class: "primary tro-send", disabled: true, title: "Choose who to send it to first", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+      const note = x._noteEl ? x._noteEl.value.trim() : "";
+      if (!pick.value) { toast("Choose who to send it to first.", "bad"); return; }
+      try {
+        const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/send-to-trustops`), { method: "POST", json: { note, to: pick.value } });
+        if (r.trustops_review.status !== "PENDING") { toast(`Not sent: ${r.trustops_review.reason || "TrustOps could not be reached"}`, "bad"); }
+        else toast(`${x.case_id || x.id} sent to ${r.trustops_review.assigned_to || pick.value} in TrustOps for approval.`, "good");
+        S.run = await api(W(`/runs/${S.run.id}`)); renderExceptions(); renderResults && renderResults(); loadNotifications(true);
+      } catch (e) { toast(e.message, "bad"); } }, "Sending…") },
+      el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), tr.status === "NOT_SENT" ? "Try again" : "Send to TrustOps");
+    return {
+      bar: el("div", { class: "tro-bar" + (tr.status === "NOT_SENT" ? " bad" : "") },
+        tr.status === "NOT_SENT" ? el("span", { class: "tro-pill bad" }, "Not sent")
+          : el("span", { class: "tro-pill idle" }, "Not sent yet"),
+        el("span", { class: "muted small" }, tr.status === "NOT_SENT" ? (tr.reason || "TrustOps could not be reached")
+          : "Choose the approver, add a note if you like, then send it to TrustOps."),
+        el("span", { class: "grow" }), el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Send to "), pick)),
+      actions: [send] };
+  }
+  if (tr.status === "PENDING") return {
+    bar: el("div", { class: "tro-bar" },
+      el("span", { class: "tro-pill" }, el("span", { class: "tro-dot", "aria-hidden": "true" }), "Waiting for approval"),
+      el("span", { class: "tro-sent small" }, el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")),
+        "Sent to ", el("b", {}, to), sentAt ? ` · ${sentAt}` : ""),
+      el("span", { class: "grow" }), tropsReviewer(x, tr), refresh,
+      x.proposal_note ? el("div", { class: "tro-note small" }, el("span", { class: "muted" }, `Note sent by ${niceActor(x.proposed_by) || x.proposed_by}: `), `“${x.proposal_note}”`) : null),
+    // 2026-11-13 action items: the button stays where it was (it does not turn into an approve link), greyed out
+    actions: [el("button", { class: "primary tro-send", type: "button", disabled: true, title: `Sent to ${to} in TrustOps. Waiting for their decision.` },
+      el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Sent to TrustOps")] };
+  return { bar: el("div", { class: "tro-bar" }, el("span", { class: "tro-pill" }, nice(tr.status || "")), el("span", { class: "grow" }), refresh), actions: [] };
+}
+// 2026-11-13 action items: an item rejected in TrustOps can be sent again. Attach new proof (required), choose the
+// approver, add a note; TrustOps shows it as a resubmission with the earlier rejection.
+function resendBox(x, out, note) {
+  const closed = x.reviewed_at || "";
+  const fresh = (x.attachments || []).filter((a) => (a.at || "") > closed);
+  const pick = el("select", { class: "tro-assign", "aria-label": "Send to", onchange: () => sync() },
+    el("option", { value: "", disabled: true, selected: true }, "Choose an approver"));
+  tropsReviewers().then((items) => { for (const r of items) pick.append(el("option", { value: r.email }, `${r.email} · ${r.role}`)); });
+  const send = el("button", { class: "primary tro-send", type: "button", onclick: (ev) => withBusy(ev.currentTarget, async () => {
+    try {
+      const r = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/resend-to-trustops`), { method: "POST", json: { note: note.value.trim(), to: pick.value } });
+      if (r.trustops_review.status !== "PENDING") toast(`Not sent: ${r.trustops_review.reason || "TrustOps could not be reached"}`, "bad");
+      else toast(`${x.case_id || x.id} sent again to ${r.trustops_review.assigned_to || pick.value} in TrustOps.`, "good");
+      S.run = await api(W(`/runs/${S.run.id}`)); S.excFilter = "open"; renderExceptions(); loadNotifications(true);
+    } catch (e) { toast(e.message, "bad"); } }, "Sending…") },
+    el("span", { class: "tro-send-ico", "aria-hidden": "true" }, icon("M22 2L11 13M22 2l-7 20-4-9-9-4z")), "Send to TrustOps again");
+  const sync = () => { send.disabled = !fresh.length || !pick.value;
+    send.title = !fresh.length ? "Attach new proof first" : !pick.value ? "Choose who to send it to first" : ""; };
+  sync();
+  return el("div", { class: "xa xa-tro resend" },
+    el("div", { class: "tro-bar bad" }, el("span", { class: "tro-pill bad" }, "Rejected in TrustOps"),
+      el("span", { class: "muted small" }, fresh.length ? `New proof: ${fresh.map((a) => a.filename).join(", ")}. Choose the approver and send it again.`
+        : "To send it again, attach new proof (for example the missing receipt), then choose the approver."),
+      el("span", { class: "grow" }), el("label", { class: "tro-rev" }, el("span", { class: "muted small" }, "Send to "), pick)),
+    note,
+    el("div", { class: "xa-row" }, el("span", { class: "grow" }), proofButton(x, out, note), send),
+    el("div", { class: "xa-hint" }, "The earlier rejection and your new proof go to the approver with the item."), out);
+}
 function renderExceptions() {
   if (!S.run) return put("exc-list", empty("Nothing to review yet", "Run a reconciliation first. Anything the rules can't settle on their own appears here for a person to decide."));
   if (!S.run.result.exceptions.length) return put("exc-list", empty("Nothing needs a person", `Run ${S.run.id} raised no review items.`));
   const reviewer = S.me.role === "owner_reviewer";
-  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; }
+  if (S.excRun !== S.run.id) { S.excRun = S.run.id; S.excSeen = new Set(); S.excFilter = "open"; S.excType = "all"; S.excSel = new Set(); }
   const all = S.run.result.exceptions, isOpen = (x) => x.status === "OPEN" || x.status === "RETURNED";
   const nOpen = all.filter(isOpen).length;
-  const shown = all.filter((x) => S.excFilter === "all" || (S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id) : !isOpen(x)));
-  const chip = (k, label, n) => el("button", { class: "pl-chip" + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
+  const typeOf = (x) => x.client_status || "APPROVAL_REQUIRED";
+  if (S.excFilter === "returned" && isCPA()) S.excFilter = "open";
+  // 2026-11-13 (user request): one chip for decided items is split into Approved and Rejected (here or in TrustOps).
+  if (S.excFilter === "decided") S.excFilter = "approved";
+  const notSent = (x) => isOpen(x) && (x.trustops_review || {}).status === "NOT_SENT";
+  const nNotSent = all.filter(notSent).length;
+  if (S.excFilter === "notsent" && !nNotSent) S.excFilter = "open";
+  const inStatus = (x) => S.excFilter === "all" || (S.excFilter === "notsent" ? notSent(x) : S.excFilter === "returned" ? x.status === "RETURNED" || S.excSeen.has(x.id)
+    : S.excFilter === "open" ? isOpen(x) || S.excSeen.has(x.id)
+    : S.excFilter === "approved" ? x.status === "ACCEPTED" : S.excFilter === "rejected" ? x.status === "REJECTED" : !isOpen(x));
+  const nRet = all.filter((x) => x.status === "RETURNED").length;
+  const shown = all.filter((x) => inStatus(x) && (S.excType === "all" || typeOf(x) === S.excType));
+  const chip = (k, label, n, cls) => el("button", { class: "pl-chip" + (cls ? " " + cls : "") + (S.excFilter === k ? " on" : ""), "aria-pressed": String(S.excFilter === k),
     onclick: () => { S.excFilter = k; S.excSeen = new Set(); renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
-  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), chip("decided", "Decided", all.length - nOpen), chip("all", "All", all.length));
+  // Case-type chips (Unmatched, Duplicate, Tax review, FX review...), counted within the status chosen on the left.
+  const types = [...new Set(all.map(typeOf))];
+  const tchip = (k, label, n) => el("button", { class: "pl-chip" + (S.excType === k ? " on" : ""), "aria-pressed": String(S.excType === k),
+    "data-type": k, onclick: () => { S.excType = S.excType === k ? "all" : k; renderExceptions(); } }, label, el("span", { class: "pl-n" }, n));
+  const bar = el("div", { class: "pl-chips exc-filter" }, chip("open", "Open", nOpen), isCPA() ? null : chip("returned", "Returned to me", nRet),
+    nNotSent ? chip("notsent", "Not sent", nNotSent, "pl-rej") : null,
+    chip("approved", "Approved", all.filter((x) => x.status === "ACCEPTED").length),
+    chip("rejected", "Rejected", all.filter((x) => x.status === "REJECTED").length, "pl-rej"), chip("all", "All", all.length),
+    types.length > 1 ? [el("span", { class: "exc-sep", "aria-hidden": "true" }),   // el() flattens one level only
+      ...types.map((k) => [k, all.filter((x) => inStatus(x) && typeOf(x) === k).length])
+        .filter(([k, n]) => n > 0 || S.excType === k)            // nothing of that type in this view: no chip
+        .map(([k, n]) => tchip(k, CASE_STATUS[k] || nice(k), n))] : null);
+  if (!shown.length && S.excFilter === "returned") return put("exc-list", bar, empty("Nothing returned to you", "When a CPA reviewer sends an item back, it appears here with their note."));
   if (!shown.length) return put("exc-list", bar, S.excFilter === "open"
     ? el("div", { class: "empty" }, el("b", {}, "Every item has a decision"), el("span", {}, "This period is ready to report."),
-        el("button", { class: "primary", style: "margin-top:10px", onclick: () => go("reports") }, "Download the reports →"))
-    : empty("No decided items yet", "Decisions appear here once a reviewer approves, rejects or returns an item."));
-  put("exc-list", bar, shown.map((x) => {
+        el("button", { class: "primary mt10", onclick: () => go("reports") }, "Download the reports →"))
+    : S.excFilter === "rejected" ? empty("Nothing rejected yet", "Items rejected here or in TrustOps appear here with the reason.")
+    : S.excFilter === "approved" ? empty("Nothing approved yet", "Items approved here or in TrustOps appear here.")
+    : empty("No items yet", "Review items appear here after a reconciliation run."));
+  const tropsOnRun = S.run && S.run.trustops && S.run.trustops.connected;
+  put("exc-list", bar, tropsOnRun ? bulkBar(shown) : null, shown.map((x) => {
     const note = el("textarea", { rows: 2, placeholder: "Add a note (saved with your name in the audit trail)", "aria-label": "Review note" });
+    x._noteEl = note;   // TrustOps "Send" takes this note to the approver
     const out = el("div", { class: "msg" });
-    const fail = (e) => { out.textContent = denyText(e); out.className = "msg err"; renderEvidence(); };
+    const fail = (e, d) => { out.textContent = denyText(e, d); out.className = "msg err"; renderEvidence(); };
     const act = (d) => async () => {
       try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/decisions`), { method: "POST", json: { decision: d, note: note.value } });
         Object.assign(x, res); S.excSeen.add(x.id); renderExceptions(); renderRun(); renderResults(); }
-      catch (e) { fail(e); }
+      catch (e) { fail(e, d); }
     };
     const propose = async () => {
       try { const res = await api(W(`/runs/${S.run.id}/exceptions/${x.id}/proposals`), { method: "POST", json: { note: note.value } }); Object.assign(x, res); renderExceptions(); }
       catch (e) { fail(e); }
     };
     const actionable = x.status === "OPEN" || x.status === "RETURNED";
+    const tops = S.run && S.run.trustops && S.run.trustops.connected ? S.run.trustops : null;
+    const tro = tops ? tropsStatus(x, tops) : null;   // its Send button reads the note through x._noteEl
     const t = x.trustops;
     const rec = (id) => recCard(id);
     const refs = x.evidence_refs || [];
     return el("article", { class: "exc " + x.status, "data-exc": x.id },
       el("header", { class: "xh" },
+        tops ? selBox(x) : null,
         el("div", { class: "grow" }, el("div", { class: "xh-id" }, x.id, x.case_id && x.case_id !== x.id ? ` · Case ${x.case_id}` : "",
-            x.client_status ? el("span", { class: "case-st" }, caseStatus(x)) : null),
+            x.client_status ? el("span", { class: "case-st" }, caseStatus(x)) : null,
+            x.resubmitted ? el("span", { class: "case-st resub", title: "Rejected in TrustOps earlier and sent again with new proof" },
+              `Resubmitted${x.resubmitted > 1 ? " ×" + x.resubmitted : ""}`) : null),
           el("h3", { class: "xh-title" }, TYPE_LABEL[x.type] || nice(x.type)), el("p", { class: "xh-why" }, rich(x.why))),
         el("div", { class: "xh-right" }, el("div", { class: "xh-amt" }, usd(x.amount_cents)),
           el("span", { class: "badge " + x.status }, actionable ? nice(x.status) : x.status))),
@@ -995,8 +2013,10 @@ function renderExceptions() {
         el("div", { class: "muted small" }, x.type === "TAX_REVIEW" ? "Review required. No tax liability or amount is asserted; nothing is filed or paid."
           : "Human review. No exchange rate is invented and the payment is not auto-matched.")) : null,
       x.suggestion ? el("div", { class: "xs" }, el("div", { class: "xs-k" }, "Suggested next step"), el("div", {}, rich(x.suggestion))) : null,
-      x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${x.proposed_by}`), el("div", {}, `“${x.proposal_note}”`)) : null,
+      x.proposal_note ? el("div", { class: "xs prop" }, el("div", { class: "xs-k" }, `Preparer proposal · ${niceActor(x.proposed_by)}`), el("div", {}, `“${x.proposal_note}”`)) : null,
       x.status === "RETURNED" ? el("div", { class: "msg" }, `Returned by ${x.reviewer}${x.review_note ? ": “" + x.review_note + "”" : ""}. Waiting for the preparer to propose again.`) : null,
+      proofList(x),
+      reviewTrail(x),
       el("details", { class: "xd" }, el("summary", {}, "Details"),
         el("dl", {},
           el("dt", {}, "Rule"), el("dd", {}, el("span", { class: "rid" }, x.rule_id)),
@@ -1006,17 +2026,27 @@ function renderExceptions() {
           refs.length ? [el("dt", {}, "Source rows"), el("dd", {}, rich(refs.map((id) => { const l = line(id); return l ? `${id}: row ${l.source_row}` : id; }).join(" · "), false))] : null,
           x.source_record_refs && x.source_record_refs.length ? [el("dt", {}, "Source files"), el("dd", {}, x.source_record_refs.join(" · "))] : null,
           x.run_id ? [el("dt", {}, "Run linkage"), el("dd", { class: "small" }, `Case ${x.case_id} · run ${x.run_id} · trace ${x.trace_id} · raised by ${x.agent_id}, routed by ${x.routed_by || "AG-04"} · rulebook ${x.rulebook_version}`)] : null)),
-      actionable ? el("div", { class: "xa" }, note,
+      actionable ? el("div", { class: "xa" + (tops ? " xa-tro" : "") }, tops ? null : suggestChips(x, note, reviewer), note,   // decisions are made in TrustOps when connected
+          tro ? tro.bar : null,
           el("div", { class: "xa-row" },
             x.bank_id ? el("button", { class: "linkbtn", onclick: () => openTrace(x.bank_id) }, "Trace " + x.bank_id + " →") : null,
             el("span", { class: "grow" }),
-            el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
-            el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
-            !reviewer ? el("button", { class: "primary", onclick: propose }, "Propose resolution for reviewer") : null,
-            el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")),
-          el("div", { class: "xa-hint" }, reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
-            : "You propose. A CPA reviewer who didn't propose it decides."), out)
-        : el("div", { class: "msg good" }, `${x.status} by ${x.reviewer} · ${new Date(x.reviewed_at).toLocaleString()} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}`));
+            proofButton(x, out, note),
+            // With TrustOps connected, approval happens only in TrustOps; LedgerSight shows the status.
+            tro ? tro.actions
+            // Decisions are the CPA reviewer's: a staff preparer only proposes (the server refuses a preparer decision anyway, POL-02/POL-06).
+            : reviewer ? [el("button", { class: "secondary", onclick: act("RETURN") }, "Return to preparer"),
+              el("button", { class: "no", onclick: act("REJECT") }, "Reject"),
+              el("button", { class: "ok", onclick: act("ACCEPT") }, "Approve")]
+              : el("button", { class: "primary", onclick: propose }, x.proposal_note && x.status === "OPEN" ? "Update proposal" : "Propose resolution for reviewer")),
+          el("div", { class: "xa-hint" }, tops ? ((x.trustops_review || {}).status === "PENDING"
+              ? `Only ${(x.trustops_review || {}).assigned_to || "the chosen approver"} can decide it in TrustOps. Their answer appears here and in your notifications.`
+              : "Nothing is sent until you press Send to TrustOps. The approver's answer then appears here and in your notifications.")
+            : reviewer ? "You can't approve a resolution you proposed yourself (maker-checker rule)."
+            : "You propose. A CPA reviewer approves, rejects or returns it."), out)
+        : [el("div", { class: "msg " + (x.status === "REJECTED" ? "bad" : "good") }, `${x.status} by ${x.reviewer} · ${fmtDateTime(x.reviewed_at)} · ${x.approval_id} · ${x.approval_policy || ""}${x.review_note ? " · “" + x.review_note + "”" : ""} · ${x.effect}` +
+            (x.carried_from ? ` · Decision kept from ${x.carried_from}: the case's facts did not change.` : "")),
+          tops && x.status === "REJECTED" && (x.trustops_review || {}).status === "REJECTED" ? resendBox(x, out, note) : null]);
   }));
 }
 
@@ -1039,39 +2069,57 @@ function renderControls() {
 }
 // ---------------- TrustOps proof: ALLOW / ESCALATE / DENY / DENY, read from the signed audit trail ----------------
 async function renderProof() {
-  if (!S.ws) return;
+  if (!S.ws || !isCPA()) return;
   let p; try { p = await api(W("/trustops/proof")); } catch (e) { return put("proof", el("div", { class: "msg err" }, e.message)); }
   const isPrep = S.me.role === "preparer";
   const firstOpen = S.run && S.run.result.exceptions.find((x) => x.status === "OPEN" || x.status === "RETURNED");
   const tryBtn = (c) => {
     if (c.key === "deny_preparer_approval" && isPrep && firstOpen) return el("button", { class: "danger", onclick: async () => {
       try { await api(W(`/runs/${S.run.id}/exceptions/${firstOpen.id}/decisions`), { method: "POST", json: { decision: "ACCEPT", note: "" } }); }
-      catch (e) { toast(denyText(e), "bad"); }
+      catch (e) { toast(denyText(e, "ACCEPT"), "bad"); }
       renderProof(); renderEvidence(); } }, `Try: approve ${firstOpen.case_id || firstOpen.id} as preparer`);
-    if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin ? "Switch “Acting as” to Staff Preparer to try it." : "Sign in as a staff preparer to try it.");
+    if (c.key === "deny_preparer_approval" && !isPrep) return el("span", { class: "muted small" }, S.noLogin
+      ? "A staff preparer has no Approve button; if one asks the server directly, it is refused and the refusal appears here."
+      : "A staff preparer has no Approve button; if one asks the server directly, it is refused and the refusal appears here.");
     if (c.key === "deny_cross_client") return el("button", { class: "danger", onclick: async () => {
       const q = "Show bank transactions for another client";
       try { const a = await api(W("/ask"), { method: "POST", json: { question: q } }); S.asks.push({ q, a, ws: S.ws }); renderAskLog(); } catch (_) { /* refusal is the point */ }
       renderProof(); renderEvidence(); } }, "Try: ask for another client's data");
     return null;
   };
-  const row = (k, v) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", {}, v)];
-  put("proof", el("div", { class: "row" }, el("span", { class: "badge" }, `Policy set ${p.policy_version}`),
+  const row = (k, v, cls) => v == null || v === "" ? null : [el("dt", {}, k), el("dd", cls ? { class: cls } : {}, v)];
+  const when = (t) => fmtDateTime(t);
+  const actor = (c) => `${niceActor(c.actor_id)}${c.agent_code ? ` (${c.agent_code})` : ""}${c.actor_role_label && !c.agent_code ? ` · ${c.actor_role_label}` : ""}`;
+  put("proof",
+    el("div", { class: "pf-sum" },
       el("span", { class: "badge " + p.chain.state }, `Audit chain ${p.chain.state}`),
-      el("span", { class: "muted small" }, p.all_shown ? "All four decisions are on record for this client." : "Decisions not yet on record show how to produce them live.")),
-    el("div", { class: "proof-grid gap" }, p.cards.map((c) => el("div", { class: "proof " + (c.shown ? c.decision : "pending") },
-      el("div", { class: "pf-head" }, el("span", { class: "badge " + (c.shown ? c.decision : "IDLE") }, c.decision), el("b", {}, c.title)),
-      el("div", { class: "muted small" }, c.what),
-      c.shown ? el("dl", { class: "pf-dl" },
-        row("Actor", `${niceActor(c.actor_id)}${c.agent_code ? ` (${c.agent_code})` : ""}${c.actor_role_label ? ` · ${c.actor_role_label}` : ""}${c.delegated_by ? ` · for ${c.delegated_by}` : ""}`),
-        row("Request", nice(c.action)), row("Reason", nice(c.reason_code)),
-        row("Rule", `${c.policy_id} ${nice(c.policy_name)}${c.policy_rule_version ? ` v${c.policy_rule_version}` : ""}`),
-        row("Policy set", c.policy_version), row("Named authority", c.required_role_label),
-        row("Result", c.result), row("When", new Date(c.time_utc).toLocaleString()),
-        row("Trace", [c.run_id, c.trace_id].filter(Boolean).join(" · ")),
-        row("Evidence", `event #${c.evidence_seq} · ${c.event_hash.slice(0, 12)}… · signature ${c.signature}`))
-        : el("div", { class: "pf-how small" }, el("b", {}, "Not on record yet. "), c.how_to_show),
-      el("div", { class: "row" }, tryBtn(c))))));
+      el("span", { class: "pf-ver" }, "Policy set ", el("span", { class: "rid" }, p.policy_version)),
+      el("span", { class: "pf-note" }, p.all_shown ? "All decisions below are on record for this client." : "Any decision not yet on record shows how to produce it live.")),
+    el("div", { class: "pfc-grid" }, p.cards.map((c) => {
+      const t = tryBtn(c);
+      return el("article", { class: "pfc " + (c.shown ? c.decision : "pending") },
+        el("header", { class: "pfc-head" },
+          el("span", { class: "badge " + (c.shown ? c.decision : "IDLE") }, c.decision),
+          c.shown ? el("span", { class: "pfc-when" }, when(c.time_utc)) : el("span", { class: "pfc-when" }, "Not on record yet")),
+        el("h3", { class: "pfc-title" }, c.title),
+        el("p", { class: "pfc-what" }, c.what),
+        c.shown ? el("dl", { class: "pfc-dl" },
+          row("Who", actor(c)),
+          row("Action", nice(c.action)),
+          row("Rule", el("span", {}, el("span", { class: "rid" }, c.policy_id), ` ${nice(c.policy_name)}`)),
+          row("Decided by", c.required_role_label),
+          row("Outcome", String(c.result || "").replace(/;\s*(\w)/g, (_, ch) => ". " + ch.toUpperCase())),
+          row("Reason", c.reason_code && c.reason_code !== "OK" ? nice(c.reason_code) : null))
+          : el("div", { class: "pfc-how" }, c.how_to_show),
+        c.shown ? el("div", { class: "pfc-ev", title: `Event hash ${c.event_hash}
+Policy set ${c.policy_version}${c.policy_rule_version ? ` · rule v${c.policy_rule_version}` : ""}${c.delegated_by ? `
+Acting for ${c.delegated_by}` : ""}${c.run_id ? `
+Run ${c.run_id}` : ""}${c.trace_id ? ` · ${c.trace_id}` : ""}` },
+          el("span", { class: "pfc-sig" + (c.signature === "PASS" ? " is-ok" : "") }, c.signature === "PASS" ? "✓ Signed" : `Signature ${c.signature}`),
+          el("span", {}, `Event #${c.evidence_seq}`),
+          c.run_id ? el("span", { class: "rid" }, c.run_id) : null) : null,
+        t ? el("footer", { class: "pfc-foot" }, t) : null);
+    })));
 }
 $("proof-refresh").onclick = renderProof;
 const attempts = [];
@@ -1081,7 +2129,7 @@ async function attempt(a) {
   catch (e) { r = e.body || { decision: "DENY", reason_code: e.message }; }
   attempts.unshift({ a, r, at: new Date() });
   put("attack-out", el("table", {}, el("tr", {}, ["Time", "Who", "Attempt", "Decision", "Reason", "Policy", "Executed"].map((h) => el("th", {}, h))),
-    attempts.map((x) => el("tr", {}, el("td", {}, x.at.toLocaleTimeString()), el("td", {}, x.r.actor ? niceActor(x.r.actor) : "You"), el("td", {}, x.a.t),
+    attempts.map((x) => el("tr", {}, el("td", {}, fmtTime(x.at)), el("td", {}, x.r.actor ? niceActor(x.r.actor) : "You"), el("td", {}, x.a.t),
       el("td", {}, el("span", { class: "badge " + x.r.decision }, x.r.decision)),
       el("td", {}, nice(x.r.reason_code)), el("td", {}, x.r.policy_id || ""), el("td", {}, String(!!x.r.executed))))),
     el("div", { class: "msg" }, "Each refusal is now a signed record in the Audit trail and appears in the Governance report."));
@@ -1089,25 +2137,48 @@ async function attempt(a) {
 
 // ---------------- evidence ----------------
 async function renderEvidence() {
-  if (!S.ws) return;
-  const ev = await api(W("/evidence"));
+  if (!S.ws || !isCPA()) return;
+  const ev = await api(W("/evidence?limit=500"));  // newest 500 on screen; the downloads hold the full trail
   const v = ev.verification;
-  S.events = ev.events; S.verify = v.state;
+  S.events = ev.events; S.verify = v.state; S.evTotal = ev.total || ev.events.length; S.evCounts = ev.decision_counts || null;
+  S.evActivity = ev.recent_activity || null;  // newest real activity, even when it is older than the events shown
   const b = $("verify-badge"); b.className = "badge " + v.state;
   b.textContent = v.state === "PASS" ? `VERIFIED · ${v.checked} signed events` : `${v.state === "UNKNOWN" ? "NOT VERIFIED" : "FAILED"} · ${v.reason}`;
-  for (const [id, p] of [["exp-csv", "export.csv"], ["exp-pack", "review-pack.json"]]) {
-    $(id).classList.toggle("disabled", !S.run); $(id).href = S.run ? W(`/runs/${S.run.id}/${p}`) : "#";
-  }
-  $("exp-print").classList.toggle("disabled", !S.run);
-  $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv");
-  $("exp-print").href = S.run ?`/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(S.run.id)}` : "#";
-  put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first.`),
+  // 2026-11-16: review exports (CSV, review pack) live only on Reports, so they are not offered twice.
+  $("exp-audit-pdf").href = W("/audit-trail.pdf"); $("exp-audit-csv").href = W("/audit-trail.csv"); $("exp-audit-xlsx").href = W("/audit-trail.xlsx"); $("exp-audit-json").href = W("/audit-trail.json");
+  put("events", el("div", { class: "muted small" }, `Signing key ${ev.key_id} (${ev.key_source}). Newest first` +
+      (S.evTotal > ev.events.length ? `; showing the latest ${ev.events.length} of ${S.evTotal}. Download the audit trail for every event.` : ".")),
     el("table", {}, el("tr", {}, ["Time (UTC)", "Actor", "Action", "Decision", "Policy", "Source refs", "Hash"].map((h) => el("th", {}, h))),
       ev.events.slice().reverse().map((e) => el("tr", {}, el("td", { class: "small" }, e.timestamp_utc.slice(11, 19)),
         el("td", {}, e.agent_code ? el("span", {}, el("b", {}, e.agent_code), " " + niceActor(e.actor_id)) : niceActor(e.actor_id)),
         el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.policy_decision).split(":")[0] }, niceDecision(e.policy_decision))),
         el("td", { class: "small" }, e.policy_id || ""),
         el("td", { class: "small" }, (e.source_line_refs || []).slice(0, 6).join(", ")), el("td", { class: "mono" }, e.event_hash.slice(0, 10) + "…")))));
+  renderGovSummary();
+}
+// TrustOps decisions + recent activity (top of the Audit trail page), from the signed events just loaded.
+function renderGovSummary() {
+  const ev = S.events || [];
+  const cnt = (k) => (S.evCounts ? S.evCounts[k] || 0 : ev.filter((e) => String(e.policy_decision).startsWith(k)).length);
+  const govN = [["ALLOW", cnt("ALLOW"), "Allowed"], ["ESCALATE", cnt("ESCALATE"), "Sent to a person"], ["DENY", cnt("DENY"), "Blocked"]];
+  const govT = govN.reduce((a, x) => a + x[1], 0);
+  put("ov-gov",
+    el("div", { class: "gv-bar", "aria-hidden": "true" }, govN.map(([k, n]) => { const i = el("i", { class: k }); i.style.flexGrow = String(n); return n ? i : null; })),
+    el("ul", { class: "gv-list" }, govN.map(([k, n, label]) =>
+      el("li", {}, el("span", { class: "badge " + k }, k), " ", el("b", { class: "gv-n" }, String(n)), el("span", { class: "gv-l" }, label),
+        el("span", { class: "gv-p" }, govT ? `${Math.round(n / govT * 100)}%` : "–")))),
+    el("div", { class: "gv-ev" }, el("span", {}, "Evidence chain"), el("span", { class: "badge " + (S.verify || "") }, S.verify || "–"),
+      el("span", { class: "muted small" }, `${S.evTotal || ev.length} signed event${(S.evTotal || ev.length) === 1 ? "" : "s"}`)),
+    el("div", { class: "muted small gv-note" }, "Every request by a person or an agent is checked by TrustOps first and signed into the audit trail."));
+  const ROUTINE = new Set(["workspace.read", "export.read", "query.ask"]);
+  const recent = S.evActivity ? S.evActivity.slice(0, 7) : ev.filter((e) => !ROUTINE.has(e.action)).slice(-7).reverse();
+  put("ov-activity", recent.map((e) => { const dec = String(e.policy_decision).split(":")[0];
+    return el("li", { class: "tl " + dec }, el("span", { class: "tl-dot" }),
+      el("div", { class: "tl-b" },
+        el("div", { class: "tl-h" }, el("b", {}, e.agent_code || (e.actor_type === "human" ? "Person" : niceActor(e.actor_id))), ` ${nice(e.action)}`),
+        el("div", { class: "tl-m" }, el("span", { class: "badge " + dec }, dec), e.policy_id ? el("span", { class: "rid" }, e.policy_id) : null, el("span", { class: "t" }, e.timestamp_utc.slice(11, 19)))));
+  }));
+  if (!recent.length) put("ov-activity", el("li", { class: "muted" }, "No activity yet. Upload files to start."));
 }
 $("ev-refresh").onclick = renderEvidence;
 $("tamper-btn").onclick = async () => {
@@ -1120,6 +2191,7 @@ function renderResults() { progress(); }
 
 // ---------------- trust ----------------
 async function renderTrust() {
+  if (!isCPA()) return;
   const t = await api("/v1/trust");
   put("trust", el("div", { class: "grid two" },
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Data boundary"), el("ul", { class: "plain" },
@@ -1130,9 +2202,8 @@ async function renderTrust() {
       el("table", {}, el("tr", {}, el("th", {}, "Worker"), el("th", {}, "Does"), el("th", {}, "Model")), t.agents.map((a) => el("tr", {}, el("td", {}, el("b", {}, a.code || ""), " " + niceActor(a.id)), el("td", {}, a.does), el("td", {}, a.model)))),
       el("div", { class: "muted small gap" }, `Allowlisted routes: ${t.model_routes_allowed.map(nice).join(", ")} · in use: ${t.model_routes_in_use.map(nice).join(", ")}`)),
     el("div", { class: "card" }, el("div", { class: "card-title" }, "Never permitted (no grant exists)"), el("ul", { class: "plain" }, t.forbidden_actions.map((f) => el("li", {}, nice(f))))),
-    el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, ROLE_NAME[r] || (String(r).startsWith("agent:") ? niceActor(r) : nice(r)))), el("td", { class: "small" }, a.map(nice).join(", ")))))),
-    el("div", { class: "card" }, el("div", { class: "card-title" }, "Evidence signing"), el("div", {}, `${t.evidence.algorithm} · key: ${t.evidence.key_source} · policy ${t.policy_version}`),
-      el("pre", {}, t.evidence.public_key_pem), el("div", { class: "muted small" }, `Security events outside client scope: ${t.security_events}`))));
+    el("div", { class: "card" }, el("div", { class: "card-title" }, "Role permissions"), el("table", {}, Object.entries(t.roles).map(([r, a]) => el("tr", {}, el("td", {}, el("b", {}, ROLE_NAME[r] || (String(r).startsWith("agent:") ? niceActor(r) : nice(r)))), el("td", { class: "small" }, a.map(nice).join(", "))))))));
+  // (the "Evidence signing" card with the raw public key was removed on request, 2026-11-12; /v1/trust still returns it for API users)
 }
 
 // ---------------- live agent monitor ----------------
@@ -1150,16 +2221,24 @@ function readiness() {
       + "Test files are in the project's demo_files folder (for example demo_files/1_standard_month)."),
     el("div", { class: "row" }, el("button", { class: "primary", onclick: () => go("import") }, "Go to Sources →")))) : null;
 }
+// Same files as the last run: running again would only return that run, so Run is off and says why (2026-11-13).
+function alreadyRun() {
+  const st = S.status || {};
+  return st.bank && st.ledger && st.runs && !st.stale && st.last_run ? st.last_run : null;
+}
 function renderReadiness() {
-  const box = readiness();
-  put("ag-ready", box); put("recon-ready", readiness());
-  $("ag-run").disabled = !!box; $("run-btn").disabled = !!box;
+  const box = readiness(), done = !box && !(S.anim && S.anim.mode !== "upload") && alreadyRun();
+  put("ag-ready", box);
+  // "Already reconciled" card removed (2026-11-13, user request): Run stays off and its tooltip says why.
+  put("recon-ready", box ? readiness() : null);
+  $("run-btn").disabled = !!box || !!done;
+  $("run-btn").title = done ? `These files were already reconciled as ${done}. Upload a new or corrected file on Sources to run again.` : "";
 }
 async function renderAgents() {
   renderReadiness();
   const d = await loadAgents();
   if (!d) { $("ag-live").textContent = "○ offline"; $("ag-live").classList.remove("live"); return; }
-  $("ag-live").textContent = "● live · updated " + new Date().toLocaleTimeString(); $("ag-live").classList.add("live");
+  $("ag-live").textContent = "● live · updated " + fmtTime(new Date()); $("ag-live").classList.add("live");
 
   put("ag-grid", d.agents.map((a) => {
     const stat =(k, label, cls) => el("div", { class: "ag-stat" + (a.counts[k] ? " " + cls : "") }, el("b", {}, a.counts[k]), el("span", {}, label));
@@ -1177,22 +2256,14 @@ async function renderAgents() {
     d.feed.map((e) => el("tr", {}, el("td", {}, e.seq), el("td", { class: "small mono" }, e.at.slice(11, 19)), el("td", {}, el("b", {}, e.agent), " " + niceActor(e.actor_id)),
       el("td", {}, nice(e.action)), el("td", {}, el("span", { class: "badge " + String(e.decision).split(":")[0] }, niceDecision(e.decision))),
       el("td", {}, e.policy_id || ""), el("td", { class: "small" }, e.run_id || "—"), el("td", { class: "small" }, e.delegated_by || "")))))
-    : empty("No agent activity yet", "Import files or press “Run reconciliation now”."));
+    : empty("No agent activity yet", "Import files on Sources, then run reconciliation on the Reconciliation page."));
 }
-$("ag-run").onclick = async (ev) => { await withBusy(ev.currentTarget, async () => {
-  msg("ag-msg", "");
-  await progress();
-  if (readiness()) { renderReadiness(); return msg("ag-msg", "The bank statement or general ledger is missing now. Upload it on the Sources page.", "err"); }
-  try { S.run = await animateRun(api(W("/reconciliation-runs"), { method: "POST" })); toast(`Reconciliation ${S.run.id} complete. Each agent's card shows what it did.`, "good");
-    renderRun(); renderExceptions(); renderResults(); renderAgents(); }
-  catch (e) { msg("ag-msg", e.message, "err"); }
-}, "Running…"); renderReadiness(); };
 
 // ---------------- agent pipeline ----------------
 // Drawn only from GET /agents and the run's own `workflow` steps. Nothing here is invented:
 // "working" means a request is really in flight, or a recorded step is being replayed in order;
 // every number shown (rows, decision, policy, ms) is copied from the server's response.
-const PIPE_IDS = ["ov-agents", "ag-pipeline", "rc-pipeline"];
+const PIPE_IDS = ["ag-pipeline", "rc-pipeline"];
 const STEP_MS = 420;
 const reducedMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1213,21 +2284,30 @@ const SVGNS = "http://www.w3.org/2000/svg";
 function icon(d) {
   const s = document.createElementNS(SVGNS, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none");
   s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "2.6"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round");
-  const p = document.createElementNS(SVGNS, "path"); p.setAttribute("d", d); s.append(p); return s;
+  const p = document.createElementNS(SVGNS, "path"); p.setAttribute("d", d); p.setAttribute("pathLength", "1"); s.append(p); return s;
 }
-const ICON = { done: "M5 12.5l4.5 4.5L19 7.5", escalated: "M12 7v6M12 17h.01", blocked: "M7 7l10 10M17 7L7 17", stopped: "M7 12h10" };
-// What each agent achieved, in business words, read from its own recorded step summary (nothing invented).
-function outcomeLine(code, s) {
-  const t = String(s.summary || ""), n = (re) => { const m = t.match(re); return m ? m.slice(1) : null; };
-  let m;
-  if (code === "AG-01" && (m = n(/(\d+) sources present/))) return [el("b", {}, m[0]), ` files checked${/unchanged/.test(t) ? " · unchanged" : ""}`];
-  if (code === "AG-02" && (m = n(/(\d+) bank and ledger rows/))) return [el("b", {}, m[0]), " lines standardised"];
-  if (code === "AG-03" && (m = n(/(\d+) matched automatically, (\d+) exception/))) return [el("b", {}, m[0]), " matched · ", el("b", {}, m[1]), " for review"];
-  if (code === "AG-04" && escCount(s)) return "Routed to a CPA reviewer";
-  if (code === "AG-04") return "Nothing needed a person";
-  if (code === "AG-05" && /ready/.test(t)) return [el("b", {}, "2"), " reports ready"];
-  if (code === "AG-06" && /available/.test(t)) return "Ready for questions";
-  return [el("b", {}, `${s.rows_in} → ${s.rows_out}`), " rows"];
+const ICON = { escalated: "M12 7v6M12 17h.01", blocked: "M7 7l10 10M17 7L7 17" };
+// Each agent has its own glyph in a round icon. Finished = quiet blue; only the steps that need attention get colour
+// (amber: sent to a person, red: blocked) plus a small round status badge.
+const AGENT_GLYPH = {
+  "AG-01": "M4 13h4l1.5 2.5h5L16 13h4M5.5 6h13l1.5 7v5H4v-5z",
+  "AG-02": "M4 7h5M4 12h5M4 17h5M15 7h5M15 12h5M15 17h5M9 7l6 5M9 17l6-5",
+  "AG-03": "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  "AG-04": "M5 21V4M5 4h11l-2.5 4 2.5 4H5",
+  "AG-05": "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h4",
+  "AG-06": "M20 11.4a7.6 7.6 0 0 1-11.3 6.6L4 19.6l1.6-4.4A7.6 7.6 0 1 1 20 11.4z",
+};
+// What each agent achieved as [headline number, label], read from its own recorded step summary (nothing invented).
+function outcomeMetric(code, s) {
+  const t = String(s.summary || ""), m = (re) => t.match(re);
+  let x;
+  if (code === "AG-01" && (x = m(/(\d+) sources present/))) return [x[1], `files checked${/unchanged/.test(t) ? " · unchanged" : ""}`];
+  if (code === "AG-02" && (x = m(/(\d+) bank and ledger rows/))) return [x[1], "lines standardised"];
+  if (code === "AG-03" && (x = m(/(\d+) matched automatically, (\d+) exception/))) return [x[1], `matched · ${x[2]} for review`];
+  if (code === "AG-04") { const n = escCount(s); return n ? [String(n), tropsOn() ? "for review, sent to TrustOps by a person" : "sent to a CPA reviewer"] : ["0", "needed a person"]; }
+  if (code === "AG-05" && /ready/.test(t)) return ["2", "reports ready"];
+  if (code === "AG-06" && /available/.test(t)) return ["Ready", "for questions"];
+  return [String(s.rows_out), "records out"];
 }
 function nodeFor(a, i) {
   const an = S.anim, forced = an && an.states[a.code];
@@ -1240,39 +2320,47 @@ function nodeFor(a, i) {
   let label = STATE_LABEL[state];
   if (state === "escalated" && escCount(step)) label = `${escCount(step)} sent to a person`;
   const dec = (d) => String(d).split(":")[0];
-  // a decision row shows the ALLOW/ESCALATE/DENY chip on the left and the policy id on the right, so nothing is cut off
-  const stats = (rows) => el("dl", { class: "pstats" }, rows.map(([k, v]) => k === "Decision"
-    ? el("div", { class: "pdec" }, el("dt", {}, el("span", { class: "dchip " + dec(v[0]) }, dec(v[0]))), el("dd", {}, v[1] || ""))
-    : el("div", {}, el("dt", {}, k), el("dd", {}, v))));
-  const decision = (d, pol) => [d, pol];
-  let data;
-  if (state === "working") data = el("div", { class: "pnote" }, an.titles[a.code] || an.note || "");
-  else if (state === "queued") data = el("div", { class: "pnote" }, "Waiting for the previous step");
-  else if (state === "stopped") data = el("div", { class: "pnote" }, "The workflow stopped at the blocked step");
+  const pill = (txt) => el("span", { class: "pstate" }, el("i"), el("span", { class: "pst" }, txt));
+  let body;
+  if (state === "working") body = [pill("Working"), el("div", { class: "pnote" }, an.titles[a.code] || an.note || "")];
+  else if (state === "queued") body = [pill("Queued")];
+  else if (state === "stopped") body = [pill("Not run"), el("div", { class: "pnote" }, "The workflow stopped at the blocked step")];
   else if (state === "blocked" && a.status === "BLOCKED" && a.last && !forced)
-    data = el("div", { class: "pline" }, `Tried ${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`);
-  else if (step) data = el("div", { class: "pline",
-    title: `${step.rows_in} → ${step.rows_out} rows · TrustOps ${dec(step.decision)} · ${step.policy_id} · ${step.duration_ms} ms` }, outcomeLine(a.code, step));
-  else if (a.last) data = el("div", { class: "pline" }, `${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`);
-  else data = el("div", { class: "pnote" }, "No requests yet");
-  const ico = ICON[state] ? icon(ICON[state]) : el("span", {}, String(i + 1));
+    body = [pill("Blocked by TrustOps"), el("div", { class: "pline" }, `Tried ${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`)];
+  else if (step) {
+    const [n, txt] = outcomeMetric(a.code, step);
+    body = [el("div", { class: "pmetric" }, el("b", { class: "pnum" + (/^\d+$/.test(n) ? "" : " word") }, n),
+      el("div", { class: "pline", title: `${step.rows_in} → ${step.rows_out} rows · TrustOps ${dec(step.decision)} · ${step.policy_id} · ${step.duration_ms} ms` }, txt))];
+    if (state === "escalated") body.push(pill("Review now"));
+    else if (state === "blocked") body.push(pill("Blocked by TrustOps"));
+  }
+  else if (state === "blocked") body = [pill("Blocked by TrustOps")];
+  else if (a.last) body = [el("div", { class: "pline" }, `${nice(a.last.action)} · ${ago(a.last.seconds_ago)}`)];
+  else body = [el("div", { class: "pnote" }, "Not used yet")];
+  const ico = AGENT_GLYPH[a.code] ? icon(AGENT_GLYPH[a.code]) : el("span", {}, String(i + 1));
+  const badge = ICON[state] ? el("span", { class: "pbadge", "aria-hidden": "true" }, icon(ICON[state])) : null;
   const cls = `pnode s-${state}` + (live ? " live" : "") + (an && an.fresh === a.code && forced !== "working" ? " fresh" : "");
-  return { live, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}` },
-    el("div", { class: "prail" }, el("span", { class: "pico" }, ico)),
+  // A step that sent work to a person links to the review queue (see the delegated handler after renderPipelines).
+  const go = state === "escalated" && !forced ? { role: "link", tabindex: "0", "data-go-review": "1" } : {};
+  return { live, state, el: el("li", { class: cls, title: `${a.code} ${a.name}: ${a.does}`, "aria-label": `${a.code} ${a.name}: ${label}`, ...go },
+    el("div", { class: "prail" }, el("span", { class: "pico" }, el("span", { class: "porb" }, ico), badge)),
     el("div", { class: "pbody" },
       el("div", { class: "pcode" }, a.code),
       el("div", { class: "pname" }, a.name),
-      el("span", { class: "pstate" }, el("i"), label),
-      data)) };
+      body)) };
 }
 function renderPipelines() {
   const d = S.agents, an = S.anim;
-  const skeleton = () => el("div", {}, el("span", { class: "skel", style: "width:60%" }), el("span", { class: "skel", style: "width:90%" }), el("span", { class: "skel", style: "width:40%" }));
+  const skeleton = () => el("div", {}, el("span", { class: "skel w60" }), el("span", { class: "skel w90" }), el("span", { class: "skel w40" }));
   let active = 0, total = d ? d.agents.length : 6, track = null;
   if (d) {
     const nodes = d.agents.map(nodeFor);
     active = an ? Object.values(an.states).filter((s) => s === "working").length : nodes.filter((n) => n.live).length;
     track = el("ol", { class: "pipe-track", "aria-live": "polite" }, nodes.map((n) => n.el));
+    // One timeline runs through every circle; its blue fill reaches the last finished (or working) step and glides there (CSS transition; the element is kept by morphKids).
+    let last = -1; nodes.forEach((n, i) => { if (FINISHED.has(n.state) || n.state === "working") last = i; });
+    const p = nodes.length > 1 && last > 0 ? last / (nodes.length - 1) : 0;
+    track.style.setProperty("--p", p.toFixed(3));
   }
   let foot;
   if (an && an.mode === "running") foot = "Run in progress on the server…";
@@ -1280,13 +2368,49 @@ function renderPipelines() {
   else if (an && an.mode === "upload") foot = `${an.note}. Each agent asks TrustOps before it acts.`;
   else if (d && d.run_id) foot = "Every step was checked by TrustOps and signed into the audit trail.";
   else foot = "No run yet. Upload a bank statement and a ledger, then run reconciliation.";
-  for (const id of PIPE_IDS) { const n = $(id); if (n) put(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, foot)); }
+  const shield = icon("M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z M9 12l2 2 4-4");
+  for (const id of PIPE_IDS) { const n = $(id); if (n) morphKids(n, track ? track.cloneNode(true) : skeleton(), el("div", { class: "pipe-foot" }, shield.cloneNode(true), el("span", {}, foot))); }
+  if (an && an.fresh && !reducedMotion()) document.querySelectorAll(PIPE_IDS.map((i) => `#${i} .pnode.fresh .pnum`).join(",")).forEach(countUp);
+  pipeHeader(d, an);
   document.querySelectorAll('[data-pipe="count"]').forEach((c) => {
     c.classList.toggle("on", active > 0 || !!(an && an.mode === "running"));
-    c.replaceChildren(el("i"), an && an.mode === "running" ? "Run in progress" : `${active} of ${total} agents active`);
+    morphKids(c, el("i"), an && an.mode === "running" ? "Run in progress" : `${active} of ${total} agents active`);
   });
   document.querySelectorAll(".pipe").forEach((p) => p.classList.toggle("running", !!(an && an.mode === "running")));
 }
+// Card header: one status chip and a thin progress line under the title. The progress line is
+// kept between renders (only its width changes) so it glides from step to step instead of jumping.
+const FINISHED = new Set(["done", "escalated", "blocked", "stopped"]);
+// A finished step's number counts up from 0 (skipped under reduced motion).
+function countUp(n) {
+  const to = Number(n.textContent); if (!(to > 1)) return;
+  const t0 = performance.now(), dur = 650;
+  const f = (t) => { const k = Math.min(1, (t - t0) / dur); n.textContent = String(Math.round(to * (1 - Math.pow(1 - k, 3)))); if (k < 1) requestAnimationFrame(f); };
+  n.textContent = "0"; requestAnimationFrame(f);
+}
+function pipeHeader(d, an) {
+  const total = d ? d.agents.length : 6;
+  const states = an ? Object.values(an.states) : [];
+  const doneN = an ? states.filter((s) => FINISHED.has(s)).length : (d && d.run_id ? total : 0);
+  const stepN = an ? Math.min(total, doneN + (states.includes("working") ? 1 : 0)) : doneN;
+  let chip;
+  if (an && an.mode === "running") chip = ["run", "Running on the server"];
+  else if (an && an.mode === "replay") chip = ["run", `Step ${Math.max(stepN, 1)} of ${total}`];
+  else if (an && an.mode === "upload") chip = ["run", "Checking a file"];
+  else if (d && d.run_id) {
+    const blocked = d.agents.filter((a) => a.status === "BLOCKED").length;
+    chip = blocked ? ["bad", `Complete · ${blocked} agent${blocked === 1 ? "" : "s"} blocked`] : ["ok", `Complete · ${total} of ${total}`];
+  }
+  else chip = ["idle", "No run yet"];
+  for (const id of PIPE_IDS) {
+    const card = $(id) && $(id).closest(".pipe"); if (!card) continue;
+    const meta = card.querySelector(".pipe-meta");
+    if (meta) morphKids(meta, el("span", { class: "pipe-chip " + chip[0] }, el("i"), chip[1]));
+  }
+}
+// The workflow track is cloned into two pages, so clicks are handled here once rather than on each copy.
+document.addEventListener("click", (e) => { if (e.target.closest(".pnode[data-go-review]")) openReview(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.closest && e.target.closest(".pnode[data-go-review]")) openReview(); });
 // Show agents as busy while a real request is in flight; afterwards the server's own record takes over.
 async function agentsBusy(states, note, promise) {
   if (S.anim) return promise;
@@ -1299,9 +2423,11 @@ async function animateRun(promise) {
   if (!S.agents) await loadAgents();
   const codes = S.agents ? S.agents.agents.map((a) => a.code) : [];
   S.anim = { mode: "running", states: Object.fromEntries(codes.map((c) => [c, "queued"])), shown: {}, titles: {} }; renderPipelines();
+  S.replaying = null; renderRun();  // tiles and tables switch to "waiting for the agents" until the replay ends
   let run;
   try { run = await promise; } catch (e) { S.anim = null; loadAgents(); throw e; }
-  replay(run);
+  if (run.reused) { S.anim = null; loadAgents(); return run; }  // an earlier run, not a new one: nothing to replay
+  S.replaying = replay(run);
   return run;
 }
 async function replay(run) {
@@ -1344,7 +2470,7 @@ function openCase(ref) {
   const x = all.find((e) => e.id === ref) || all.find((e) => e.case_id === ref) || all.find((e) => e.bank_id === ref || e.ledger_id === ref);
   if (!x) return toast(`${ref} is not a review item in run ${S.run.id}.`);
   const open = x.status === "OPEN" || x.status === "RETURNED";
-  S.excRun = S.run.id; S.excFilter = open ? "open" : "decided"; S.excSeen = new Set();
+  S.excRun = S.run.id; S.excFilter = open ? "open" : x.status === "REJECTED" ? "rejected" : "approved"; S.excSeen = new Set();
   go("exceptions"); renderExceptions();
   const n = document.querySelector(`#exc-list [data-exc="${x.id}"]`);
   if (!n) return;
@@ -1359,22 +2485,165 @@ function empty(title, text) { return el("div", { class: "empty" }, el("b", {}, t
 
 // ---------------- reports (finance + governance, same run id) ----------------
 const FMT_LABEL = { pdf: "PDF", xlsx: "Excel", csv: "CSV", json: "JSON" };
-function renderReports() {
-  $("rep-run").textContent = S.run ? S.run.id : "none";
-  $("rep-trace").textContent = S.run ? S.run.trace_id || "–" : "–";
-  if (!S.run) { put("rep-cards"); put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first.")); return; }
+// ---------------- every run (2026-11-16 action items) ----------------
+// The list comes from GET /runs (newest first, review totals per run and across all runs). Reports can show any
+// run's reports; Reconciliation lists the runs with filters; Overview counts review items across all runs and
+// can switch the run the pages show. Nothing is recomputed here: the counts are the server's.
+async function loadRuns() { try { S.runs = await api(W("/runs")); } catch (_) { S.runs = null; } return S.runs; }
+const runLabel = (r) => `${r.id} · ${fmtDateTime(r.created_at)} · ${niceActor(r.created_by)}${r.latest ? " · latest" : ""}`;
+function renderRunPicker(sel, current, onPick) {
+  if (!sel) return;
+  const items = (S.runs && S.runs.items) || [];
+  put(sel, items.length ? items.map((r) => el("option", { value: r.id }, runLabel(r))) : el("option", { value: "" }, "none"));
+  sel.value = current || ""; sel.disabled = items.length < 2; sel.onchange = () => onPick(sel.value);
+}
+// Show another run on the Reconciliation, Review queue, Overview and Reports pages (the latest stays the default).
+async function switchRun(id, auto) {
+  if (!id || (S.run && S.run.id === id)) return;
+  try { S.run = await api(W(`/runs/${id}`)); } catch (e) { toast(e.message, "err"); return; }
+  const latest = S.runs && S.runs.latest_run === id;
+  S.runPinned = !auto && !latest;   // a run picked by the person stays; otherwise the pages follow the latest run
+  S.repRunId = id; S.repRun = S.run; S.excRun = id;
+  renderRun(); renderExceptions(); progress(); renderRunsList("runs-list"); renderRunBars();
+  if (isActive("reports")) renderReports();
+  if (isActive("trace")) { put("trace-view", el("div", { class: "muted" }, "Select a line on the left.")); renderTraceList(); }
+  if (!auto) toast(latest ? `Showing the latest run, ${id}.` : `Showing ${id}, an earlier run. Choose the latest run to return to it.`, "good");
+}
+// 2026-11-18 (user feedback): the run is chosen at the TOP of Reconciliation, Review queue and Trace (one picker each,
+// all showing the same run). Until the person picks an earlier run, the pages follow the latest run, so a run made by
+// a colleague (or in another tab) is shown instead of an older one.
+function renderRunBars() {
+  const R = S.runs, items = (R && R.items) || [];
+  const newest = items.find((r) => r.id === (R && R.latest_run));
+  if (S.run && newest && S.run.id !== newest.id && !S.runPinned && String(newest.created_at) > String(S.run.created_at || "")) {
+    switchRun(newest.id, true); return;
+  }
+  for (const id of ["rc-runbar", "exc-runbar", "tr-runbar"]) {
+    const box = $(id); if (!box) continue;
+    if (!items.length || !S.run) { put(box); box.classList.add("hidden"); continue; }
+    box.classList.remove("hidden");
+    const sel = el("select", { class: "runbar-pick", "aria-label": "Run shown" });
+    const r = items.find((x) => x.id === S.run.id) || {};
+    put(box, el("label", { class: "runbar-l" }, el("span", { class: "muted small" }, "Run"), sel),
+      r.latest ? el("span", { class: "badge PASS" }, "Latest") : el("span", { class: "badge OPEN" }, "Earlier run"),
+      r.review_items != null ? el("span", { class: "muted small" }, `${r.review_items} review item${r.review_items === 1 ? "" : "s"} · ${Object.values(r.files || {}).join(", ")}`) : null,
+      el("span", { class: "grow" }),
+      !r.latest && R.latest_run ? el("button", { class: "linkbtn", onclick: () => switchRun(R.latest_run) }, "Show the latest run") : null,
+      items.length > 1 ? el("span", { class: "muted small" }, `${items.length} runs`) : null);
+    renderRunPicker(sel, S.run.id, (v) => switchRun(v));
+  }
+}
+const localDay = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+function renderRunsList(target) {
+  const box = $(target); if (!box) return;
+  const items = (S.runs && S.runs.items) || [];
+  if (!items.length) return put(box, empty("No runs yet", "Run a reconciliation; every run is listed here with who ran it and its review items."));
+  const f = S.runFilter || (S.runFilter = { day: "", month: "", by: "" });
+  // 2026-11-18 (lead review): "Run by" is a reviewer's filter; staff preparers don't get it (the column stays)
+  const byFilter = isCPA();
+  if (!byFilter) f.by = "";
+  // filters use the viewer's local dates, like every date on the page
+  const shown = items.filter((r) => (!f.day || localDay(r.created_at) === f.day) && (!f.month || localDay(r.created_at).startsWith(f.month)) && (!f.by || r.created_by === f.by));
+  const people = [...new Set(items.map((r) => r.created_by).filter(Boolean))].sort();
+  const redraw = () => { renderRunsList("runs-list"); renderRunsList("rep-runs"); };
+  const rv = (r) => ["open", "sent", "approved", "rejected", "returned"].filter((k) => r.reviews[k])
+    .map((k) => el("span", { class: `rv rv-${k}` }, `${r.reviews[k]} ${k}`));
+  const by = el("select", { class: "runs-by", "aria-label": "Runs by this person", onchange: (e) => { f.by = e.target.value; redraw(); } },
+    el("option", { value: "" }, "Anyone"), people.map((p) => el("option", { value: p }, niceActor(p))));
+  by.value = f.by;
+  put(box, el("div", { class: "runs-filter" },
+      el("label", {}, "Day ", el("input", { type: "date", class: "runs-day", value: f.day, "aria-label": "Runs on this day",
+        onchange: (e) => { f.day = e.target.value; if (f.day) f.month = ""; redraw(); } })),
+      el("label", {}, "Month ", el("input", { type: "month", class: "runs-month", value: f.month, "aria-label": "Runs in this month",
+        onchange: (e) => { f.month = e.target.value; if (f.month) f.day = ""; redraw(); } })),
+      byFilter ? el("label", {}, "Run by ", by) : null,
+      (f.day || f.month || f.by) ? el("button", { class: "linkbtn", onclick: () => { S.runFilter = { day: "", month: "", by: "" }; redraw(); } }, "Clear filters") : null,
+      el("span", { class: "muted small" }, `${shown.length} of ${items.length} run${items.length === 1 ? "" : "s"}`)),
+    shown.length ? el("div", { class: "tablewrap" }, el("table", { class: "runs-table" },
+      el("tr", {}, ["Run", "When", "Run by", "Files", "Review items", ""].map((h) => el("th", {}, h))),
+      shown.map((r) => el("tr", { class: (S.run && S.run.id === r.id ? "on " : "") + (r.latest ? "latest" : "") },
+        el("td", {}, el("b", {}, r.id), r.latest ? el("span", { class: "badge PASS" }, "Latest") : null),
+        el("td", { class: "small" }, fmtDateTime(r.created_at)), el("td", { class: "small" }, niceActor(r.created_by)),
+        el("td", { class: "small" }, Object.values(r.files || {}).join(", ") || "–"),
+        el("td", { class: "small" }, `${r.review_items}`, r.review_items ? " · " : "", rv(r)),
+        el("td", { class: "runs-act" }, el("div", { class: "runs-act-in" },
+          S.run && S.run.id === r.id ? el("span", { class: "muted small" }, "Showing") : el("button", { class: "secondary", onclick: () => switchRun(r.id) }, "Show this run"),
+          el("button", { class: "linkbtn", onclick: () => { S.repRunId = r.id; S.repRun = null; go("reports"); } }, "Reports"))))))) :
+      empty("No runs match", "Change or clear the filters."));
+}
+// Overview: review items across ALL runs, and which run the page shows (the latest by default).
+function renderAllRunsSummary() {
+  const box = $("ov-allruns"); if (!box) return;
+  const R = S.runs, items = (R && R.items) || [];
+  box.classList.toggle("hidden", !items.length);
+  if (!items.length) return put(box);
+  const t = R.totals, sel = el("select", { "aria-label": "Run shown on these pages" });
+  const tile = (k, label, n, cls) => el("a", { class: `ar-tile ${cls || ""}`, href: "#exceptions", title: "Open the review queue", onclick: (e) => { e.preventDefault(); S.excFilter = k; go("exceptions"); } },
+    el("b", {}, String(n || 0)), el("span", {}, label));
+  put(box, el("div", { class: "ar-head" },
+      el("div", {}, el("div", { class: "card-title" }, "Review items across all runs"),
+        el("div", { class: "muted small" }, `${items.length} run${items.length === 1 ? "" : "s"} · ${t.review_items} review item${t.review_items === 1 ? "" : "s"} in total`)),
+      el("label", { class: "ar-pick" }, "Showing ", sel)),
+    el("div", { class: "ar-tiles" }, tile("open", "Open", (t.open || 0) + (t.returned || 0)), tile("open", "Sent to TrustOps", t.sent, "ar-sent"),
+      tile("approved", "Approved", t.approved, "ar-ok"), tile("rejected", "Rejected", t.rejected, "ar-bad")),
+    S.run && R.latest_run !== S.run.id ? el("div", { class: "msg" }, `You are looking at ${S.run.id}, an earlier run; the figures below are for that run. `,
+      el("button", { class: "linkbtn", onclick: () => switchRun(R.latest_run) }, "Show the latest run")) : null);
+  renderRunPicker(sel, S.run && S.run.id, switchRun);
+}
+function renderReports() { return renderReportsFor(); }
+async function renderReportsFor() {
+  await loadRuns(); renderRunsList("rep-runs");
+  const ids = ((S.runs && S.runs.items) || []).map((r) => r.id);
+  if (!S.run || !ids.length) {
+    renderRunPicker($("rep-run-pick"), null, () => {}); $("rep-trace").textContent = "–";
+    put("rep-cards"); put("rep-exports"); put("rep-draft");
+    return put("rep-preview", el("div", { class: "muted" }, "Run a reconciliation first."));
+  }
+  const id = S.repRunId && ids.includes(S.repRunId) ? S.repRunId : S.run.id;
+  if (id === S.run.id) S.repRun = S.run;
+  else if (!S.repRun || S.repRun.id !== id) { try { S.repRun = await api(W(`/runs/${id}`)); } catch (_) { S.repRun = S.run; } }
+  const R = S.repRun;
+  renderRunPicker($("rep-run-pick"), R.id, (v) => { S.repRunId = v; S.repRun = null; renderReports(); });
+  $("rep-trace").textContent = R.trace_id || "–";
   const cards = [
     ["finance", "Finance Reconciliation Report", "LEDGERSIGHT", "FIN-", "What happened to the financial records. Totals, matches, exceptions, outstanding balances and reviewer status."],
-    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]];
-  put("rep-cards", cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
-    el("div", { class: "eyebrow2" }, `${by} · ${pre}${S.run.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
+    ["governance", "TrustOps Governance Report", "TRUSTOPS", "GOV-", "How it happened. Every agent step, each ALLOW, ESCALATE or DENY decision with its policy version, approvals, blocked actions and evidence verification."]]
+    .filter(([k]) => !(k === "governance" && R.trustops?.connected));
+  const link = (href, label, extra) => el("a", { class: "linkbtn", href, download: "", ...(extra || {}) }, label);
+  // The whole audit trail (CPA reviewer) sits under the governance report. Review exports have their own card.
+  const also = { finance: null,
+    governance: isCPA() ? ["Whole signed audit trail", ["pdf", "xlsx", "csv", "json"].map((f) => link(W(`/audit-trail.${f}`), FMT_LABEL[f]))]
+      : ["The whole signed audit trail is downloaded by a CPA reviewer.", []]};
+  const tops = R.trustops?.connected ? el("div", { class: "card" }, el("div", { class: "eyebrow2" }, "TRUSTOPS"),
+    el("div", { class: "card-title" }, "Governance record"),
+    el("div", { class: "muted small" }, "Approvals, blocked actions and the evidence chain are kept in TrustOps, across every connected application. Download the governance report there."),
+    R.trustops.approvals_url ? el("div", { class: "fmt" }, el("a", { class: "secondary btnlink", href: R.trustops.approvals_url.replace("#/approvals", "#/governance-reports"), target: "_blank", rel: "noopener" }, "Open TrustOps reports ↗")) : null) : null;
+  put("rep-cards", [...cards.map(([k, t, by, pre, d]) => el("div", { class: "card" },
+    el("div", { class: "eyebrow2" }, `${by} · ${pre}${R.id}`), el("div", { class: "card-title" }, t), el("div", { class: "muted small" }, d),
     el("div", { class: "fmt" }, el("button", { class: "secondary", onclick: () => previewReport(k) }, "Preview"),
-      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${S.run.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))))));
+      ["pdf", "xlsx", "csv", "json"].map((f) => el("a", { class: (f === "pdf" ? "primary" : "secondary") + " btnlink", href: W(`/runs/${R.id}/reports/${k}.${f}`), download: "", onclick: markExported }, (f === "pdf" ? "Download " : "") + FMT_LABEL[f]))),
+    also[k] ? el("div", { class: "rep-also" }, el("span", { class: "muted small" }, also[k][0]), ...also[k][1]) : null)), tops].filter(Boolean));
+  // 2026-11-16 action items: one "Export reviews" card (the review exports were offered twice, and the JSON pack
+  // only downloaded). "View review pack" opens a readable page of every review item; CSV and signed JSON download.
+  const packUrl = `/static/pack.html?ws=${encodeURIComponent(S.ws)}&run=${encodeURIComponent(R.id)}`;
+  put("rep-exports", el("div", { class: "card gap rep-exports" }, el("div", { class: "eyebrow2" }, `LEDGERSIGHT · REV-${R.id}`),
+    el("div", { class: "card-title" }, "Export reviews"),
+    el("div", { class: "muted small" }, "Every review item of this run with its status, reviewer and note. View it on screen (print or save it as PDF from there), or download it."),
+    el("div", { class: "fmt" },
+      el("a", { class: "primary btnlink", href: packUrl, target: "_blank", rel: "noopener", onclick: markExported }, "View review pack"),
+      el("a", { class: "secondary btnlink", href: W(`/runs/${R.id}/export.csv`), download: "", onclick: markExported }, "Download CSV"),
+      el("a", { class: "secondary btnlink", href: W(`/runs/${R.id}/review-pack.json`), download: "", onclick: markExported,
+        title: "Signed review pack for auditors. Verify it offline with python -m ledgersight.verify_pack" }, "Download signed pack (JSON)"))));
+  const openN = R.result.exceptions.filter((x) => x.status === "OPEN" || x.status === "RETURNED").length;
+  put("rep-draft", [R.id !== S.run.id ? el("div", { class: "msg" }, `These are the reports of ${R.id}, an earlier run.`) : null,
+    !isCPA() && openN ? el("div", { class: "msg rep-draft" }, el("b", {}, "Draft. "),
+      `${openN} review item${openN === 1 ? "" : "s"} still need${openN === 1 ? "s" : ""} a CPA reviewer's decision, so these reports are not final yet.`) : null].filter(Boolean));
   put("rep-preview", el("div", { class: "muted" }, "Choose Preview on either report. Generating a report is itself recorded in the audit trail."));
   $("rep-prev-title").textContent = "Preview";
 }
 async function previewReport(kind) {
-  let r; try { r = await api(W(`/runs/${S.run.id}/reports/${kind}.json`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
+  const R = S.repRun || S.run;
+  let r; try { r = await api(W(`/runs/${R.id}/reports/${kind}.json?preview=1`)); } catch (e) { return put("rep-preview", el("div", { class: "msg err" }, e.message)); }
   $("rep-prev-title").textContent = `Preview · ${r.title} · ${r.report_id}`;
   put("rep-preview", el("table", { class: "kv" }, r.summary.map(([k, v]) => el("tr", {}, el("td", { class: "muted small" }, k), el("td", { class: "small" }, String(v))))),
     r.sections.map((s) => el("div", {}, el("div", { class: "card-title gap" }, `${s.title} (${s.rows.length})`),
@@ -1383,7 +2652,7 @@ async function previewReport(kind) {
         : el("div", { class: "muted small" }, "None."))));
 }
 
-// ---------------- Ask LedgerSight (read-only, cited) ----------------
+// ---------------- FinTwin - Your Financial Digital Twin (was "Ask LedgerSight"; read-only, cited) ----------------
 async function renderAsk() {
   let s; try { s = await api(W("/ask/suggestions")); } catch (_) { return; }
   put("ask-chips", s.suggestions.map((q) => el("button", { class: "chip", onclick: () => { $("ask-q").value = q; askNow(); } }, q)));
@@ -1400,15 +2669,16 @@ async function askNow() {
 // The conversation, oldest first like a chat. Answers come only from the server; nothing is generated here.
 function renderAskLog() {
   const mine = S.asks.filter((x) => x.ws === S.ws);
-  $("ask-empty").classList.toggle("hidden", mine.length > 0);
   const chip = (t) => el("button", { class: "chip", onclick: () => { $("ask-q").value = t; askNow(); } }, t);
   put("ask-out", mine.map(({ q, a }) => el("div", { class: "qa" },
     el("div", { class: "q-bubble" }, q),
     !a ? el("div", { class: "a-bubble" }, el("span", { class: "typing" }, el("i"), el("i"), el("i"))) : el("div", { class: "a-bubble" },
-      el("div", { class: "row" },
+      // 2026-11-16: small talk ("hi", "thanks", "what can you do") is a plain chat reply, without data badges
+      a.status === "CHAT" ? null : el("div", { class: "row" },
         el("span", { class: "badge " + ({ ANSWERED: "PASS", REFUSED: "DENY" }[a.status] || "UNKNOWN") }, nice(a.status)),
         a.trustops ? el("span", { class: "badge " + a.trustops.decision, title: `${a.trustops.policy_id} ${nice(a.trustops.policy_name)}` }, `TrustOps ${a.trustops.decision} · ${a.trustops.policy_id}`) : null),
       el("div", { class: "a" }, rich(a.answer)),
+      a.ai_worded ? el("div", { class: "muted small ai-note", title: "The wording is from Gemini on Vertex AI; every figure and ID was checked against the exact result" }, "Written by AI from the records below") : null,
       a.rows.length ? el("div", { class: "tablewrap" }, el("table", {}, el("tr", {}, a.columns.map((c) => el("th", {}, c))), a.rows.map((r) => el("tr", {}, r.map((c, i) =>
         el("td", {}, (a.columns[i] === "Exception" || a.columns[i] === "Case") && c && c !== "—"
           ? el("button", { class: "linkbtn", title: "Open this case in the review queue", onclick: () => { closeAsk(); openCase(String(c)); } }, String(c)) : String(c))))))) : null,
@@ -1416,7 +2686,18 @@ function renderAskLog() {
       a.citations.length ? el("div", { class: "cites" }, "Sources", el("ul", { class: "plain" }, a.citations.map((c) => el("li", {}, el("b", {}, c.ref), ` · ${c.kind} · ${c.source}`,
         c.sha256 ? el("span", { class: "mono" }, ` · sha256 ${c.sha256.slice(0, 12)}…`) : null,
         c.kind === "source row" ? el("button", { class: "linkbtn", onclick: () => { closeAsk(); openTrace(c.ref); } }, " Trace →") : null)))) : null))));
-  const sc = $("ask-scroll"); sc.scrollTop = sc.scrollHeight;
+  askScroll();
+}
+// 2026-11-16: after the answer is laid out, bring the newest exchange into view. A long answer (tables, sources)
+// is shown from its question down, so the start is never scrolled away; otherwise go to the bottom.
+function askScroll() {
+  const sc = $("ask-scroll");
+  requestAnimationFrame(() => {
+    const last = $("ask-out").lastElementChild;
+    if (!last) { sc.scrollTop = sc.scrollHeight; return; }
+    const top = last.offsetTop - sc.offsetTop - 8;
+    sc.scrollTop = last.offsetHeight > sc.clientHeight ? top : sc.scrollHeight;
+  });
 }
 S.askOpen = false;
 function setAsk(open) {
@@ -1426,9 +2707,14 @@ function setAsk(open) {
   $("ask-open").setAttribute("aria-expanded", String(open)); $("ask-open").classList.toggle("on", open);
   document.body.classList.toggle("ask-open", open);
 }
-function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => $("ask-q").focus(), 120); }
+function openAsk() { setAsk(true); renderAsk(); renderAskLog(); setTimeout(() => { $("ask-q").focus({ preventScroll: true }); askScroll(); }, 120); }
 function closeAsk() { if (!S.askOpen) return; setAsk(false); $("ask-open").focus(); }
 $("ask-open").onclick = () => (S.askOpen ? closeAsk() : openAsk());
+// (the top-bar search box was removed on request; Ask opens from the floating button, the sidebar card and Ctrl+K)
+// (Ask LedgerSight now lives at the bottom of the sidebar: #ask-open; the floating corner button was removed)
+document.addEventListener("keydown", (e) => {   // Ctrl/Cmd+K opens Ask LedgerSight (only inside the app, not on the sign-in screen)
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k" && !$("app").classList.contains("hidden")) { e.preventDefault(); S.askOpen ? $("ask-q").focus() : openAsk(); }
+});
 $("ask-close").onclick = closeAsk;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.askOpen && !document.querySelector(".overlay")) closeAsk(); });
 $("ask-drawer").inert = true;
@@ -1457,18 +2743,56 @@ async function renderRules() {
 
 // ---------------- team ----------------
 async function renderTeam() {
-  put("inv-ws", S.wsList.map((w) => el("label", { class: "small" }, el("input", { type: "checkbox", value: w.id, checked: w.id === S.ws }), " " + proper(w.name))));
-  const us = await api("/v1/users");
-  put("users", el("table", {}, el("tr", {}, ["User", "Role", "Clients", "Expires", "Status", ""].map((h) => el("th", {}, h))),
-    us.map((u) => el("tr", {}, el("td", {}, u.user_id), el("td", {}, u.role), el("td", { class: "small" }, u.workspaces.join(", ")), el("td", { class: "small" }, new Date(u.expires_at).toLocaleDateString()),
-      el("td", {}, el("span", { class: "badge " + (u.revoked ? "DENY" : u.active ? "ALLOW" : "OPEN") }, u.revoked ? "revoked" : u.active ? "active" : "invited")),
-      el("td", {}, u.user_id !== S.me.user_id && !u.revoked ? el("button", { class: "no", onclick: async () => { await api(`/v1/users/${encodeURIComponent(u.user_id)}/revoke`, { method: "POST" }); renderTeam(); } }, "Revoke") : null)))));
+  const tops = S.me && S.me.trustops;
+  if (tops && tops.connected) {
+    put("users", el("div", { class: "card" }, el("div", { class: "card-title" }, "People are managed in TrustOps"),
+      el("p", { class: "muted" }, "Add people, choose Preparer or Reviewer for LedgerSight, or remove access in TrustOps > Team & access. They sign in here with Google using the same work email."),
+      tops.console_url ? el("a", { class: "primary btnlink", href: tops.console_url + "#/governance-team", target: "_blank", rel: "noopener" }, "Open Team & access in TrustOps ↗") : null));
+    const add = document.getElementById("inv-btn"); const card = add && add.closest(".card"); if (card) card.style.display = "none";
+    const sub = document.querySelector("#p-team .page-head .sub"); if (sub) sub.textContent = "Who can use LedgerSight is set in TrustOps. Everyone signs in with Google using their work email.";
+    return;
+  }
+  put("users-demo-note", S.noLogin ? el("div", { class: "callout users-note" }, el("b", {}, "Local demo: "),
+    "this copy has no sign-in screen (switch people with “Acting as”). Users you add here sign in on the hosted version, with their password and authenticator code.") : null);
+  put("inv-ws", S.wsList.map((w) => el("label", { class: "ws-chip" }, el("input", { type: "checkbox", value: w.id, checked: w.id === S.ws }), el("span", {}, proper(w.name)))));
+  let us; try { us = await api("/v1/users"); } catch (e) { return put("users", el("div", { class: "msg err" }, e.message)); }
+  const wsName = (id) => proper((S.wsList.find((w) => w.id === id) || {}).name || id);
+  $("users-count").textContent = `· ${us.length}`;
+  put("users", us.length ? el("ul", { class: "user-list" }, us.map((u) => {
+    const st = u.revoked ? ["DENY", "Revoked"] : u.active ? ["ALLOW", "Active"] : ["OPEN", "Invited"];
+    const initials = String(u.display_name || u.user_id).split(/[\s@.()]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("");
+    return el("li", { class: "user-row" + (u.revoked ? " revoked" : "") },
+      el("span", { class: "u-av" }, initials),
+      el("div", { class: "u-main" }, el("div", { class: "u-name" }, u.display_name || u.user_id, u.user_id === S.me.user_id ? el("span", { class: "muted small" }, " · you") : null),
+        el("div", { class: "u-meta" }, [u.user_id, ROLE_NAME[u.role] || u.role, (u.workspaces || []).map(wsName).join(", "),
+          `expires ${fmtDate(u.expires_at)}`].filter(Boolean).join(" · "))),
+      el("span", { class: "badge " + st[0] }, st[1]),
+      // the local demo's built-in people (used by "Acting as") are not revoked from here
+      el("div", { class: "row-actions" }, u.user_id !== S.me.user_id && !u.revoked && !(S.demoPeople || []).some((d) => d.user_id === u.user_id) ? [
+        el("button", { class: "ghost", title: "Lift a sign-in pause after failed attempts", onclick: async () => {
+          try { await api(`/v1/users/${encodeURIComponent(u.user_id)}/unlock`, { method: "POST" }); toast(`${u.display_name} can sign in again.`, "good"); }
+          catch (err) { toast(err.message, "bad"); } } }, "Unlock"),
+        el("button", { class: "no", onclick: async (ev) => {
+          if (!(await confirmDialog(`Remove ${u.display_name}'s access?`, "They are signed out at once and cannot sign in again. This is recorded.", "Revoke access", true))) return;
+          await withBusy(ev.currentTarget, async () => { await api(`/v1/users/${encodeURIComponent(u.user_id)}/revoke`, { method: "POST" }); toast(`${u.display_name}'s access was revoked.`, "good"); renderTeam(); }, "Revoking…"); } }, "Revoke")] : null));
+  })) : empty("No one yet", "Add a user on the left."));
 }
-$("inv-btn").onclick = async () => {
+$("inv-btn").onclick = (ev) => withBusy(ev.currentTarget, async () => {
   const ws = [...document.querySelectorAll("#inv-ws input:checked")].map((i) => i.value);
-  try { const r = await api("/v1/invites", { method: "POST", json: { user_id: $("inv-user").value.trim(), display_name: $("inv-name").value.trim(), role: $("inv-role").value, workspaces: ws } });
-    put("inv-out", el("div", { class: "msg good" }, "Invitation link (single use, expires " + new Date(r.expires_at).toLocaleString() + "):"), el("div", { class: "mono" }, r.invite_url)); renderTeam(); }
-  catch (e) { msg("inv-out", e.message, "err"); }
-};
+  const role = (document.querySelector('input[name="inv-role"]:checked') || {}).value || "preparer";
+  const email = $("inv-user").value.trim(), name = $("inv-name").value.trim();
+  if (!email || !name) return msg("inv-out", "Enter the person's full name and email.", "err");
+  if (!ws.length) return msg("inv-out", "Choose at least one client this person can work on.", "err");
+  try {
+    const r = await api("/v1/invites", { method: "POST", json: { user_id: email, display_name: name, role, workspaces: ws, account_days: +$("inv-days").value } });
+    const copy = el("button", { class: "secondary", onclick: async (e) => {
+      try { await navigator.clipboard.writeText(r.invite_url); e.currentTarget.textContent = "Copied ✓"; } catch (_) { toast("Select the link and copy it.", "err"); } } }, "Copy link");
+    put("inv-out", el("div", { class: "invite-card" },
+      el("div", { class: "ic-h" }, el("b", {}, `${name} added as ${ROLE_NAME[role]}.`), el("span", { class: "muted small" }, ` Send them this link (single use, expires ${fmtDateTime(r.expires_at)}):`)),
+      el("div", { class: "ic-row" }, el("code", { class: "mono ic-link" }, r.invite_url), copy)));
+    $("inv-user").value = ""; $("inv-name").value = "";
+    renderTeam();
+  } catch (e) { msg("inv-out", e.message, "err"); }
+}, "Creating…");
 
 boot();

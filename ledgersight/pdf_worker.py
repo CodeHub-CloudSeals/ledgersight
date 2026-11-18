@@ -28,7 +28,7 @@ def _limits():
     try:
         import resource
         resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
-        resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024, 768 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_AS, (384 * 1024 * 1024, 384 * 1024 * 1024))  # x2 workers stays inside a 1 GiB instance
     except Exception:
         pass
 

@@ -18,6 +18,6 @@
      "tools": ["report.compose"], "model": "none (templates)"},
     {"code": "AG-06", "actor_id": "agent:query", "name": "Query Assistant",
      "does": "Answers read-only questions about the open client book, with source citations",
-     "tools": ["query.index", "query.answer"], "model": "none (intent rules)"}
+     "tools": ["query.index", "query.answer"], "model": "intent rules; optional Gemini on Vertex AI (europe-west1) to understand questions and word answers from the exact results (LEDGERSIGHT_ASSISTANT_MODEL=vertex)"}
   ]
 }

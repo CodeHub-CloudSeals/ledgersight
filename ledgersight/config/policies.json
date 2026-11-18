@@ -1,5 +1,5 @@
 {
-  "version": "trustops-policy-2026.11.2",
+  "version": "trustops-policy-2026.11.4",
   "owner": "TrustOps",
   "policies": [
     {"id": "POL-01", "name": "CLIENT_SCOPE", "version": "1.0", "effect": "DENY",
@@ -40,19 +40,20 @@
      "applies_to": "exception.route",
      "rule": "An interstate sale with missing taxability, nexus, registration or date facts goes to a CPA reviewer as a potential tax/nexus review. LedgerSight asserts no tax liability and never computes, files or pays tax."},
     {"id": "POL-12", "name": "FX_RATE_APPROVAL", "version": "1.0", "effect": "ESCALATE",
-     "exception_types": ["FX_REVIEW"], "required_role": "owner_reviewer",
+     "exception_types": ["FX_REVIEW", "CURRENCY_MISMATCH"], "required_role": "owner_reviewer",
      "applies_to": "exception.route",
      "rule": "A payment in a different currency from its bill is never converted or auto-matched without an approved exchange-rate source. It goes to a CPA reviewer."}
   ],
   "forbidden_actions": ["ledger.post", "bank.payment", "email.send", "model_route.change", "credential.manage"],
-  "allowed_model_routes": [null, "deterministic", "us-approved-small-model"],
+  "allowed_model_routes": [null, "deterministic", "us-approved-small-model", "vertex:gemini-2.5-flash"],
   "allowed_data_classes": ["synthetic"],
   "role_labels": {"owner_reviewer": "CPA reviewer", "preparer": "Staff preparer", "support": "Support"},
   "role_actions": {
     "owner_reviewer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.decide",
-                       "export.read", "workspace.reset", "workspace.configure", "party.confirm", "query.ask"],
+                       "export.read", "workspace.reset", "workspace.configure", "party.confirm", "query.ask",
+                       "governance.read", "exception.attach"],
     "preparer": ["workspace.read", "upload.create", "mapping.commit", "run.create", "exception.propose",
-                 "export.read", "party.confirm", "query.ask"],
+                 "export.read", "party.confirm", "query.ask", "exception.attach"],
     "support": ["health.read"]
   }
 }

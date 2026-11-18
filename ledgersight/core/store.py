@@ -32,12 +32,32 @@ class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self.on_change = None   # called after every write (hosted: schedules the Cloud Storage sync)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=FULL")
         self._db.executescript(SCHEMA)
         self._db.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
+        found = self._db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]
+        if found != SCHEMA_VERSION:  # never run against a database written by another schema version
+            raise RuntimeError(f"database schema {found} does not match this build ({SCHEMA_VERSION}); migrate or restore first")
+
+    def backup(self, dest: Path) -> Path:
+        """Consistent online copy of the database (SQLite backup API; safe while the app is running)."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            out = sqlite3.connect(str(dest))
+            try:
+                self._db.backup(out)
+            finally:
+                out.close()
+        return dest
+
+    def _changed(self) -> None:
+        if self.on_change:
+            self.on_change()
 
     # ---- workspaces ----
     def save_workspace(self, wid: str, state: dict) -> None:
@@ -46,6 +66,7 @@ class Store:
             self._db.execute("INSERT INTO workspaces (id, state, updated_at) VALUES (?, ?, ?) "
                              "ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at",
                              (wid, body, _now()))
+        self._changed()
 
     def load_workspace(self, wid: str) -> dict | None:
         row = self._db.execute("SELECT state FROM workspaces WHERE id=?", (wid,)).fetchone()
@@ -64,15 +85,23 @@ class Store:
             except Exception:
                 self._db.execute("ROLLBACK")
                 raise
+        self._changed()
 
     def load_events(self, log: str) -> list[dict]:
         return [json.loads(r[0]) for r in self._db.execute("SELECT event FROM events WHERE log=? ORDER BY seq", (log,))]
 
     def archive_events(self, log: str) -> str:
         """Keep a cleared book's chain under an archive name; it is never deleted."""
-        name = f"{log}@archived-{_now()}"
         with self._lock:
+            # Two clears close together can read the same clock value (Windows ticks about every 15 ms) and the
+            # second archive then collided (UNIQUE events.log/seq, a 503). Add a counter when the name is taken.
+            base, n = f"{log}@archived-{_now()}", 1
+            name = base
+            while self._db.execute("SELECT 1 FROM events WHERE log=? LIMIT 1", (name,)).fetchone():
+                n += 1
+                name = f"{base}-{n}"
             self._db.execute("UPDATE events SET log=? WHERE log=?", (name, log))
+        self._changed()
         return name
 
     def archived_logs(self, log: str) -> list[str]:
@@ -84,6 +113,7 @@ class Store:
             self._db.execute("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) "
                              "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                              (key, json.dumps(value, default=str), _now()))
+        self._changed()
 
     def get(self, key: str, default=None):
         row = self._db.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()

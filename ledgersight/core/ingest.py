@@ -11,7 +11,7 @@ import hashlib
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -22,8 +22,10 @@ ZIP_MAGIC = b"PK\x03\x04"
 OLE_MAGIC = b"\xd0\xcf\x11\xe0"  # legacy .xls / macro containers
 
 CANONICAL = {
-    "bank": ["line_id", "date", "description", "reference", "amount", "currency"],
-    "ledger": ["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency"],
+    # Bank: one signed amount, OR separate money-in / money-out columns (Paid in / Paid out, Credit / Debit).
+    # Ledger: separate debit / credit, OR one signed amount (cash side: positive = money in).
+    "bank": ["line_id", "date", "description", "reference", "amount", "currency", "paid_in", "paid_out"],
+    "ledger": ["entry_id", "posted_date", "account", "description", "reference", "debit", "credit", "currency", "amount"],
     # The trailing AR/AP fields are optional facts for CPA review (state tax readiness, foreign supplier).
     # Files without them import exactly as before; nothing is ever computed from them, only flagged.
     "ar": ["invoice_id", "customer_alias", "issue_date", "amount", "open_balance", "currency",
@@ -47,6 +49,9 @@ SYNONYMS = {
     "account": ["account", "gl account", "account name"],
     "debit": ["debit", "dr"],
     "credit": ["credit", "cr"],
+    # bank statements are written from the account holder's side: a credit is money in, a debit money out
+    "paid_in": ["paid in", "money in", "credit", "credits", "credit amount", "deposit", "deposits", "receipts"],
+    "paid_out": ["paid out", "money out", "debit", "debits", "debit amount", "withdrawal", "withdrawals", "payments"],
     "bill_id": ["bill id", "bill number", "bill no", "vendor invoice", "invoice number", "invoice id", "reference"],
     "vendor_alias": ["vendor", "vendor name", "supplier", "payee"],
     "customer_alias": ["customer", "customer name", "client"],
@@ -80,18 +85,36 @@ class ImportResult:
         return self.credit_cents - self.debit_cents
 
 
+MAX_AMOUNT = Decimal("1000000000000")  # 1 trillion: anything larger is a data error, not a transaction
+_EU_DECIMAL = re.compile(r"[-+]?\d{1,3}(?:\.\d{3})*,\d{1,2}|[-+]?\d+,\d{1,2}")   # 1.234,56 or 12,5
+_US_GROUPED = re.compile(r"[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?")                  # 1,234.56
+
+
 def to_cents(raw) -> int:
     if raw is None or str(raw).strip() == "":
         raise ValueError("empty amount")
-    s = str(raw).strip().replace(",", "").replace("$", "")
+    s = str(raw).strip().replace("$", "").replace(" ", "")
     neg = s.startswith("(") and s.endswith(")")
     s = s.strip("()")
+    if "," in s:
+        # Never guess silently: "1,50" must not become 150.00. Comma as decimal (European) or comma as
+        # thousands separator in groups of three (US); anything else is refused with a reason.
+        if _EU_DECIMAL.fullmatch(s):
+            s = s.replace(".", "").replace(",", ".")
+        elif _US_GROUPED.fullmatch(s):
+            s = s.replace(",", "")
+        else:
+            raise ValueError(f"ambiguous amount {raw!r} (use 1234.56 or 1,234.56)")
     try:
         d = Decimal(s)
+        if not d.is_finite():
+            raise ValueError(f"amount is not a finite number: {raw!r}")
+        if abs(d) >= MAX_AMOUNT:
+            raise ValueError(f"amount out of range: {raw!r}")
+        if d != d.quantize(Decimal("0.01")):
+            raise ValueError(f"more than 2 decimal places: {raw!r}")
     except InvalidOperation as e:
         raise ValueError(f"unparseable amount {raw!r}") from e
-    if d != d.quantize(Decimal("0.01")):
-        raise ValueError(f"more than 2 decimal places: {raw!r}")
     cents = int(d * 100)
     return -cents if neg else cents
 
@@ -100,10 +123,63 @@ def norm_ref(ref: str | None) -> str:
     return re.sub(r"[^A-Z0-9]", "", (ref or "").upper())
 
 
-def parse_date(raw) -> date:
+_SLASH_DATE = re.compile(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})")
+
+
+def date_order(values) -> str:
+    """Day/month order for a file's non-ISO dates (e.g. 10/05/2026): 'DMY' if any first part is > 12,
+    otherwise 'MDY' (US default, also used when every date in the file is ambiguous)."""
+    for v in values:
+        m = _SLASH_DATE.fullmatch(str(v or "").strip()[:10])
+        if m and int(m[1]) > 12:
+            return "DMY"
+    return "MDY"
+
+
+def describe_dates(values) -> dict | None:
+    """What the mapping step shows a person about a file's dates, so the day/month order is confirmed, never assumed.
+    order: ISO | DMY | MDY.  certain: the file itself proves the order (a part above 12, or ISO dates).
+    reason: one plain sentence. None when the column has no dates at all."""
+    vals = [str(v or "").strip() for v in values if str(v or "").strip()]
+    if not vals:
+        return None
+    slash = [m for m in (_SLASH_DATE.fullmatch(v[:10]) for v in vals) if m]
+    if not slash:
+        return {"order": "ISO", "certain": True, "reason": "Dates are in year-month-day form, so there is no day/month doubt.",
+                "example": vals[0][:10]}
+    day_first = next((m[0] for m in slash if int(m[1]) > 12), None)
+    month_first = next((m[0] for m in slash if int(m[2]) > 12), None)
+    if day_first and not month_first:
+        return {"order": "DMY", "certain": True, "reason": f"{day_first} can only be day/month, so dates are read as DD/MM/YYYY.",
+                "example": day_first}
+    if month_first and not day_first:
+        return {"order": "MDY", "certain": True, "reason": f"{month_first} can only be month/day, so dates are read as MM/DD/YYYY.",
+                "example": month_first}
+    if day_first and month_first:
+        return {"order": "MDY", "certain": False, "reason": "This file mixes day/month and month/day dates; check the format "
+                "before importing.", "example": slash[0][0]}
+    return {"order": "MDY", "certain": False, "reason": f"Every date (e.g. {slash[0][0]}) could be either way round. They will be "
+            "read as MM/DD/YYYY (US) unless you choose DD/MM/YYYY.", "example": slash[0][0]}
+
+
+def parse_date(raw, order: str = "MDY") -> date:
+    if isinstance(raw, datetime):
+        return raw.date()
     if isinstance(raw, date):
         return raw
-    return date.fromisoformat(str(raw).strip()[:10])
+    s = str(raw).strip()
+    m = _SLASH_DATE.fullmatch(s[:10])
+    if m:
+        a, b, y = int(m[1]), int(m[2]), int(m[3])
+        mm, dd = (b, a) if order == "DMY" else (a, b)
+        try:
+            return date(y, mm, dd)
+        except ValueError as e:
+            raise ValueError(f"invalid date {s!r} ({'DD/MM/YYYY' if order == 'DMY' else 'MM/DD/YYYY'})") from e
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError as e:
+        raise ValueError(f"unreadable date {s!r} (use YYYY-MM-DD or MM/DD/YYYY)") from e
 
 
 def sniff_and_check(filename: str, blob: bytes) -> str:
@@ -121,8 +197,14 @@ def sniff_and_check(filename: str, blob: bytes) -> str:
             raise IngestError("not a valid XLSX container")
         import zipfile
 
-        with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        try:
+            z = zipfile.ZipFile(io.BytesIO(blob))
+        except zipfile.BadZipFile as e:
+            raise IngestError("not a valid XLSX file (the workbook is damaged)") from e
+        with z:
             names = z.namelist()
+            if "xl/workbook.xml" not in names:
+                raise IngestError("not a valid XLSX file (no workbook inside)")
             if any(n.endswith("vbaProject.bin") for n in names):
                 raise IngestError("macro-enabled workbook rejected")
             if sum(i.file_size for i in z.infolist()) > 50 * MAX_BYTES:
@@ -139,20 +221,32 @@ def read_table(filename: str, blob: bytes) -> tuple[list[str], list[list]]:
     elif ext == ".json":
         rows = _read_json(blob)
     elif ext in (".csv", ".tsv", ".txt"):
-        try:
-            text = blob.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            text = blob.decode("latin-1")
+        if blob.startswith((b"\xff\xfe", b"\xfe\xff")):
+            text = blob.decode("utf-16")
+        else:
+            try:
+                text = blob.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = blob.decode("latin-1")
         first = text.splitlines()[0] if text else ""
-        delim = "\t" if ext == ".tsv" or first.count("\t") > first.count(",") else ("|" if first.count("|") > first.count(",") else ",")
-        rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+        counts = {d: first.count(d) for d in ("\t", "|", ";", ",")}
+        delim = "\t" if ext == ".tsv" else max(counts, key=lambda d: (counts[d], d == ","))
+        if counts[delim] == 0:
+            delim = ","
+        try:
+            rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+        except csv.Error as e:
+            raise IngestError(f"CSV could not be read: {e}") from e
     else:
         from openpyxl import load_workbook
 
         # data_only=False so formulas come back as strings and are rejected, never evaluated
-        wb = load_workbook(io.BytesIO(blob), read_only=True, data_only=False)
-        ws = wb.worksheets[0]
-        rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        try:
+            wb = load_workbook(io.BytesIO(blob), read_only=True, data_only=False)
+            ws = wb.worksheets[0]
+            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        except Exception as e:  # damaged or non-Excel content inside a zip
+            raise IngestError("Excel file could not be read (damaged or not a workbook)") from e
     rows = [r for r in rows if any(c not in (None, "") for c in r)]
     if not rows:
         raise IngestError("no data")
@@ -214,6 +308,25 @@ def propose_mapping(kind: str, header: list[str]) -> dict[str, str | None]:
     return out
 
 
+# A required field may instead be covered by these columns (e.g. a bank statement with Paid in / Paid out columns
+# has no single Amount). Either way every row must give exactly one non-zero amount.
+ALTERNATIVES = {"bank": {"amount": ("paid_in", "paid_out")}}
+
+
+def missing_required(kind: str, mapping: dict) -> list[str]:
+    alt = ALTERNATIVES.get(kind, {})
+    return [f for f in REQUIRED[kind] if not mapping.get(f) and not any(mapping.get(a) for a in alt.get(f, ()))]
+
+
+def required_for(kind: str, mapping: dict) -> list[str]:
+    """Required fields as shown in the mapping step, after alternatives are taken into account."""
+    out = []
+    for f in REQUIRED[kind]:
+        alts = [a for a in ALTERNATIVES.get(kind, {}).get(f, ()) if mapping.get(a)]
+        out += alts if (alts and not mapping.get(f)) else [f]
+    return out
+
+
 REQUIRED = {
     "bank": ["line_id", "date", "amount", "currency"],
     "ledger": ["entry_id", "posted_date", "currency"],
@@ -238,7 +351,7 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
     fits, near = [], []
     for kind in CANONICAL:
         mapping = propose_mapping(kind, header)
-        missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
+        missing = missing_required(kind, mapping)
         if missing:
             near.append((len(missing), kind, missing))
             continue
@@ -251,11 +364,13 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
         fits.append((len(res.accepted) / max(1, len(rows)), mapped / len(CANONICAL[kind]), kind == hint, kind, mapping))
     if not fits:
         near.sort()
-        best = "; ".join(f"as a {KIND_LABEL[k]} it is missing {', '.join(m.replace('_', ' ') for m in miss)}"
+        best = "; ".join((f"as a {KIND_LABEL[k]}, {miss[0]}" if miss and miss[0].startswith("rows could not") else
+                          f"as a {KIND_LABEL[k]} it is missing {', '.join(m.replace('_', ' ') for m in miss)}")
                          for _, k, miss in near[:2])
         cols = ", ".join(h for h in header if h)[:200] or "(no column names)"
-        raise IngestError(f"Not accepted: this file is not a recognised finance record. Columns found: {cols}. "
-                          f"Closest matches: {best}.")
+        raise IngestError(f"Not accepted: this file doesn't look like a bank statement, ledger or other finance record LedgerSight can read. "
+                          f"Columns found: {cols}. Closest match: {best}. "
+                          f"Download a sample template on the Sources page to see the columns expected.")
     fits.sort(reverse=True)
     top = fits[0]
     return top[3], {"method": "detected from the file's columns and rows (file name not used)" if not top[2] or len(fits) == 1
@@ -264,29 +379,34 @@ def detect_kind(header: list[str], rows: list[list], hint: str | None = None) ->
 
 
 def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str | None],
-                 table: tuple[list[str], list[list]] | None = None) -> ImportResult:
-    """`table` is an already-extracted (header, rows), e.g. from a PDF statement read in the isolated parser."""
-    missing = [f for f in REQUIRED[kind] if not mapping.get(f)]
+                 table: tuple[list[str], list[list]] | None = None, confirmed_order: str | None = None) -> ImportResult:
+    """`table` is an already-extracted (header, rows), e.g. from a PDF statement read in the isolated parser.
+    `confirmed_order` ("DMY" / "MDY") is the order a person confirmed in the mapping step; otherwise it is detected."""
+    if confirmed_order not in (None, "DMY", "MDY"):
+        raise IngestError("date order must be DMY or MDY")
+    missing = missing_required(kind, mapping)
     if missing:
         raise IngestError(f"mapping incomplete: {missing}")
     header, rows = table if table else read_table(filename, blob)
     idx = {f: header.index(col) for f, col in mapping.items() if col and col in header}
     res = ImportResult(kind=kind, source_sha256=hashlib.sha256(blob).hexdigest(), rows_received=len(rows))
     seen_ids = set()
+    dcol = idx.get("date", idx.get("posted_date"))
+    order = confirmed_order or (date_order(r[dcol] for r in rows if dcol < len(r)) if dcol is not None else "MDY")
     for n, r in enumerate(rows, start=2):
         raw = {f: (r[i] if i < len(r) else None) for f, i in idx.items()}
         try:
             for v in raw.values():
                 if isinstance(v, str) and v.startswith("="):
                     raise ValueError("formula cell rejected (not evaluated)")
-            rec = _canon(kind, raw)
+            rec = _canon(kind, raw, order)
             rid = rec["id"]
             if rid in seen_ids:
                 raise ValueError(f"duplicate source id {rid} in batch")
             seen_ids.add(rid)
             rec["source_row"] = n
             rec["source_sha256"] = res.source_sha256
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, ArithmeticError) as e:
             res.rejected.append({"row": n, "reason": str(e), "raw": {k: str(v) for k, v in raw.items()}})
             continue
         res.accepted.append(rec)
@@ -298,22 +418,40 @@ def import_table(kind: str, filename: str, blob: bytes, mapping: dict[str, str |
     return res
 
 
-def _canon(kind: str, raw: dict) -> dict:
+def _nonzero(v: str) -> str:
+    """'' for an empty or zero amount cell (exports often write 0.00 in the unused debit/credit column)."""
+    try:
+        return "" if not v or to_cents(v) == 0 else v
+    except ValueError:
+        return v  # unreadable: keep it, so the row is rejected with the real reason
+
+
+def _canon(kind: str, raw: dict, order: str = "MDY") -> dict:
     s = lambda k: ("" if raw.get(k) is None else str(raw.get(k)).strip())
     if kind == "bank":
         cur = s("currency").upper()
         if not re.fullmatch(r"[A-Z]{3}", cur):
             raise ValueError(f"bad currency {cur!r}")
-        return {"id": s("line_id"), "date": parse_date(raw["date"]), "description": s("description"),
+        if s("amount") or not ("paid_in" in raw or "paid_out" in raw):
+            amt = to_cents(raw.get("amount"))  # a blank cell is rejected as "empty amount", as before
+        else:  # separate money-in / money-out columns; a 0.00 in the unused column counts as empty
+            pin, pout = _nonzero(s("paid_in")), _nonzero(s("paid_out"))
+            if bool(pin) == bool(pout):
+                raise ValueError("exactly one of paid in / paid out required")
+            amt = abs(to_cents(pin)) if pin else -abs(to_cents(pout))
+        return {"id": s("line_id"), "date": parse_date(raw["date"], order), "description": s("description"),
                 "reference": s("reference"), "ref_norm": norm_ref(s("reference")),
-                "amount_cents": to_cents(raw["amount"]), "currency": cur}
+                "amount_cents": amt, "currency": cur}
     if kind == "ledger":
-        dr, cr = s("debit"), s("credit")
-        if bool(dr) == bool(cr):
-            raise ValueError("exactly one of debit/credit required")
+        dr, cr = _nonzero(s("debit")), _nonzero(s("credit"))
         # Ledger lines here are the cash-side postings: debit to income/AR receipt = cash in.
-        amt = to_cents(dr) if dr else -to_cents(cr)
-        return {"id": s("entry_id"), "date": parse_date(raw["posted_date"]), "account": s("account"),
+        if not dr and not cr and s("amount"):  # one signed amount column (positive = cash in)
+            amt = to_cents(raw["amount"])
+        elif bool(dr) == bool(cr):
+            raise ValueError("exactly one of debit/credit required")
+        else:
+            amt = to_cents(dr) if dr else -to_cents(cr)
+        return {"id": s("entry_id"), "date": parse_date(raw["posted_date"], order), "account": s("account"),
                 "description": s("description"), "reference": s("reference"),
                 "ref_norm": norm_ref(s("reference")), "amount_cents": amt, "currency": s("currency").upper()}
     if kind == "ar":

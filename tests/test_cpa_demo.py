@@ -170,8 +170,10 @@ def test_scoped_october_query_returns_cases_with_citations(cpa):
     assert a["status"] == "ANSWERED" and "between 2026-10-01 and 2026-10-31" in a["answer"]
     assert len(a["rows"]) == len(run["result"]["exceptions"]) and a["citations"]
     assert {r[-1] for r in a["rows"]} >= {"CA-TAX-01", "UK-FX-01"}
+    # audit FUNC-11: different kinds of exception are totalled per type, never in one mixed sum
     total = sum(e["amount_cents"] for e in run["result"]["exceptions"])
-    assert f"${abs(total) / 100:,.2f}" in a["answer"]
+    assert "By type:" in a["answer"] and f"totalling ${abs(total) / 100:,.2f}" not in a["answer"]
+    assert "tax review" in a["answer"].lower()
     narrow = ask(cpa, "Show exceptions from 1-10 October 2026")
     assert {r[1] for r in narrow["rows"]} == {"HB004", "HB005", "HB006"}
 
@@ -263,11 +265,18 @@ def test_audit_trail_export_is_client_scoped(staff):
     assert staff.get("/v1/workspaces/client-b/audit-trail.pdf").status_code == 404
 
 
-def test_ask_launcher_is_a_floating_button():
+def test_recon_page_shows_agent_workflow_before_run_stages():
     html = (appmod.BASE / "static" / "index.html").read_text(encoding="utf-8")
-    assert 'id="ask-open" class="ask-fab"' in html and 'class="askbtn"' not in html
-    css = (appmod.BASE / "static" / "avocet.css").read_text(encoding="utf-8")
-    assert ".ask-fab{position:fixed;right:24px;bottom:24px" in css
+    recon = html.split('id="p-recon"', 1)[1].split("</section>", 1)[0]
+    assert recon.index('id="rc-pipe"') < recon.index('id="stages-card"')
+
+
+def test_ask_launcher_is_in_the_sidebar():
+    # Diana review 06/11 put Ask in a floating corner button; 2026-11-12 (user request) it moved to the bottom of
+    # the left sidebar, always visible (icon only when the sidebar is collapsed). Ctrl+K still opens it.
+    html = (appmod.BASE / "static" / "index.html").read_text(encoding="utf-8")
+    foot = html[html.index('<div class="sidefoot">'):html.index("</aside>")]
+    assert 'id="ask-open" class="side-ask"' in foot and 'class="ask-fab"' not in html and 'class="askbtn"' not in html
 
 
 def test_rulebook_lists_new_review_policies(cpa):

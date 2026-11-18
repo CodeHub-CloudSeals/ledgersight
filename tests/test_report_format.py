@@ -79,3 +79,29 @@ def test_prose_amounts_and_sentence_case():
 def test_long_words_never_split_when_they_fit():
     w = reports._tw("exception.triage", "F1", 7.5)
     assert reports._wrap("exception.triage", "F1", 7.5, w - 0.01) == ["exception.triage"]
+
+
+# ---- CloudSeals logo on reports ---------------------------------------------------------------------
+def test_pdf_reports_carry_the_cloudseals_logo_and_name(rev):
+    run = golden_run(rev)
+    for kind in ("finance", "governance"):
+        blob = rev.get(f"{WS}/runs/{run['id']}/reports/{kind}.pdf").content
+        assert b"/XObject << /Logo" in blob and b"/SMask" in blob  # logo image with transparent background
+        txt = _pdf_text(blob)
+        assert "CLOUDSEALS" in txt and "CloudSeals" in txt  # header wordmark + footer
+
+
+def test_xlsx_summary_has_the_logo(rev):
+    from openpyxl import load_workbook
+    run = golden_run(rev)
+    wb = load_workbook(io.BytesIO(rev.get(f"{WS}/runs/{run['id']}/reports/finance.xlsx").content))
+    assert len(wb["Summary"]._images) == 1 and "CloudSeals" in wb["Summary"]["A2"].value
+
+
+def test_reports_still_render_if_the_logo_file_is_missing(rev, monkeypatch, tmp_path):
+    run = golden_run(rev)
+    monkeypatch.setattr(reports, "LOGO_PNG", tmp_path / "missing.png")
+    monkeypatch.setattr(reports, "_LOGO_CACHE", {})
+    blob = rev.get(f"{WS}/runs/{run['id']}/reports/finance.pdf").content
+    assert blob.startswith(b"%PDF") and b"/Logo" not in blob and run["id"] in _pdf_text(blob)
+    assert rev.get(f"{WS}/runs/{run['id']}/reports/finance.xlsx").status_code == 200

@@ -1,0 +1,4 @@
+doc_id,doc_type,reference,vendor_alias,amount,file
+DOC-N-01,lease,LEASE-NOV,VEND-CRESTLINE,4200.00,crestline_lease_nov.pdf
+DOC-N-02,payroll_register,PR-1114,INTERNAL,18650.00,payroll_register_1114.pdf
+DOC-N-03,vendor_invoice,LS-318,VEND-LUMEN,299.00,lumen_invoice_318.pdf

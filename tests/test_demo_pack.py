@@ -194,9 +194,20 @@ def test_messy_files_reject_bad_rows_with_reasons(cpa):
     assert (ledger["received"], ledger["accepted"]) == (5, 3)
     assert _health(cpa, "3_messy_files", "ledger", "03_meeting_notes_should_be_refused.docx").status_code == 422
     assert _health(cpa, "3_messy_files", "bank", "04_not_a_statement.json").status_code == 422
-    r = cpa.post(WS + "/reconciliation-runs", headers=H).json()["result"]
-    assert {(e["bank_id"], e["type"]) for e in r["exceptions"]} == {("MX07", "UNMATCHED_DEPOSIT"), ("MX02", "MISSING_RECEIPT"), ("MX06", "MISSING_RECEIPT")}
+    # 2026-11-16 action items: rejected rows must be looked at (or fixed and re-uploaded) before the run
+    r = cpa.post(WS + "/reconciliation-runs", headers=H)
+    assert r.status_code == 422 and "rows rejected" in r.text and "upload the corrected file" in r.text
+    from test_audit_fixes_p1 import acknowledge_rejections
+    acknowledge_rejections(cpa, WS.rsplit("/", 1)[1])
+    r = cpa.post(WS + "/reconciliation-runs", headers=H)
+    assert r.status_code == 200, r.text
+    r = r.json()["result"]
+    real = [e for e in r["exceptions"] if e["type"] != "REJECTED_SOURCE_ROW"]
+    assert {(e["bank_id"], e["type"]) for e in real} == {("MX07", "UNMATCHED_DEPOSIT"), ("MX02", "MISSING_RECEIPT"), ("MX06", "MISSING_RECEIPT")}
     assert r["unexplained_variance_cents"] == 0
+    # audit FUNC-01: rows that failed import are never silent; each is a case the CPA must see (4 bank + 2 ledger)
+    rej = [e for e in r["exceptions"] if e["type"] == "REJECTED_SOURCE_ROW"]
+    assert len(rej) == 6 and r["rejected_source_rows"] == 6 and all(e["status"] == "OPEN" for e in rej)
 
 
 def test_run_without_bank_and_ledger_says_what_is_missing(cpa):

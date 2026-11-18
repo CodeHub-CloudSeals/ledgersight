@@ -53,8 +53,9 @@ guide is calculated by the app from these files and checked by `tests/test_demo_
   - **DB06:** $420 paid but not in the books. Policy **POL-05**, needs a CPA reviewer. A vendor bill supports it.
 
 ### 5. Who is allowed to decide (3 min) · *Review queue*
-- Top bar: switch **Acting as → Staff Preparer**. On DB06 type a note, click **Propose resolution**, then click **Approve**.
-  → **TrustOps DENY · MAKER_CHECKER · POL-06**: "You can't approve your own work. Enforced on the server, not by hiding a button."
+- Top bar: switch **Acting as → Staff Preparer**. On DB06 type a note and click **Propose resolution for reviewer**.
+  → The preparer has **no Approve, Reject or Return buttons**: "A preparer proposes; only a CPA reviewer decides. The server
+  refuses a preparer decision even if someone calls it directly (POL-06 maker-checker / POL-02), and signs the refusal."
 - Switch back to **CPA Reviewer** and click **Approve**. → **ACCEPTED**, with name, time and approval ID.
 - Say: "Approval only changes the review record. Nothing is ever posted to the client's books."
 

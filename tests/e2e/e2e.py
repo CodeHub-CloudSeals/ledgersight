@@ -1,0 +1,802 @@
+"""End-to-end click-through of the LedgerSight UI (follows demo_files/README.md walkthrough).
+Runs against isolated test servers: 8091 (no-login demo mode) and 8092 (login mode).
+Usage: tests/e2e/run_all.sh [shots_dir]   (needs: pip install playwright; playwright install chromium)
+Set E2E_CHANNEL=msedge to use the installed Edge instead of Playwright's Chromium."""
+import json, os, re, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+
+BASE = "http://127.0.0.1:8091"; LOGIN_BASE = "http://127.0.0.1:8092"
+DEMO = Path(__file__).resolve().parents[2] / "demo_files"
+M1 = DEMO / "1_standard_month"
+SHOTS = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent / "shots"); SHOTS.mkdir(parents=True, exist_ok=True)
+RESULTS = []          # (feature, how, ok, detail)
+ERRORS = []           # page JS errors / console errors
+
+def check(feature, how, fn):
+    try:
+        detail = fn()
+        RESULTS.append((feature, how, True, detail or ""))
+    except Exception as e:  # noqa
+        RESULTS.append((feature, how, False, f"{type(e).__name__}: {(str(e).splitlines() or [repr(e)])[0][:300]}"))
+
+# records every state each pipeline node passes through (to prove the animation really ran)
+OBSERVER = """
+window.__seen = {}; window.__countSeen = new Set();
+new MutationObserver(() => {
+  document.querySelectorAll('#ov-agents .pnode, #ag-pipeline .pnode, #rc-pipeline .pnode').forEach(n => {
+    const code = n.querySelector('.pcode')?.textContent; const st = [...n.classList].find(c => c.startsWith('s-'));
+    if (code && st) (window.__seen[code] = window.__seen[code] || new Set()).add(st);
+  });
+  document.querySelectorAll('[data-pipe=count]').forEach(c => window.__countSeen.add(c.textContent));
+}).observe(document.documentElement, {subtree: true, childList: true, attributes: true});
+"""
+HOOK = """
+window.__seen = {}; window.__countSeen = new Set();
+const __orig = window.renderPipelines;
+window.renderPipelines = function () { const r = __orig.apply(this, arguments);
+  document.querySelectorAll('#ag-pipeline .pnode').forEach(n => {
+    const code = n.querySelector('.pcode').textContent; const st = [...n.classList].find(c => c.startsWith('s-'));
+    (window.__seen[code] = window.__seen[code] || new Set()).add(st); });
+  document.querySelectorAll('[data-pipe=count]').forEach(c => window.__countSeen.add(c.textContent)); return r; };
+"""
+def start(page, url):
+    page.goto(url); page.wait_for_selector("#app:not(.hidden)"); page.wait_for_timeout(800); page.evaluate(HOOK)
+
+seen = lambda p: p.evaluate("Object.fromEntries(Object.entries(window.__seen).map(([k,v])=>[k,[...v]]))")
+reset_seen = lambda p: p.evaluate("window.__seen = {}; window.__countSeen = new Set();")
+
+def tab(p, name):
+    p.click(f'.tab[data-tab="{name}"]'); p.wait_for_timeout(350)
+
+def shot(p, name):
+    p.screenshot(path=str(SHOTS / f"{name}.png"), full_page=True)
+
+def wire(page):
+    page.on("pageerror", lambda e: ERRORS.append(f"pageerror: {e}"))
+    page.on("console", lambda m: ERRORS.append(f"console.{m.type}: {m.text}") if m.type == "error" and "favicon" not in m.text else None)
+
+def upload_and_map(p, fname):
+    p.set_input_files("#up-file", str(M1 / fname))
+    p.wait_for_selector("#mapping:not(.hidden) button.primary", timeout=15000)
+    # 2026-11-12: every field says whether it is required; dates say how they will be read
+    assert p.locator("#mapping .map-req").count() >= 1, "required fields not marked in the mapping step"
+    p.click("#mapping button.primary")
+    p.wait_for_selector("#mapping.hidden", state="attached", timeout=15000)
+    p.wait_for_timeout(300)
+
+def wait_idle(p):
+    p.wait_for_function("S.anim === null && !document.querySelector('#run-btn').classList.contains('busy')", timeout=20000)
+    p.wait_for_timeout(300)
+
+def no_hscroll(p):
+    w = p.evaluate("[document.documentElement.scrollWidth, window.innerWidth]")
+    if w[0] > w[1] + 1:
+        wide = p.evaluate("""[...document.querySelectorAll('main *, .topbar *, .stepper *')].filter(e => e.offsetParent && e.getBoundingClientRect().right > innerWidth + 1)
+          .map(e => (e.id ? '#' + e.id : e.tagName.toLowerCase() + '.' + [...e.classList].join('.')) + ' w=' + Math.round(e.getBoundingClientRect().width)).slice(0, 6).join(' | ')""")
+        tabname = p.evaluate("document.querySelector('.panel.active').id")
+        raise AssertionError(f"{tabname}: scrollWidth {w[0]} > {w[1]}: {wide}")
+
+with sync_playwright() as pw:
+    br = pw.chromium.launch(channel=os.environ.get("E2E_CHANNEL") or None, headless=True)
+    ctx = br.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=True, bypass_csp=True)
+    p = ctx.new_page(); wire(p)
+    start(p, BASE + "/")
+
+    # ---------- shell ----------
+    def t_shell():
+        groups = p.eval_on_selector_all(".navlabel", "n => n.map(x => x.textContent)")
+        assert groups == ["WorkSpace", "Outputs", "Governance", "Admin"], groups
+        assert p.is_visible("#ws-select") and p.is_visible("#act-as") and p.is_visible("#theme") and p.is_visible("#ask-open") and p.is_visible("#notif-btn")
+        assert p.locator("#tb-search").count() == 0   # 2026-11-12: the top-bar search box was removed on request
+        tabs = p.eval_on_selector_all(".tab", "n => n.map(x => x.dataset.tab)")
+        assert len(tabs) == 13 and "ask" not in tabs, tabs
+        assert p.inner_text("#app-version").strip() == "LedgerSight v1.0.0", p.inner_text("#app-version")
+        assert "Governed By TrustOps" in p.inner_text(".bsub")
+        top = p.eval_on_selector("#notif-btn", "e => e.closest('.topbar') !== null")
+        # 2026-11-12: Ask LedgerSight lives at the bottom of the sidebar (the floating corner button was removed)
+        fab = p.eval_on_selector("#ask-open", "e => [!!e.closest('.sidebar .sidefoot'), Math.round(e.getBoundingClientRect().left)]")
+        assert top and fab[0] and fab[1] < 300 and p.locator(".ask-fab").count() == 0, (top, fab)
+        p.keyboard.press("Control+k"); p.wait_for_timeout(400); assert p.evaluate("S.askOpen"); p.keyboard.press("Escape"); p.wait_for_timeout(300)
+        return f"WorkSpace/Outputs/Governance/Admin, {len(tabs)} tabs, Ask at the bottom of the sidebar and Ctrl+K, bell in the top bar, LedgerSight v1.0.0, Governed By TrustOps"
+    check("App shell: grouped sidebar + top bar", "DOM check", t_shell)
+
+    def t_empty_overview():
+        expect(p.locator("#ag-pipeline .pnode")).to_have_count(6)
+        assert p.is_visible("#ov-how"), "onboarding guide shown before any upload"
+        assert p.locator("[data-pipe=count]").count() == 0 and "agents active" not in p.inner_text("body")
+        assert p.locator("#ag-pipeline .pnode.s-idle").count() == 6
+        shot(p, "01-overview-empty")
+        return "6 agent nodes, all 'Not used yet', no agent counter"
+    check("Overview pipeline (empty state)", "fresh data dir, DOM check", t_empty_overview)
+
+    def t_readiness():
+        tab(p, "recon"); assert p.is_disabled("#run-btn"); assert "before you can run" in p.inner_text("#recon-ready").lower()
+        tab(p, "exceptions"); assert "Nothing to review yet" in p.inner_text("#exc-list")
+        return "Run disabled until bank + ledger exist; empty states shown"
+    check("Readiness guard + empty states", "click Reconciliation / Review queue before upload", t_readiness)
+
+    # ---------- sources ----------
+    tab(p, "import")
+    def t_refuse_unsupported():
+        p.set_input_files("#up-file", str(M1 / "10_should_be_rejected_macro.xlsm")); p.wait_for_timeout(1200)
+        docx = DEMO / "3_messy_files" / "03_meeting_notes_should_be_refused.docx"
+        p.set_input_files("#up-file", str(docx)); p.wait_for_timeout(1200)
+        out = p.inner_text("#up-refused")
+        assert "03_meeting_notes_should_be_refused.docx" in out, out
+        assert p.locator("#mapping:not(.hidden)").count() == 0  # never parsed or mapped
+        p.evaluate("put('up-refused')")
+        return "macro workbook and Word file refused with the reason; nothing parsed or mapped"
+    check("Unsupported formats refused", "upload a macro workbook and a Word file", t_refuse_unsupported)
+
+    def t_uploads():
+        reset_seen(p)
+        for f in ["01_bank_statement.csv", "02_general_ledger.xlsx", "03_open_invoices_AR.csv", "04_vendor_bills_AP.json",
+                  "05_supporting_documents.csv", "06_customers_and_vendors.csv"]:
+            upload_and_map(p, f)
+        s = seen(p)
+        assert "s-working" in s.get("AG-01", []), f"AG-01 never shown working during upload: {s}"
+        st = p.inner_text("#src-status"); assert st.lower().count("verified upload") >= 6, st
+        h = p.inner_text("#health"); assert "balances" in h.lower()
+        shot(p, "02-sources")
+        # 2026-11-13: sample templates under the upload box; success messages fade after ~8 s
+        links = p.eval_on_selector_all("#tpl-links a", "n => n.map(a => a.getAttribute('href'))")
+        assert len(links) == 6 and "/v1/templates/bank.csv" in links, links
+        assert p.evaluate("async () => (await fetch('/v1/templates/ledger.csv', {credentials: 'same-origin'})).status") == 200
+        p.evaluate("msg('up-msg', 'Imported.', 'good')"); assert p.inner_text("#up-msg") == "Imported."
+        p.wait_for_timeout(8800); assert p.inner_text("#up-msg") == "", "success message did not clear"
+        nxt = p.inner_text("#up-next"); assert "Go to Reconciliation" in nxt and "Run reconciliation →" not in nxt, nxt
+        return f"6 files mapped + imported; AG-01 states seen {s.get('AG-01')}; 6 'Verified Upload'; 6 templates; success note cleared; Sources links to Reconciliation"
+    check("Upload + column-mapping confirm (6 files)", "set files on #up-file, click Confirm mapping & import", t_uploads)
+
+    def t_connectors():
+        assert p.locator("#connectors").count() == 0   # 2026-11-13 (user request): Connections card removed
+        # 2026-11-13 Sources layout (user choice): a short upload strip on top, the 6 sources as cards in a 3x2 grid
+        # below; planned connections as chips (not table rows)
+        assert p.locator("#src-status .ss-tile").count() == 6 and p.locator("#src-status .ss-tile.on").count() >= 2
+        g = p.evaluate("""() => { const up = document.querySelector('#p-import .src-up').getBoundingClientRect(),
+            st = document.querySelector('#p-import .src-st').getBoundingClientRect(),
+            tops = [...document.querySelectorAll('#src-status .ss-tile')].map(t => Math.round(t.getBoundingClientRect().top));
+            return [Math.round(up.bottom) <= Math.round(st.top), new Set(tops).size, Math.round(up.height), Math.round(st.height)]; }""")
+        assert g[0] and g[1] == 2 and g[2] < g[3], g  # upload above status, tiles in 2 rows of 3, upload strip shorter than status
+        return f"no Connections card; upload strip {g[2]}px on top; 6 source cards in 3x2"
+    check("Sources layout (no Connections card)", "read #p-import", t_connectors)
+
+    def t_pdf():
+        p.set_input_files("#up-file", str(M1 / "09_suspicious_invoice.pdf"))
+        p.wait_for_selector("#mapping:not(.hidden)", timeout=20000)
+        txt = p.inner_text("#mapping"); assert "instruction-like text" in txt.lower(), txt[:200]
+        p.click("#mapping button.primary"); p.wait_for_timeout(800)
+        return "PDF parsed in isolated worker; hidden instructions flagged; document confirmed"
+    check("PDF upload + prompt-injection flag + confirm", "upload 09_suspicious_invoice.pdf", t_pdf)
+
+    # ---------- reconcile with animation ----------
+    def t_run():
+        tab(p, "recon"); reset_seen(p)
+        assert not p.is_disabled("#run-btn")
+        p.click("#run-btn")
+        p.wait_for_function("S.anim && S.anim.mode === 'replay' && document.querySelector('#rc-pipeline .s-working')", timeout=10000)
+        # 2026-11-12: the workflow is updated in place while it animates. If its elements were rebuilt each step,
+        # the browser would close a right-click menu opened on the card (the element under it disappears).
+        p.evaluate("window.__keep = [...document.querySelectorAll('#rc-pipeline .pnode, #rc-pipeline .pname, #rc-pipeline .pipe-foot')]")
+        # 2026-11-13: no figures before the agents finish: tiles wait with placeholders, no amounts, no "already reconciled"
+        early = p.evaluate("[document.querySelectorAll('#tiles .tile.pending').length, document.querySelector('#tiles').innerText, document.querySelector('#recon-ready').innerText]")
+        assert early[0] == 6 and "$" not in early[1] and "Already reconciled" not in early[2], early
+        assert p.evaluate("document.querySelector('#nav-review').classList.contains('hidden')"), "review count shown before the agents finished"
+        p.wait_for_timeout(700); shot(p, "03-recon-animating")
+        kept = p.evaluate("[window.__keep.length, window.__keep.filter(n => n.isConnected).length]")
+        assert kept[0] == 13 and kept[1] == 13, f"workflow elements were replaced during the run: {kept}"
+        wait_idle(p)
+        s = seen(p)
+        for c in ["AG-01", "AG-02", "AG-03", "AG-04", "AG-05", "AG-06"]:
+            assert "s-working" in s.get(c, []), f"{c} never animated: {s}"
+        tiles = p.inner_text("#tiles")
+        assert "$196.00" in tiles and "$0.00" in tiles, tiles
+        e = p.locator("#rc-pipeline .pnode.s-escalated"); n = e.inner_text()
+        assert "AG-04" in n and "6 sent to a person" in e.get_attribute("aria-label") and e.locator(".pnum").inner_text() == "6"             and "sent to a CPA reviewer" in n and "Review now" in n, n.replace(chr(10), " / ")
+        shot(p, "04-recon-done")
+        return "each of 6 agents went queued→working→done/escalated (elements kept in place, so right-click works); variance $196.00, unexplained $0.00; AG-04 '6 sent to a person'"
+    check("Run reconciliation + live pipeline replay", "click Run, watch pipeline states", t_run)
+
+    def t_numbers():
+        txt = p.inner_text("#rc-pipeline"); assert " ms" not in txt and "POL-02" not in txt and " rows" not in txt, txt
+        tips = " ".join(p.eval_on_selector_all("#rc-pipeline .pline", "n => n.map(x => x.title)"))
+        run = p.evaluate("S.run.workflow.map(s => [s.agent, s.rows_in, s.rows_out, s.duration_ms])")
+        for a, i, o, ms in run:
+            assert f"{i} → {o} rows" in tips and f"{ms} ms" in tips, (a, i, o, ms)
+        r = p.evaluate("[S.run.result.matches.length, S.run.result.exceptions.length]")
+        ag3 = p.locator("#rc-pipeline .pnode", has_text="AG-03")
+        assert ag3.locator(".pnum").inner_text() == str(r[0]) and f"matched · {r[1]} for review" in ag3.inner_text(), ag3.inner_text()
+        assert "files checked" in txt and "reports ready" in txt, txt
+        return f"each step shows one number + label (AG-03: {r[0]} matched · {r[1]} for review); rows, ms, policy in tooltip = run response"
+    check("Pipeline numbers = server data (no invented values)", "compare DOM text with S.run.workflow", t_numbers)
+
+    def t_matches():
+        rows = p.locator("#matches tr.click"); assert rows.count() == 9, rows.count()
+        rows.first.click(); assert "Trace" in p.inner_text("#detail")
+        assert "Step-by-step detail" not in p.inner_text("#p-recon")
+        return "9 matched rows; source detail opens; no step-by-step panel"
+    check("Matched table + source detail", "click first match", t_matches)
+
+    # ---------- overview after run ----------
+    def t_overview():
+        tab(p, "home"); p.wait_for_timeout(600)
+        k = p.inner_text("#ov-kpis") + " " + p.inner_text("#ov-var"); assert "9" in k and "$196.00" in k, k
+        assert not p.is_visible("#ov-how"), "guide hidden once files are in"
+        # 2026-11-13: the four headline cards stay compact, in one row at 1280px (user: cards were too big)
+        box = p.evaluate("[...document.querySelectorAll('#ov-kpis .kw')].map(e => e.getBoundingClientRect()).map(r => [Math.round(r.top), Math.round(r.height)])")
+        assert len(box) == 4 and len({t for t, _ in box}) == 1 and max(h for _, h in box) <= 200, box
+        # 2026-11-13: the period chip opens a month picker in place (it used to jump to Data & security)
+        p.click("#period-chip"); p.wait_for_timeout(300)
+        assert p.is_visible("#period-panel") and p.evaluate("location.hash") == "#home", p.evaluate("location.hash")
+        assert p.locator("#period-panel .pp-m").count() == 12 and p.inner_text("#period-panel .pp-m.on") == "Oct"
+        p.keyboard.press("Escape"); assert p.is_hidden("#period-panel")
+        tab(p, "recon"); p.wait_for_timeout(400)
+        assert p.locator("#rc-pipeline .pnode").count() == 6
+        tops = p.eval_on_selector_all("#rc-pipeline .pnode", "n => new Set(n.map(x => Math.round(x.getBoundingClientRect().top))).size")
+        assert tops == 1, f"pipeline wraps into {tops} rows at 1280px"
+        nr = p.inner_text("#nav-review"); assert nr.strip() == "6", nr
+        tab(p, "evidence"); p.wait_for_timeout(800)
+        g = p.inner_text("#ov-gov"); esc = int(re.search(r"ESCALATE\s+(\d+)", g).group(1)); assert esc >= 6, g
+        act = p.inner_text("#ov-activity"); assert "No activity yet" not in act and "AG-0" in act, act[:200]
+        tab(p, "home"); shot(p, "05-overview")
+        return f"KPIs from run; sidebar review count {nr}; ESCALATE {esc} and recent activity are current"
+    check("Overview KPIs + review count badge", "Overview after run", t_overview)
+
+    def t_decision_buttons():
+        # Regression (2026-11-12): Reject/Approve kept the old square style next to the pill Propose/Return buttons.
+        tab(p, "exceptions")
+        st = p.evaluate("""() => { const row = [...document.querySelectorAll('.xa-row')].find(r => r.offsetParent); if (!row) return null;
+            return [...row.querySelectorAll('button:not(.linkbtn)')].map(b => [b.textContent, Math.round(b.getBoundingClientRect().height), getComputedStyle(b).borderTopLeftRadius]); }""")
+        if not st: return "no open case on screen; nothing to check"
+        assert len({h for _, h, _ in st}) == 1 and {r for _, _, r in st} == {"999px"}, st
+        return f"{len(st)} decision buttons, one height ({st[0][1]}px), all pill-shaped: " + ", ".join(t for t, _, _ in st)
+    check("Decision buttons share one style", "Review queue: compare height and corner radius", t_decision_buttons)
+
+    def t_page_motion():
+        # 2026-11-12: page entrance (title + subtitle rise word by word, content follows) + liquid sidebar glide;
+        # nothing left behind (word wrappers removed, no inline styles).
+        tab(p, "home"); p.wait_for_timeout(600)
+        if not p.evaluate("!!window.Motion"): return "motion library absent; static pages (fallback)"
+        p.click('.sidebar nav .tab[data-tab="reports"]'); p.wait_for_timeout(60)
+        mid = p.evaluate("""() => { const w = [...document.querySelectorAll('#p-reports .ls-wi')], pl = document.querySelector('.nav-pill').getBoundingClientRect();
+            const c = [...document.querySelectorAll('#p-reports h2 .ls-wc .ls-wi')];
+            return [w.length, new Set(w.slice(0, 8).map(e => Math.round(new DOMMatrix(getComputedStyle(e).transform).m42))).size, Math.round(pl.height),
+                    c.length, c.map(e => e.textContent).join('')]; }""")
+        assert mid[0] >= 5 and mid[1] > 1, f"words are not rising one after another: {mid}"
+        # 2026-11-12: the headline rises one letter at a time (subtitle stays word by word)
+        assert mid[3] >= 5 and mid[3] == len(mid[4]) and mid[4] == p.evaluate("document.querySelector('#p-reports h2').textContent.replace(/\\s+/g, '')"), mid
+        p.wait_for_timeout(2400)
+        left = p.evaluate("""() => document.querySelectorAll('.ls-w, .ls-wrun, [data-ls-split]').length + [...document.querySelectorAll('.panel.active *')].filter(e => e.offsetParent &&
+            ((e.style.opacity && e.style.opacity !== '1') || e.style.filter || (e.style.transform && e.style.transform !== 'none'))).length""")
+        pill = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(), A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect();
+            return Math.max(Math.abs(P.top - A.top), Math.abs(P.height - A.height)); }""")
+        assert left == 0 and pill <= 1, (left, pill)
+        return f"headline {mid[3]} letters one by one, {mid[0]} pieces rising in sequence, sidebar highlight {mid[2]}px tall mid-glide; settles exactly, wrappers removed"
+    check("Page entrance + sidebar glide", "switch Overview → Reports, sample mid-animation and after", t_page_motion)
+
+    def t_workflow_stepper():
+        # 2026-11-12: Agent workflow is one stepper: no per-step boxes, no "Done" badge next to the tick,
+        # and the step that sent work to a person opens the review queue.
+        tab(p, "agents"); p.wait_for_timeout(1500)
+        st = p.evaluate("""() => { const t = document.querySelector('#ag-pipeline, #ag-pipe');
+            const done = [...t.querySelectorAll('.pnode.s-done')], esc = t.querySelector('.pnode[data-go-review]');
+            return [done.length, done.filter(n => n.querySelector('.pstate')?.offsetParent).length,
+                    [...t.querySelectorAll('.pbody')].filter(b => parseFloat(getComputedStyle(b).borderTopWidth) > 0 || getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)').length,
+                    esc ? esc.querySelector('.pstate').textContent : null]; }""")
+        assert st[0] >= 1 and st[1] == 0 and st[2] == 0, st
+        if st[3]:
+            p.click("#ag-pipe .pnode[data-go-review]"); p.wait_for_timeout(700)
+            assert p.evaluate("document.querySelector('#p-exceptions').classList.contains('active')"), "escalated step did not open the review queue"
+        return f"{st[0]} finished steps show only the tick (no badge, no box); '{st[3]}' opens the review queue"
+    check("Agent workflow stepper", "Agents page: status badges, step boxes, escalated link", t_workflow_stepper)
+
+    def t_workflow_header():
+        # 2026-11-12: header status chip + progress line (the Replay button was removed on request).
+        tab(p, "recon"); p.wait_for_timeout(800)
+        chip = p.inner_text("#rc-pipe .pipe-chip")
+        prog = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-track')).getPropertyValue('--p').trim()")
+        assert chip.startswith("Complete") and prog == "1.000", (chip, prog)
+        assert p.locator(".pipe-replay").count() == 0 and p.locator("#rc-pipe .pipe-prog").count() == 0
+        # 2026-11-12 redesign (v3): white card like every page; one timeline through six round agent icons.
+        # Only steps that need attention carry a round badge (AG-04 sent to a person; a blocked agent).
+        icons, badges = p.locator("#rc-pipe .pnode .porb svg").count(), p.locator("#rc-pipe .pnode .pbadge").count()
+        need = p.locator("#rc-pipe .pnode.s-escalated, #rc-pipe .pnode.s-blocked").count()
+        bg = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe')).backgroundImage")
+        line = p.evaluate("getComputedStyle(document.querySelector('#rc-pipe .pipe-track'), '::after').transform")
+        assert icons == 6 and badges == need >= 1 and bg == "none" and line.startswith("matrix(1,"), (icons, badges, need, bg[:60], line)
+        return f"chip '{chip}', timeline filled; 6 agent icons, {badges} attention badge(s) only; white card; no Replay button"
+    check("Agent workflow header", "Reconciliation: status chip and progress line", t_workflow_header)
+
+    def t_design_rules():
+        # DESIGN_RULES.md: pill buttons, no edge stripes, borderless insets/cards, 42px fields, frameless tables
+        js = "\n".join(l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "design_rules.js"), encoding="utf-8").read().splitlines()
+                       if not l.lstrip().startswith("//"))
+        bad, pages = [], ("home", "import", "recon", "exceptions", "parties", "trace", "reports", "agents", "rules", "controls", "evidence", "trust", "team")
+        for t in pages:
+            tab(p, t)
+            if t == "exceptions": p.evaluate("document.querySelectorAll('#exc-list details').forEach(d => d.open = true)")
+            bad += [f"{t}: {x}" for x in p.evaluate(js)]
+        assert not bad, bad[:12]
+        return f"all {len(pages)} pages follow DESIGN_RULES.md (buttons, cards, inner boxes, fields, tables, status)"
+    check("Design rules hold on every page", "tests/e2e/design_rules.js on each page", t_design_rules)
+
+
+    # ---------- review queue: maker-checker ----------
+    def exc(id_):
+        return p.locator("#exc-list .exc", has_text=id_).first
+    def t_suggest():
+        # 2026-11-13: suggested comments on each open review item; a click fills the note, nothing is sent
+        tab(p, "exceptions"); card = p.locator("#exc-list .exc.OPEN").first
+        chips = card.locator(".xsug-c"); assert chips.count() >= 3, chips.count()
+        before = p.evaluate("S.run.result.exceptions.filter(x => x.status !== 'OPEN').length")
+        txt = chips.first.inner_text(); chips.first.click()
+        assert card.locator("textarea").input_value() == txt
+        assert p.evaluate("S.run.result.exceptions.filter(x => x.status !== 'OPEN').length") == before
+        card.locator("textarea").fill("")
+        return f"{chips.count()} suggested comments; clicking '{txt}' fills the note only"
+    check("Suggested comments on review items", "Review queue: click a suggestion chip", t_suggest)
+
+    def t_maker_checker():
+        tab(p, "exceptions"); assert p.locator("#exc-list .exc").count() == 6
+        p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200); tab(p, "exceptions")
+        e = exc("DB06"); e.locator("textarea").fill("Vendor bill PK-3302 supports it")
+        e.get_by_role("button", name="Propose resolution for reviewer").click(); p.wait_for_timeout(700)
+        # 2026-11-12 (user decision): the preparer has no Approve / Reject / Return buttons; only Propose.
+        for name in ("Approve", "Reject", "Return to preparer"):
+            assert p.locator("#exc-list").get_by_role("button", name=name, exact=True).count() == 0, name
+        assert "A CPA reviewer approves, rejects or returns it" in exc("DB06").inner_text()
+        shot(p, "06-maker-checker")
+        # ...and the server still refuses a preparer decision sent directly: own proposal -> POL-06, any other -> POL-02
+        mine, other = exc("DB06").get_attribute("data-exc"), p.locator("#exc-list .exc.OPEN").filter(has_not_text="DB06").first.get_attribute("data-exc")
+        post = """async ([x, d]) => { const r = await fetch(`/v1/workspaces/${S.ws}/runs/${S.run.id}/exceptions/${x}/decisions`,
+            {method: 'POST', credentials: 'same-origin', headers: {'x-ledgersight': '1', 'content-type': 'application/json'}, body: JSON.stringify({decision: d, note: ''})});
+            return [r.status, (await r.json()).detail]; }"""
+        r1 = p.evaluate(post, [mine, "ACCEPT"]); r2 = p.evaluate(post, [other, "REJECT"])
+        assert r1[0] == 403 and r1[1]["reason_code"] == "MAKER_CHECKER_SELF_APPROVAL" and r1[1]["policy_id"] == "POL-06", r1
+        assert r2[0] == 403 and r2[1]["reason_code"] == "ROLE_NOT_AUTHORISED", r2
+        return "Preparer: only 'Propose' (no Approve/Reject/Return); direct decision on own proposal → 403 POL-06, on another → 403 ROLE_NOT_AUTHORISED"
+    check("Maker-checker (preparer cannot approve own proposal)", "Acting as Staff Preparer → Propose; no decision buttons; direct request refused", t_maker_checker)
+
+    def t_preparer_view():
+        # 2026-11-12: the staff preparer sees their own work; governance and admin pages are the CPA reviewer's.
+        vis = lambda: p.evaluate("[...document.querySelectorAll('.sidebar nav .tab')].filter(t => !t.classList.contains('hidden')).map(t => t.dataset.tab)")
+        tabs = vis()
+        assert tabs == ["home", "import", "recon", "exceptions", "parties", "trace", "reports", "rules"], tabs
+        bad = []
+        on_resp = lambda r: bad.append(f"{r.status} {r.url}") if r.status >= 400 else None
+        p.on("response", on_resp)
+        for h in ("evidence", "controls", "trust", "agents"):
+            p.evaluate(f"go('{h}')"); p.wait_for_timeout(300)
+            now = p.evaluate("document.querySelector('.sidebar nav .tab.active').dataset.tab")
+            assert now == ("recon" if h == "agents" else "home"), (h, now)
+        tab(p, "home"); p.wait_for_timeout(900)
+        kpis = p.inner_text("#ov-kpis")
+        assert "To propose" in kpis and "Returned to me" in kpis and "Waiting for a CPA reviewer" in kpis and "Matched automatically" not in kpis, kpis
+        # nothing the preparer may not use is on screen, not even greyed out (2026-11-12)
+        tab(p, "import"); p.wait_for_timeout(500)
+        assert p.is_hidden("#clear-all") and p.is_hidden("#ov-profile") and p.is_hidden("#reset-btn") and p.is_hidden("#pf-save")
+        p.evaluate("document.querySelector('[data-tab=trust]').click()"); p.wait_for_timeout(300)
+        assert p.evaluate("document.querySelector('.sidebar nav .tab.active').dataset.tab") == "home"
+        tab(p, "reports"); p.wait_for_timeout(700)
+        assert "Draft." in p.inner_text("#rep-draft") and p.locator("#rep-cards a[href*='audit-trail']").count() == 0
+        p.remove_listener("response", on_resp)
+        assert not bad, bad
+        return f"preparer sees {len(tabs)} pages; governance links land on Overview/Reconciliation; 'My work' tiles; draft note; 0 failed requests"
+    check("Staff preparer view", "Acting as Staff Preparer: sidebar, page guard, Overview, Reports", t_preparer_view)
+
+    def t_proof():
+        # 2026-11-12: proof on a review item. The preparer attaches the vendor bill PDF to DB06 (both roles can).
+        tab(p, "exceptions"); p.wait_for_timeout(500)
+        assert exc("DB06").get_by_role("button", name="Attach proof").count() == 1
+        exc("DB06").locator("input[type=file]").set_input_files(str(M1 / "13_invoice_PK-3302_packaging.pdf"))
+        p.wait_for_selector("#exc-list .exc:has-text('DB06') .xproof", timeout=10000); p.wait_for_timeout(300)
+        box = exc("DB06").locator(".xproof").inner_text()
+        assert "13_invoice_PK-3302_packaging.pdf" in box and "added by" in box and "PF-" in box, box
+        href = exc("DB06").locator(".xproof a.pf-name").get_attribute("href")
+        got = p.evaluate("async (u) => { const r = await fetch(u, {credentials: 'same-origin'}); const b = new Uint8Array(await r.arrayBuffer()); return [r.status, String.fromCharCode(...b.slice(0, 4)), r.headers.get('content-disposition')]; }", href)
+        assert got[0] == 200 and got[1] == "%PDF" and got[2].startswith("attachment"), got
+        shot(p, "06b-proof")
+        return f"preparer attached the vendor bill to DB06; listed on the card; download returns the PDF as an attachment"
+    check("Proof on a review item", "Acting as Staff Preparer: Attach proof on DB06, download it", t_proof)
+
+    def t_decisions():
+        p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200); tab(p, "exceptions")
+        exc("DB06").get_by_role("button", name="Approve").click(); p.wait_for_timeout(700)
+        assert "ACCEPTED" in exc("DB06").inner_text()
+        e = exc("DB04"); e.locator("textarea").fill("Duplicate confirmed with bank"); e.get_by_role("button", name="Reject").click(); p.wait_for_timeout(700)
+        assert "REJECTED" in exc("DB04").inner_text()
+        e = exc("DB10"); e.get_by_role("button", name="Return to preparer").click(); p.wait_for_timeout(700)
+        assert "returned" in exc("DB10").inner_text().lower()
+        # 2026-11-12: the card shows its review trail - DB06 was proposed by the preparer, then approved by the CPA
+        trail = [t.strip() for t in exc("DB06").locator(".xtrail li").all_inner_texts()]
+        assert len(trail) == 3 and trail[0].startswith("Proposed") and trail[1].startswith("Proof attached") and trail[2].startswith("Approved"), trail
+        exc("DB06").scroll_into_view_if_needed(); exc("DB06").screenshot(path=os.path.join(SHOTS, "07b-review-trail.png"))
+        return "DB06 ACCEPTED (trail: proposed → proof attached → approved), DB04 REJECTED, DB10 RETURNED"
+    check("Review decisions ACCEPT / REJECT / RETURN", "Acting as CPA Reviewer", t_decisions)
+
+    def t_notifications():
+        # 2026-11-12: the bell. The preparer's proposal notified the CPA reviewer; the reviewer's decisions notify
+        # the preparer. Opening the list marks it seen on the server.
+        p.click("#notif-btn"); p.wait_for_timeout(700)
+        cpa_txt = p.inner_text("#notif-panel")
+        assert "Staff Preparer proposed a resolution for case" in cpa_txt and "Vendor bill PK-3302 supports it" in cpa_txt, cpa_txt[:300]
+        p.keyboard.press("Escape"); p.wait_for_timeout(300)
+        assert p.is_hidden("#notif-panel") and p.is_hidden("#notif-count")
+        p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1500)
+        n = int(p.inner_text("#notif-count"))
+        assert n >= 3, n
+        p.click("#notif-btn"); p.wait_for_timeout(700)
+        prep_txt = p.inner_text("#notif-panel")
+        assert "CPA Reviewer approved case" in prep_txt and "CPA Reviewer rejected case" in prep_txt and "CPA Reviewer returned case" in prep_txt, prep_txt[:400]
+        assert "Duplicate confirmed with bank" in prep_txt
+        shot(p, "07c-notifications")
+        p.locator("#notif-panel .np-item").first.click(); p.wait_for_timeout(800)
+        assert p.evaluate("document.querySelector('#p-exceptions').classList.contains('active')") and p.is_hidden("#notif-panel")
+        p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200)
+        assert p.is_hidden("#notif-count"), "seen state not kept on the server"
+        p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200)
+        return f"CPA sees the preparer's proposal with its note; preparer gets {n} decisions (approved/rejected/returned); click opens the case; seen kept"
+    check("Notifications (preparer ↔ CPA reviewer)", "bell: proposal → reviewer, decisions → preparer, seen on server", t_notifications)
+
+    def t_queue_types():
+        # 2026-11-12: case-type chips narrow the queue; clicking the chip again shows everything again
+        tab(p, "exceptions"); p.click(".exc-filter .pl-chip:has-text('All')"); p.wait_for_timeout(300)
+        total = p.locator("#exc-list .exc").count()
+        chips = p.locator(".exc-filter .pl-chip[data-type]")
+        assert chips.count() >= 2, chips.count()
+        first = chips.first; n = int(first.locator(".pl-n").inner_text())
+        label = first.inner_text().replace(str(n), "").strip()
+        first.click(); p.wait_for_timeout(300)
+        cards = p.locator("#exc-list .exc")
+        assert cards.count() == n < total, (label, n, cards.count(), total)
+        p.locator(".exc-filter .pl-chip[data-type]").first.click(); p.wait_for_timeout(300)
+        assert p.locator("#exc-list .exc").count() == total
+        p.click(".exc-filter .pl-chip:has-text('Open')"); p.wait_for_timeout(300)
+        return f"{chips.count()} case types; '{label}' shows {n} of {total}; clicking again shows all"
+    check("Review queue: filter by case type", "click a type chip, then again", t_queue_types)
+
+    def t_review_flow():
+        tab(p, "exceptions")
+        # 2026-11-13 (user request): "Decided" is split into Approved and Rejected
+        assert p.locator(".exc-filter .pl-chip:has-text('Decided')").count() == 0
+        p.click(".exc-filter .pl-chip:has-text('Approved')"); p.wait_for_timeout(300)
+        approved = p.locator("#exc-list .exc").count()
+        p.click(".exc-filter .pl-chip:has-text('Rejected')"); p.wait_for_timeout(300)
+        rejected = p.locator("#exc-list .exc").count()
+        decided = approved + rejected
+        p.click(".exc-filter .pl-chip:has-text('Open')"); p.wait_for_timeout(300)
+        opened = p.locator("#exc-list .exc").count()
+        assert (approved, rejected) == (1, 1) and opened == 4, (approved, rejected, opened)  # DB06 accepted + DB04 rejected; DB10 returned still open
+        # Overview next step (reviewer) jumps to the first item that needs the reviewer, highlighted
+        tab(p, "home"); nxt = p.inner_text("#next-step"); assert nxt.startswith("Review 3 items"), nxt
+        p.click("#next-step"); p.wait_for_timeout(600)
+        assert p.evaluate("document.querySelector('#p-exceptions').classList.contains('active')")
+        assert p.locator("#exc-list .exc.flash.OPEN").count() == 1
+        # Preparer sees what the preparer can do
+        p.select_option("#act-as", label="Staff Preparer"); p.wait_for_timeout(1200); tab(p, "home")
+        prep = p.inner_text("#next-step"); assert prep.startswith("Propose resolutions for"), prep
+        p.select_option("#act-as", label="CPA Reviewer"); p.wait_for_timeout(1200)
+        return f"Open {opened} / Approved {approved} / Rejected {rejected}; reviewer next step '{nxt.strip()}' jumps + highlights; preparer sees '{prep.strip()}'"
+    check("Review flow: filters, role-aware next step, jump to item", "filter chips, Overview next step as each role", t_review_flow)
+
+    def t_finish_period():
+        tab(p, "exceptions")
+        for _ in range(8):
+            items = p.locator("#exc-list .exc.OPEN, #exc-list .exc.RETURNED")
+            if items.count() == 0:
+                break
+            items.first.get_by_role("button", name="Approve").click(); p.wait_for_timeout(600)
+        p.click(".exc-filter .pl-chip:has-text('Open')"); p.wait_for_timeout(300)
+        assert "Every item has a decision" in p.inner_text("#exc-list")
+        tab(p, "home"); assert p.inner_text("#next-step").startswith("Download the reports") and p.is_visible("#next-period")
+        tab(p, "reports"); p.wait_for_selector("#rep-cards a.btnlink")
+        p.evaluate("document.querySelectorAll('#rep-cards a.btnlink').forEach(a => a.addEventListener('click', e => e.preventDefault()))")
+        p.locator("#rep-cards a.btnlink").first.click(); p.wait_for_timeout(700)
+        assert p.locator("#stepper .step.done").count() == 5, p.inner_text("#stepper")
+        return "all decided → 'Download the reports' + 'Start next period'; downloading a report completes step 5"
+    check("Month-end: all decided, report step completes", "approve the rest, open Reports, download", t_finish_period)
+
+    # ---------- guardrails ----------
+    def t_guard():
+        tab(p, "controls")
+        p.locator("#attack-grid .card", has_text="Agent posts a journal entry").get_by_role("button", name="Attempt").click(); p.wait_for_timeout(600)
+        p.locator("#attack-grid .card", has_text="Release a vendor payment").get_by_role("button", name="Attempt").click(); p.wait_for_timeout(600)
+        out = p.inner_text("#attack-out"); assert out.count("DENY") >= 2 and "POL-03" in out, out
+        tab(p, "agents"); p.wait_for_timeout(2500)
+        n = p.locator("#ag-pipeline .pnode", has_text="AG-03").inner_text(); assert "blocked by trustops" in n.lower(), n
+        shot(p, "07-agents-blocked")
+        return "both refused (DENY, POL-03); AG-03 node shows Blocked by TrustOps"
+    check("Guardrails + blocked agent in pipeline", "Attempt forbidden actions, then Agents tab", t_guard)
+
+    def t_agents_tab():
+        assert p.locator("#ag-grid .agent").count() == 6
+        assert "live" in p.inner_text("#ag-live")
+        assert p.locator("#ag-feed tr").count() > 5
+        assert p.locator("#ag-grid .agent details").count() == 0 and "Allowed" in p.locator("#ag-grid .agent").first.inner_text()
+        return "6 cards (no More details), live feed polling"
+    check("Agents tab cards + live feed", "Agents tab", t_agents_tab)
+
+    def t_run_once():
+        # 2026-11-13: no run button on Agents; the same files are not run twice (Run is off and says why)
+        assert p.locator("#ag-run").count() == 0 and "Run reconciliation now" not in p.inner_text("#p-agents")
+        tab(p, "recon"); p.wait_for_timeout(500)
+        # 2026-11-13 (user request): no "Already reconciled" card; the disabled Run button's tooltip says why
+        assert p.is_disabled("#run-btn") and "already reconciled as RUN-" in p.get_attribute("#run-btn", "title")
+        assert "Already reconciled" not in p.inner_text("#recon-ready")
+        r = p.evaluate("async () => (await api(W('/reconciliation-runs'), {method: 'POST'}))")
+        assert r["reused"] is True and r["id"] == p.evaluate("S.status.last_run"), (r["reused"], r["id"])
+        return f"no Agents run button; Run off (tooltip: already reconciled as {r['id']}); a direct request returns the same run flagged reused"
+    check("Run once per set of files (item 7/8)", "Agents page + Reconciliation Run button", t_run_once)
+
+    # ---------- ask ----------
+    def t_ask():
+        tab(p, "reports"); p.click("#ask-open"); p.wait_for_selector("#ask-drawer.open"); p.wait_for_selector("#ask-chips .chip")
+        # FinTwin (2026-11-13): new name; opens with only the welcome message
+        assert p.inner_text("#ask-title") == "FinTwin - Your Financial Digital Twin" and "FinTwin" in p.inner_text("#ask-open")
+        assert p.inner_text("#ask-welcome").strip() == "Hi, I'm FinTwin! How can I help you?" and p.inner_text("#ask-out").strip() == ""
+        p.wait_for_function("document.activeElement && document.activeElement.id === 'ask-q'", timeout=3000)
+        p.fill("#ask-q", "What is outstanding on INV-2105?"); p.click("#ask-btn"); p.wait_for_timeout(900)
+        a1 = p.inner_text("#ask-out .qa >> nth=-1"); assert "750.00" in a1, a1[:300]
+        p.fill("#ask-q", "Show Acme Corp's deposits"); p.press("#ask-q", "Enter"); p.wait_for_timeout(900)
+        a2 = p.inner_text("#ask-out .qa >> nth=-1"); assert "refused" in a2.lower(), a2[:300]
+        assert p.evaluate("document.querySelector('#p-reports').classList.contains('active')")  # page stays where it was
+        shot(p, "08-ask")
+        p.keyboard.press("Escape"); p.wait_for_timeout(400)
+        assert p.locator("#ask-drawer.open").count() == 0 and p.evaluate("document.querySelector('#ask-drawer').inert")
+        return "FinTwin opens with 'Hi, I'm FinTwin! How can I help you?'; INV-2105 → $750.00 with sources; other-client question refused; Esc closes"
+    check("FinTwin chat panel", "click FinTwin in the sidebar, ask, press Enter, Esc", t_ask)
+
+    # ---------- reports ----------
+    def t_reports():
+        tab(p, "reports"); assert p.locator("#rep-cards .card").count() == 2
+        p.locator("#rep-cards .card").first.get_by_role("button", name="Preview").click(); p.wait_for_timeout(800)
+        assert "FIN-" in p.inner_text("#rep-prev-title")
+        got = []
+        for a in p.locator("#rep-cards a.btnlink").all():
+            href = a.get_attribute("href"); r = p.request.get(BASE + href)
+            assert r.status == 200 and len(r.body()) > 100, (href, r.status); got.append(href.rsplit("/", 1)[1])
+        assert len(got) == 8, got
+        # 2026-11-12: each card also links this run's review pack / the whole audit trail (no hunting on Audit trail)
+        also = []
+        for a in p.locator("#rep-cards .rep-also a").all():
+            href = a.get_attribute("href"); r = p.request.get((BASE + href) if href.startswith("/") else href)
+            assert r.status == 200, (href, r.status); also.append(a.inner_text())
+        assert len(also) == 4, also                      # whole audit trail (4 formats); review exports have their own card
+        # 2026-11-16: one "Export reviews" card: view the review pack page, CSV, signed JSON (no second copy elsewhere)
+        ex = [a.get_attribute("href") for a in p.locator("#rep-exports a.btnlink").all()]
+        assert len(ex) == 3 and any("pack.html" in h for h in ex), ex
+        for h in ex:
+            r = p.request.get(BASE + h); assert r.status == 200, (h, r.status)
+        assert p.locator("#rep-run-pick option").count() >= 1 and p.locator("#rep-runs table.runs-table").count() == 1
+        shot(p, "09-reports")
+        return "preview works; downloads 200: " + ", ".join(got) + f"; plus {len(also)} audit-trail links and 3 review exports; run picker + runs list"
+    check("Reports: preview + 2 reports × 4 formats", "click Preview, fetch every download link", t_reports)
+
+    # ---------- audit trail ----------
+    def t_evidence():
+        tab(p, "evidence"); p.click("#ev-refresh"); p.wait_for_timeout(600)
+        b = p.inner_text("#verify-badge"); assert "VERIFIED" in b, b
+        p.click("#tamper-btn"); p.wait_for_timeout(800); t = p.inner_text("#tamper-out"); assert "FAIL" in t and "PASS" in t, t
+        for i in ["exp-audit-pdf", "exp-audit-csv"]:   # review exports moved to Reports (2026-11-16)
+            href = p.get_attribute(f"#{i}", "href"); r = p.request.get(BASE + href); assert r.status == 200, (i, r.status)
+        shot(p, "10-audit")
+        return f"{b}; tamper copy FAIL, real chain PASS; audit trail PDF and CSV 200"
+    check("Audit trail verify + tamper + exports", "Verify now, Tamper test, fetch exports", t_evidence)
+
+    # ---------- counterparties / trace ----------
+    def t_parties():
+        tab(p, "parties"); p.wait_for_selector("#party-list tr.click"); p.locator("#party-list tr.click").first.click()
+        p.wait_for_timeout(700); v = p.inner_text("#party-view"); assert "Transactions with" in v
+        shot(p, "11-parties"); return "list + detail with transactions"
+    check("Counterparties list + detail", "click first party", t_parties)
+
+    def t_trace():
+        tab(p, "trace"); p.wait_for_selector("#trace-list tr.click"); p.locator("#trace-list tr.click").first.click()
+        p.wait_for_selector("#trace-view .timeline li"); assert p.locator("#trace-view .timeline li").count() >= 3
+        shot(p, "12-trace"); return f"{p.locator('#trace-view .timeline li').count()} timeline steps + signed records"
+    check("Trace a transaction", "click first bank line", t_trace)
+
+    def t_rules_trust():
+        tab(p, "rules"); p.wait_for_selector("#rules table"); r = p.inner_text("#rules"); assert "POL-01" in r and "POL-10" in r
+        tab(p, "trust"); p.wait_for_timeout(300); t = p.inner_text("#trust"); assert "Never permitted" in t and "Role permissions" in t
+        assert "Evidence signing" not in t and "BEGIN PUBLIC KEY" not in t   # 2026-11-12: card removed on request
+        shot(p, "13-trust"); return "POL-01…POL-10 listed; data & security sections"
+    check("Rulebooks + Data & security", "open tabs", t_rules_trust)
+
+    def t_names():
+        tab(p, "rules"); r = p.inner_text("#rules")
+        for want in ("Client Scope", "Role Authority", "Ledger Post", "Upload Parse", "Query Answer"):
+            assert want in r, want
+        for raw in ("CLIENT_SCOPE", "ledger.post", "upload.parse"):
+            assert raw not in r, raw
+        tab(p, "agents"); p.wait_for_timeout(2300); feed = p.inner_text("#ag-feed")
+        assert "agent:" not in feed and " Agent" in feed and "ALLOW · OK" in feed, feed[:300]
+        tab(p, "evidence"); ev = p.inner_text("#events"); assert "upload.parse" not in ev and "Upload Parse" in ev
+        return "Rulebooks, agent feed and audit trail show readable names (Client Scope, Ledger Post, Reconciliation Agent, ALLOW · OK)"
+    check("Readable action, policy and agent names", "read Rulebooks, Agents feed, Audit trail", t_names)
+
+    def t_colors():
+        tab(p, "import")
+        side = p.evaluate("getComputedStyle(document.querySelector('.sidebar')).backgroundColor")
+        dz = p.evaluate("getComputedStyle(document.querySelector('.dropzone')).backgroundColor")
+        conn = p.evaluate("getComputedStyle(document.querySelector('.dz-connect')).backgroundColor")
+        # 2026-11-12 palette (v2, user request): powder-blue sidebar; the page behind the cards is a soft off-white;
+        # cards white; the drop zone and connect row (boxes inside the upload card) share the light powder-blue inset.
+        card = p.evaluate("getComputedStyle(document.querySelector('#p-import .card')).backgroundColor")
+        main = p.evaluate("getComputedStyle(document.querySelector('.content>main')).backgroundColor")
+        assert side == "rgb(223, 235, 246)" and card == "rgb(255, 255, 255)" and dz == conn == "rgb(238, 244, 250)" and main == "rgb(246, 248, 251)", (side, card, dz, conn, main)
+        return f"sidebar {side} (powder blue); cards {card}; drop zone and connect row {dz}; main area {main} (off-white)"
+    check("Consistent menu / upload background", "compare computed colours", t_colors)
+
+    # ---------- theme, profile, responsive ----------
+    def t_theme():
+        before = p.evaluate("getComputedStyle(document.body).backgroundColor"); p.click("#theme"); p.wait_for_timeout(200)
+        after = p.evaluate("getComputedStyle(document.body).backgroundColor"); assert before != after, (before, after)
+        tab(p, "home"); shot(p, "14-overview-dark"); p.click("#theme")
+        return f"{before} → {after}"
+    check("Light / dark theme toggle", "click #theme", t_theme)
+
+    def t_profile():
+        tab(p, "trust"); p.fill("#pf-name", "Client 1 (test)"); p.click("#pf-save"); p.wait_for_timeout(800)
+        tab(p, "home"); p.wait_for_timeout(500)
+        assert "Client 1 (test)" in p.inner_text("#ov-hero"); return "renamed and shown in header"
+    check("Client profile save", "open profile, save name", t_profile)
+
+    def t_responsive():
+        for w in (1280, 390):
+            p.set_viewport_size({"width": w, "height": 900})
+            for t in ("home", "import", "recon", "agents", "exceptions", "parties", "trace", "reports", "rules", "controls", "evidence", "trust"):
+                tab(p, t); no_hscroll(p)
+            tab(p, "home"); shot(p, f"15-overview-{w}")
+            if w == 390:  # phone top bar: Ask is a round icon button, the page menu keeps its width
+                ask, nav = p.evaluate("[document.querySelector('#ask-open').getBoundingClientRect().width, document.querySelector('.sidebar nav').getBoundingClientRect().width]")
+                assert ask <= 48 and nav >= 150, (ask, nav)
+        p.set_viewport_size({"width": 1280, "height": 900}); return "no horizontal page scroll at 1280px and 390px on all 12 visible tabs"
+    check("Responsive layout (1280px + phone)", "resize viewport, measure scrollWidth", t_responsive)
+
+    def t_keyboard():
+        tab(p, "home"); p.focus('.tab[data-tab="import"]'); p.keyboard.press("Enter"); p.wait_for_timeout(300)
+        assert p.evaluate("document.querySelector('#p-import').classList.contains('active')")
+        outline = p.evaluate("getComputedStyle(document.activeElement).outlineStyle")
+        return f"Enter on focused tab opens it; focus outline: {outline}"
+    check("Keyboard navigation", "focus a tab, press Enter", t_keyboard)
+
+    def t_pill_after_peek():
+        # Regression (2026-11-12): clicking a tab while the collapsed rail peeked open left the sliding highlight
+        # on the expanded layout's coordinates (one item too low, wider than the rail) after it closed.
+        p.set_viewport_size({"width": 1440, "height": 900}); tab(p, "home")
+        was_mini = p.evaluate("document.body.classList.contains('side-mini')")
+        if not was_mini: p.click("#side-toggle"); p.mouse.move(900, 500)
+        p.wait_for_timeout(500)
+        if not p.locator(".nav-pill").count(): return "no sliding highlight (motion library absent); nothing to check"
+        seen = []
+        rail_w = p.evaluate("document.querySelector('.sidebar').getBoundingClientRect().width")
+        for t in ("reports", "agents", "evidence", "home"):
+            el = p.locator(f'.sidebar nav .tab[data-tab="{t}"]'); el.hover(); p.wait_for_timeout(450)
+            # 2026-11-12: the rail no longer expands over the page on hover; a label appears beside the icon instead
+            w, tip = p.evaluate("[document.querySelector('.sidebar').getBoundingClientRect().width, document.getElementById('rail-tip').classList.contains('on')]")
+            assert abs(w - rail_w) < 1 and tip, (t, w, rail_w, tip)
+            el.click(); p.mouse.move(900, 500); p.wait_for_timeout(1200)
+            d = p.evaluate("""() => { const P = document.querySelector('.nav-pill').getBoundingClientRect(),
+                A = document.querySelector('.sidebar nav .tab.active').getBoundingClientRect(),
+                S = document.querySelector('.sidebar').getBoundingClientRect();
+                return [Math.max(Math.abs(P.left-A.left), Math.abs(P.top-A.top), Math.abs(P.width-A.width), Math.abs(P.height-A.height)), P.right <= S.right]; }""")
+            assert d[0] <= 1 and d[1], (t, d); seen.append(t)
+        if not was_mini: p.click("#side-toggle"); p.mouse.move(900, 500); p.wait_for_timeout(500)
+        p.set_viewport_size({"width": 1280, "height": 900})
+        return f"collapsed rail: hover shows a label (rail stays {round(rail_w)}px), click {', '.join(seen)} → highlight sits exactly on the active item"
+    def t_tiles_aligned():
+        # Regression (2026-11-12): wrapped tile labels pushed some numbers lower than others; 1280px left a 5+1 row.
+        tab(p, "recon"); p.wait_for_timeout(1800); out = []  # let the page entrance finish before measuring
+        for w in (1440, 1280, 390):
+            p.set_viewport_size({"width": w, "height": 900}); p.wait_for_timeout(400)
+            rows = p.evaluate("""() => { const m = {}; document.querySelectorAll('#tiles .tile').forEach(t => {
+                const r = t.getBoundingClientRect(); (m[Math.round(r.top)] = m[Math.round(r.top)] || []).push(Math.round(t.querySelector('.v').getBoundingClientRect().bottom)); });
+                return Object.values(m); }""")
+            if not rows: return "no run on screen; nothing to check"
+            assert all(len(set(r)) == 1 for r in rows), (w, rows)
+            sizes = [len(r) for r in rows]; assert len(set(sizes)) == 1, (w, sizes); out.append(f"{w}px {'+'.join(map(str, sizes))}")
+        p.set_viewport_size({"width": 1280, "height": 900})
+        return "numbers on one line per row; " + ", ".join(out)
+    def t_no_scrollbars():
+        # Requested 2026-11-12: no visible scrollbars anywhere; boxes must still scroll.
+        hits = []
+        for t in ("home", "import", "recon", "agents", "rules", "evidence", "trust"):
+            tab(p, t)
+            hits += p.evaluate("""(t) => { const b = []; if (innerWidth - document.documentElement.clientWidth > 0) b.push(t + ':page');
+              for (const e of document.querySelectorAll('body *')) { if (!e.offsetParent) continue; const cs = getComputedStyle(e);
+                if (!/(auto|scroll)/.test(cs.overflowY + cs.overflowX)) continue;
+                const bl = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth), bt = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+                if (e.offsetWidth - e.clientWidth - bl > .5 || e.offsetHeight - e.clientHeight - bt > .5) b.push(t + ':' + (e.id || e.className)); } return b; }""", t)
+        assert not hits, hits
+        tab(p, "evidence")
+        n = p.evaluate("(() => { const e = document.getElementById('events'); if (e.scrollHeight <= e.clientHeight) return -1; e.scrollTop = 200; return e.scrollTop; })()")
+        assert n != 0, "audit trail list no longer scrolls"
+        return "no scrollbar on 7 pages; audit trail list still scrolls"
+
+    check("No visible scrollbars", "measure scrollbar space on every scrolling box", t_no_scrollbars)
+
+    check("Reconciliation number tiles line up", "measure tile values per row at 1440/1280/390px", t_tiles_aligned)
+
+    check("Collapsed rail: label on hover, highlight after click", "collapse rail, hover (no expand), click tab, compare boxes", t_pill_after_peek)
+
+    def t_back():
+        tab(p, "home"); tab(p, "reports"); tab(p, "rules")
+        p.go_back(); p.wait_for_timeout(400)
+        assert p.evaluate("document.querySelector('#p-reports').classList.contains('active')"), "Back did not return to Reports"
+        p.go_back(); p.wait_for_timeout(400)
+        assert p.evaluate("document.querySelector('#p-home').classList.contains('active')"), "Back did not return to Overview"
+        p.go_forward(); p.wait_for_timeout(400)
+        assert p.evaluate("document.querySelector('#p-reports').classList.contains('active')")
+        return "Back: Rulebooks → Reports → Overview; Forward → Reports"
+    check("Browser Back / Forward between pages", "click pages, press Back twice, Forward", t_back)
+
+    def t_reset():
+        # 2026-11-13: Sources has no "Clear all imported files"; the client's data is cleared from its profile
+        assert p.locator("#clear-all").count() == 0
+        p.evaluate("document.getElementById('reset-btn').click()"); p.click(".dialog button.danger"); p.wait_for_timeout(1500)
+        tab(p, "home"); assert p.locator("#ag-pipeline .pnode").count() == 6
+        assert p.locator("#toasts .toast").count() <= 3
+        assert "awaiting files" in p.inner_text("#ov-hero").lower(); return "confirm dialog → data cleared, back to empty state"
+    check("Clear client data (with confirm dialog)", "Clear this client's data → confirm", t_reset)
+
+    def t_no_loader():
+        tab(p, "import")
+        assert p.locator("#sample-btn").count() == 0 or not p.is_visible("#sample-btn")
+        assert "load all files" not in p.inner_text("#p-import").lower()
+        return "no built-in loader; files only come from the device, email or Drive"
+    check("No built-in sample loader", "Sources page", t_no_loader)
+    ctx.close()
+
+    # ---------- reduced motion ----------
+    ctx2 = br.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce", bypass_csp=True);     q = ctx2.new_page(); wire(q); start(q, BASE + "/#recon")
+    def t_reduced():
+        q.click('.tab[data-tab="import"]'); q.wait_for_timeout(300)
+        for f in ("01_bank_statement.csv", "02_general_ledger.xlsx"):
+            upload_and_map(q, f)
+        q.click('.tab[data-tab="recon"]'); q.wait_for_timeout(400); q.click("#run-btn"); q.wait_for_timeout(900)
+        anim = q.evaluate("getComputedStyle(document.querySelector('#rc-pipeline .pico')).animationName")
+        done = q.locator("#rc-pipeline .pnode.s-done, #rc-pipeline .pnode.s-escalated").count()
+        assert done == 6 and anim == "none", (done, anim); return "statuses update instantly; no CSS animation"
+    check("prefers-reduced-motion respected", "context with reduced_motion=reduce, run", t_reduced)
+    ctx2.close()
+
+    # ---------- login mode: sign-in + People ----------
+    ctx3 = br.new_context(viewport={"width": 1280, "height": 900}, bypass_csp=True); r = ctx3.new_page(); wire(r)
+    def t_login():
+        r.goto(LOGIN_BASE + "/"); r.wait_for_selector("#login:not(.hidden)"); shot(r, "16-login")
+        # 2026-11-12 login v8: the app's own design language (powder-blue brand panel, white card, three journey
+        # steps; no stock illustration, no tilting card)
+        r.wait_for_timeout(1200)
+        lk = r.evaluate("""() => { const cs = (s) => getComputedStyle(document.querySelector(s));
+            return [cs('#login .lg-art').backgroundColor, cs('#lg-card').backgroundColor, document.querySelectorAll('#login .lg-steps li').length,
+                    cs('#login .lg-art').backgroundImage, document.querySelectorAll('#login .lg-bg, #login .lg-sparks').length]; }""")
+        assert "Reconciliation that's" in r.inner_text('#login .login-copy h2'), r.inner_text('#login .login-copy h2')
+        w1 = r.evaluate("document.querySelector('#lg-rot').textContent"); r.wait_for_timeout(3600); w2 = r.evaluate("document.querySelector('#lg-rot').textContent")
+        assert r.locator('#lg-rot .lg-rw').count() == 1, 'two words at once'
+        assert w1 != w2 and w2.strip() in ("audit-ready.", "governed.", "on time.", "explainable."), (w1, w2)  # last word rotates
+        assert r.evaluate("getComputedStyle(document.querySelector('#login .lg-rotline'), '::after').content") in ("none", "normal")
+        assert lk[0] == "rgb(223, 235, 246)" and lk[1] == "rgb(255, 255, 255)" and lk[2] == 3 and lk[3] == "none" and lk[4] == 0, lk
+        r.hover("#lg-card"); r.mouse.move(700, 300); r.mouse.move(720, 320); assert r.evaluate("document.querySelector('#lg-card').style.transform") == "", "card tilts"
+        r.fill("#lg-user", "presenter"); r.fill("#lg-pw", "wrong-password"); r.click("#lg-btn"); r.wait_for_timeout(700)
+        assert r.inner_text("#lg-msg").strip(), "no error for wrong password"
+        r.fill("#lg-pw", "E2e-Test-Password-42"); r.press("#lg-pw", "Enter"); r.wait_for_selector("#app:not(.hidden)")
+        return "app-style sign-in (powder-blue panel, white card, 3 steps); wrong password shows error; correct password signs in"
+    check("Sign-in screen", "port 8092 login mode", t_login)
+    def t_team():
+        r.click('.tab[data-tab="team"]'); r.wait_for_timeout(500)
+        r.fill("#inv-user", "staff@example.test"); r.fill("#inv-name", "Test Staff"); r.click("#inv-btn"); r.wait_for_timeout(700)
+        assert "/invite" in r.inner_text("#inv-out"), r.inner_text("#inv-out")
+        assert "added as Staff preparer" in r.inner_text("#inv-out") and r.locator("#inv-out button", has_text="Copy link").count() == 1
+        r.get_by_role("button", name="Revoke").first.click(); r.wait_for_timeout(300)
+        r.click(".dialog button.danger"); r.wait_for_timeout(900)   # revoking asks for confirmation first
+        assert "revoked" in r.inner_text("#users").lower(); shot(r, "17-people")
+        r.click("#logout"); r.wait_for_selector("#login:not(.hidden)")
+        return "invite link created, user revoked, sign out returns to login"
+    check("People: invite, revoke, sign out", "login mode", t_team)
+    ctx3.close(); br.close()
+
+ok = sum(1 for x in RESULTS if x[2])
+print(json.dumps({"passed": ok, "total": len(RESULTS), "results": RESULTS, "js_errors": ERRORS}, indent=1))

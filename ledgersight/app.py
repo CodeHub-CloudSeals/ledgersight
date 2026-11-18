@@ -11,9 +11,13 @@ import sys
 import uuid
 from pathlib import Path
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+import mimetypes
+
+mimetypes.add_type("font/woff2", ".woff2")
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
@@ -25,6 +29,7 @@ from .auth import REQUIRE_MFA, AuthStore, Invite, User, now, otpauth_uri
 from .core.ingest import IngestError, MAX_BYTES
 from .core.reports import FORMATS as REPORT_TYPES
 from .service import FIXTURES, WORKSPACES, Denied, Service
+from . import trustops_client as trustops_api
 
 BASE = Path(__file__).resolve().parent
 COOKIE = "ls_session"
@@ -48,7 +53,8 @@ def load_users():
     for d in svc.store.get("users", []):
         auth.users[d["user_id"]] = User(d["user_id"], d["display_name"], d["role"], set(d["workspaces"]), d.get("pw_hash"),
                                         d.get("totp"), d.get("active", False), _dt(d["expires_at"]), d.get("revoked", False),
-                                        d.get("failed", 0), _dt(d.get("terms_accepted_at")))
+                                        d.get("failed", 0), _dt(d.get("terms_accepted_at")),
+                                        locked_until=_dt(d.get("locked_until")), last_totp_step=d.get("last_totp_step", 0))
     for d in svc.store.get("invites", []):
         auth.invites[d["token"]] = Invite(d["token"], d["user_id"], _dt(d["expires_at"]), d["totp"], d.get("used", False))
 
@@ -56,13 +62,18 @@ def load_users():
 def save_users():
     if not svc.store:
         return
-    svc.store.put("users", [{**{k: getattr(u, k) for k in ("user_id", "display_name", "role", "pw_hash", "totp", "active",
-                                                            "revoked", "failed")},
-                             "workspaces": sorted(u.workspaces), "expires_at": u.expires_at.isoformat(),
-                             "terms_accepted_at": u.terms_accepted_at.isoformat() if u.terms_accepted_at else None}
-                            for u in auth.users.values()])
-    svc.store.put("invites", [{"token": i.token, "user_id": i.user_id, "expires_at": i.expires_at.isoformat(), "totp": i.totp,
-                               "used": i.used} for i in auth.invites.values()])
+    # A lockout and the last-used authenticator step survive a restart, so neither can be reset by redeploying.
+    with auth._lock:
+        users = [{**{k: getattr(u, k) for k in ("user_id", "display_name", "role", "pw_hash", "totp", "active",
+                                                 "revoked", "failed", "last_totp_step")},
+                  "workspaces": sorted(u.workspaces), "expires_at": u.expires_at.isoformat(),
+                  "locked_until": u.locked_until.isoformat() if u.locked_until else None,
+                  "terms_accepted_at": u.terms_accepted_at.isoformat() if u.terms_accepted_at else None}
+                 for u in auth.users.values()]
+        invites = [{"token": i.token, "user_id": i.user_id, "expires_at": i.expires_at.isoformat(), "totp": i.totp,
+                    "used": i.used} for i in auth.invites.values()]
+    svc.store.put("users", users)
+    svc.store.put("invites", invites)
 
 
 load_users()
@@ -71,6 +82,9 @@ if _boot:
     print(f"[ledgersight] one-time presenter invite: /invite?token={_boot.token}", file=sys.stderr, flush=True)
 
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 _G = bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_API_KEY"))
@@ -83,33 +97,59 @@ CSP = ("default-src 'self'; img-src 'self' data:" + (" https://*.googleuserconte
        "; script-src 'self'" + (" https://apis.google.com https://accounts.google.com" if _GOOGLE_WEB else "") +
        ("; frame-src https://docs.google.com https://accounts.google.com https://content.googleapis.com" if _GOOGLE_WEB else "") +
        ("; connect-src 'self' https://www.googleapis.com https://content.googleapis.com" if _GOOGLE_WEB else "") +
-       "; frame-ancestors 'none'")
+       "; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'")
 
 
 _WS_PATH = re.compile(r"^/v1/workspaces/([^/]+)")
 
 
+MAX_BODY = 26 * 1024 * 1024  # largest upload (25 MB email) plus form overhead
+
+
+def _log(**fields):
+    """One JSON line per event on stdout (Cloud Logging parses it). Never includes file contents or secrets."""
+    import json as _json
+    print(_json.dumps(fields, separators=(",", ":")), flush=True)
+
+
 @app.middleware("http")
 async def headers(request: Request, call_next):
+    import time as _t
+    t0 = _t.perf_counter()
     rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > MAX_BODY:  # refuse before the body is read or spooled
+        return JSONResponse(status_code=413, content={"detail": "request too large"}, headers={"X-Request-ID": rid})
     resp = await call_next(request)
-    # Persist after every request: reads add evidence events too, so the audit trail is always on disk.
+    # Persist: reads only append their audit events; writes also store the book. Off the event loop, under a lock.
     try:
         m = _WS_PATH.match(request.url.path)
-        svc.save(m.group(1) if m else None)
-        if request.method != "GET" and request.url.path.startswith(("/v1/invites", "/v1/users", "/v1/login")):
-            save_users()
-    except Exception as e:  # storage trouble is reported by /readyz and in the server log
-        print(f"[ledgersight] storage error on {request.url.path} (request {rid}): {e!r}", file=sys.stderr, flush=True)
+        write = request.method != "GET"
+        await run_in_threadpool(svc.save, m.group(1) if m else None, write)
+        if write and request.url.path.startswith(("/v1/invites", "/v1/users", "/v1/login")):
+            await run_in_threadpool(save_users)
+    except Exception as e:  # fail closed: a change that could not be stored is reported, never a silent 200
+        _log(level="ERROR", msg="storage error", request_id=rid, path=request.url.path, error=repr(e))
+        if request.method != "GET":
+            resp = JSONResponse(status_code=503, content={"detail": "storage unavailable; the change may not have been saved"})
+    static = request.url.path.startswith("/static/")
     resp.headers["X-Request-ID"] = rid
     resp.headers.update({
         "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-        "Cache-Control": "no-store",
+        # static files revalidate with ETag (304, no re-download, never stale); API answers are never stored
+        "Cache-Control": "no-cache" if static else "no-store",
         "Content-Security-Policy": CSP,
     })
+    if not static:
+        _log(level="INFO", msg="request", request_id=rid, method=request.method, path=request.url.path,
+             status=resp.status_code, ms=round((_t.perf_counter() - t0) * 1000, 1))
     if SECURE_COOKIE:
-        resp.headers["Strict-Transport-Security"] = "max-age=31536000"
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return resp
+
+
+# TrustOps application roles -> LedgerSight roles
+TRUSTOPS_ROLES = {"preparer": "preparer", "reviewer": "owner_reviewer"}
 
 
 # ---- local demo mode: no login screen ------------------------------------------
@@ -137,6 +177,13 @@ def current_user(request: Request):
     u = demo_user(request.cookies.get(DEMO_COOKIE, "reviewer")) if NO_LOGIN else auth.resolve(request.cookies.get(COOKIE))
     if not u:
         raise HTTPException(401, "sign in required")
+    if not NO_LOGIN and trustops_api.configured() and "@" in u.user_id:
+        role = trustops_api.app_access(u.user_id)      # re-checked at most once a minute
+        if role != trustops_api.UNREACHABLE:
+            if role not in TRUSTOPS_ROLES:
+                auth.logout(request.cookies.get(COOKIE, ""))
+                raise HTTPException(401, "Your LedgerSight access was removed in TrustOps.")
+            u.role = TRUSTOPS_ROLES[role]
     # CSRF: mutating calls must carry the custom header (cross-site forms cannot set it).
     if request.method in ("POST", "PUT", "DELETE") and request.headers.get("x-ledgersight") != "1":
         raise HTTPException(403, "missing request header")
@@ -171,7 +218,7 @@ def invite_page():
 def auth_config():
     return {"mfa": REQUIRE_MFA, "login_required": not NO_LOGIN, "version": APP_VERSION,
             "samples_enabled": os.environ.get("AVOCET_SHOW_SAMPLES", "0") == "1",
-            "demo_people": [{"key": k, "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else [],
+            "demo_people": [{"key": k, "user_id": v[0], "name": v[1], "role": v[2]} for k, v in DEMO_PEOPLE.items()] if NO_LOGIN else [],
             "google_login": _GL, "google_client_id": GOOGLE_LOGIN_CLIENT_ID if _GL else None}
 
 
@@ -223,15 +270,57 @@ def invite_accept(token: str, body: dict = Body(...)):
     return {"ok": True, "user_id": u.user_id}
 
 
+_LOGIN_FAILS: dict[str, list[float]] = {}
+LOGIN_LIMIT, LOGIN_WINDOW = 20, 600  # per client address: at most 20 failed sign-ins per 10 minutes
+
+
+def _recent_fails(ip: str) -> list[float]:
+    import time as _t
+    cutoff = _t.time() - LOGIN_WINDOW
+    if len(_LOGIN_FAILS) > 5000:  # forget addresses with no recent failures, so the table cannot grow without bound
+        for k in [k for k, v in _LOGIN_FAILS.items() if not v or v[-1] < cutoff]:
+            del _LOGIN_FAILS[k]
+    fails = [t for t in _LOGIN_FAILS.get(ip, []) if t > cutoff]
+    _LOGIN_FAILS[ip] = fails
+    return fails
+
+
+TRUST_PROXY = os.environ.get("AVOCET_TRUST_PROXY") == "1"  # set by deploy/cloudrun.sh; off locally
+
+
+def client_ip(request: Request) -> str:
+    """The address to rate-limit. Behind Cloud Run every request reaches the app from Google's front end, so the
+    socket address is the same for everyone; there the front end appends the real client address as the LAST entry
+    of X-Forwarded-For (earlier entries are whatever the client sent and are not trusted). Only honoured when
+    AVOCET_TRUST_PROXY=1, because without a trusted proxy anyone could send that header."""
+    if TRUST_PROXY:
+        hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+        if hops:
+            return hops[-1]
+    return request.client.host if request.client else "?"
+
+
 @app.post("/v1/login")
-def login(body: dict = Body(...)):
+def login(request: Request, body: dict = Body(...)):
+    import time as _t
+    ip = client_ip(request)
+    if len(_recent_fails(ip)) >= LOGIN_LIMIT:
+        raise HTTPException(429, "Too many failed sign-in attempts from this address. Wait a few minutes and try again.")
     try:
         tok = auth.login(body.get("user_id", ""), body.get("password", ""), body.get("code", ""))
     except PermissionError as e:
+        _LOGIN_FAILS.setdefault(ip, []).append(_t.time())
+        save_users()  # the failed-attempt count and any lockout are durable
         raise HTTPException(401, str(e))
+    save_users()  # the spent authenticator step is durable
     resp = JSONResponse({"ok": True})
     resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
     return resp
+
+
+# 2026-11-13: every Google sign-in refusal (unverified token, wrong domain) gets the same plain message.
+GOOGLE_REFUSED = ("We couldn't sign you in with this Google account. Use your CloudSeals work account, "
+                  "or ask your administrator for access.")
 
 
 @app.post("/v1/login/google")
@@ -241,11 +330,25 @@ def login_google(body: dict = Body(...)):
     try:
         claims = google_id_token.verify_oauth2_token(body.get("credential", ""), google_requests.Request(), GOOGLE_LOGIN_CLIENT_ID)
     except Exception:
-        raise HTTPException(401, "Google sign-in could not be verified")
+        raise HTTPException(401, GOOGLE_REFUSED)
     email = (claims.get("email") or "").lower()
     domain = claims.get("hd") or email.rsplit("@", 1)[-1]
+    if trustops_api.configured():
+        # People are managed in TrustOps (Team & access): it decides who may enter and with which role.
+        if not claims.get("email_verified"):
+            raise HTTPException(403, "Your Google account email is not verified.")
+        role = trustops_api.app_access(email, max_age=0)
+        if role == trustops_api.UNREACHABLE:
+            raise HTTPException(503, "Sign-in is paused: TrustOps could not be reached. Try again shortly.")
+        if role not in TRUSTOPS_ROLES:
+            raise HTTPException(403, "You don't have access to LedgerSight. Ask your administrator to give you access in TrustOps.")
+        tok = auth.trustops_login(email, claims.get("name") or email, set(WORKSPACES), TRUSTOPS_ROLES[role])
+        save_users()
+        resp = JSONResponse({"ok": True})
+        resp.set_cookie(COOKIE, tok, httponly=True, secure=SECURE_COOKIE, samesite="strict", max_age=8 * 3600)
+        return resp
     if not claims.get("email_verified") or domain != GOOGLE_LOGIN_DOMAIN or not email.endswith("@" + GOOGLE_LOGIN_DOMAIN):
-        raise HTTPException(403, "Only the CloudSeals team can access this.")
+        raise HTTPException(403, GOOGLE_REFUSED)
     try:
         tok = auth.google_login(email, claims.get("name") or email, set(WORKSPACES))
     except PermissionError as e:
@@ -266,7 +369,8 @@ def logout(request: Request):
 
 @app.get("/v1/me")
 def me(u=Depends(current_user)):
-    return {**u.public(), "support_contact": os.environ.get("AVOCET_SUPPORT_CONTACT", "your administrator")}
+    return {**u.public(), "support_contact": os.environ.get("AVOCET_SUPPORT_CONTACT", "your administrator"),
+            "trustops": {"connected": trustops_api.configured(), "console_url": trustops_api.console_link("")}}
 
 
 @app.get("/v1/users")
@@ -278,25 +382,50 @@ def users(u=Depends(current_user)):
 
 @app.post("/v1/invites")
 def create_invite(request: Request, body: dict = Body(...), u=Depends(current_user)):
+    if trustops_api.configured():
+        raise HTTPException(409, "People are managed in TrustOps > Team & access.")
     if u.role != "owner_reviewer":
         raise HTTPException(403, {"decision": "DENY", "reason_code": "ROLE_NOT_AUTHORISED"})
     ws = set(body.get("workspaces") or [])
     if not ws <= u.workspaces:
+        raise HTTPException(403, {"decision": "DENY", "reason_code": "WORKSPACE_SCOPE"})
+    prior = auth.users.get(str(body.get("user_id", "")))
+    if prior and not prior.workspaces <= u.workspaces:  # never take over someone else's invitation
         raise HTTPException(403, {"decision": "DENY", "reason_code": "WORKSPACE_SCOPE"})
     try:
         inv = auth.invite(body["user_id"], body.get("display_name", body["user_id"]), body.get("role", "preparer"),
                           ws, int(body.get("account_days", 14)))
     except (KeyError, ValueError) as e:
         raise HTTPException(422, str(e))
-    return {"invite_url": f"{request.base_url}invite?token={inv.token}", "expires_at": inv.expires_at.isoformat()}
+    base = os.environ.get("AVOCET_PUBLIC_URL", "").rstrip("/") + "/" if os.environ.get("AVOCET_PUBLIC_URL") else str(request.base_url)
+    return {"invite_url": f"{base}invite?token={inv.token}", "expires_at": inv.expires_at.isoformat()}
+
+
+def _managed_user(u, user_id):
+    """An owner may manage only people inside their own client scope; anyone else looks like an unknown id."""
+    if u.role != "owner_reviewer":
+        raise HTTPException(403, {"decision": "DENY", "reason_code": "ROLE_NOT_AUTHORISED"})
+    t = auth.users.get(user_id)
+    if not t or user_id == u.user_id or not t.workspaces or not t.workspaces <= u.workspaces:
+        raise HTTPException(404, "not found")
+    return t
 
 
 @app.post("/v1/users/{user_id}/revoke")
 def revoke(user_id: str, u=Depends(current_user)):
-    if u.role != "owner_reviewer" or user_id not in auth.users or user_id == u.user_id:
-        raise HTTPException(403, {"decision": "DENY", "reason_code": "ROLE_NOT_AUTHORISED"})
+    if trustops_api.configured():
+        raise HTTPException(409, "People are managed in TrustOps > Team & access.")
+    _managed_user(u, user_id)
     auth.revoke(user_id)
+    save_users()
     return {"revoked": user_id}
+
+
+@app.post("/v1/users/{user_id}/unlock")
+def unlock(user_id: str, u=Depends(current_user)):
+    _managed_user(u, user_id)
+    auth.unlock(user_id)
+    return {"unlocked": user_id}
 
 
 # ---- workspaces ------------------------------------------------------------
@@ -319,20 +448,20 @@ async def upload(wid: str, kind: str = Form("auto"), data_class: str = Form("syn
     """kind="auto" (default): the server works out what the file is from its content and refuses
     anything that is not a recognised finance record. `hint` (from the file name) only breaks ties."""
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.upload, u, wid, kind, file.filename or "upload", blob, data_class, hint=hint)
+    return await run_in_threadpool(handle, svc.upload, u, wid, kind, file.filename or "upload", blob, data_class, hint=hint)
 
 
 @app.post("/v1/workspaces/{wid}/held-files")
 async def hold_file(wid: str, data_class: str = Form("synthetic"), file: UploadFile = File(...), u=Depends(current_user)):
     """Any document type: stored unopened and marked for later conversion to JSON."""
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.hold_file, u, wid, file.filename or "upload", blob, data_class)
+    return await run_in_threadpool(handle, svc.hold_file, u, wid, file.filename or "upload", blob, data_class)
 
 
 @app.post("/v1/workspaces/{wid}/email")
 async def read_email(wid: str, file: UploadFile = File(...), u=Depends(current_user)):
     blob = await file.read(25 * 1024 * 1024 + 1)
-    return handle(svc.read_email, u, wid, blob)
+    return await run_in_threadpool(handle, svc.read_email, u, wid, blob)
 
 
 @app.get("/v1/integrations")
@@ -346,7 +475,7 @@ def integrations(u=Depends(current_user)):
 @app.post("/v1/workspaces/{wid}/documents")
 async def upload_pdf(wid: str, data_class: str = Form("synthetic"), file: UploadFile = File(...), u=Depends(current_user)):
     blob = await file.read(MAX_BYTES + 1)
-    return handle(svc.upload_pdf, u, wid, file.filename or "document.pdf", blob, data_class)
+    return await run_in_threadpool(handle, svc.upload_pdf, u, wid, file.filename or "document.pdf", blob, data_class)
 
 
 @app.post("/v1/workspaces/{wid}/documents/{doc_id}/confirm")
@@ -354,9 +483,22 @@ def confirm_pdf(wid: str, doc_id: str, body: dict = Body(...), u=Depends(current
     return handle(svc.confirm_pdf, u, wid, doc_id, body.get("fields") or {}, body.get("doc_type"))
 
 
+@app.get("/v1/workspaces/{wid}/uploads/{upload_id}/rejected.csv")
+def rejected_rows(wid: str, upload_id: str, u=Depends(current_user)):
+    """The rows of a file that could not be imported, with the reason (2026-11-16 action items)."""
+    body, name = handle(svc.rejected_rows_csv, u, wid, upload_id)
+    return Response(body.encode("utf-8-sig"), media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "X-Content-Type-Options": "nosniff"})
+
+
+@app.post("/v1/workspaces/{wid}/uploads/{upload_id}/acknowledge-rejections")
+def acknowledge_rejections(wid: str, upload_id: str, body: dict = Body(default={}), u=Depends(current_user)):
+    return handle(svc.acknowledge_rejections, u, wid, upload_id, body.get("note") or "")
+
+
 @app.post("/v1/workspaces/{wid}/uploads/{upload_id}/mapping")
 def commit_mapping(wid: str, upload_id: str, body: dict = Body(...), u=Depends(current_user)):
-    return handle(svc.commit_mapping, u, wid, upload_id, body.get("mapping") or {})
+    return handle(svc.commit_mapping, u, wid, upload_id, body.get("mapping") or {}, body.get("date_order"))
 
 
 def _samples_on():
@@ -376,14 +518,18 @@ def load_sample(wid: str, u=Depends(current_user)):
 def sample_file(wid: str, name: str, u=Depends(current_user)):
     _samples_on()
     handle(svc.gate, u, wid, "workspace.read")
-    if not name.startswith(wid + "_") or "/" in name or name.endswith(".json") or not (FIXTURES / name).is_file():
+    root = FIXTURES.resolve()
+    p = (FIXTURES / name).resolve()
+    if (not name.startswith(wid + "_") or "/" in name or "\\" in name or ".." in name or name.endswith(".json")
+            or p.parent != root or not p.is_file()):
         raise HTTPException(404, "not found")
-    return FileResponse(FIXTURES / name, filename=name)
+    return FileResponse(p, filename=name)
 
 
 def _run_view(r: dict) -> dict:
     """A run as the UI sees it. Stage status is recomputed so 'Complete' always reflects open cases."""
     out = {k: v for k, v in r.items() if k != "batch_key"}
+    out["trustops"] = {"connected": trustops_api.configured(), "approvals_url": trustops_api.console_link("#/approvals")}
     if r.get("workflow"):
         out["stages"] = svc._stages(r["workflow"], r["result"])
     return out
@@ -391,7 +537,29 @@ def _run_view(r: dict) -> dict:
 
 @app.post("/v1/workspaces/{wid}/reconciliation-runs")
 def create_run(wid: str, u=Depends(current_user)):
-    return _run_view(handle(svc.run, u, wid))
+    r = _run_view(handle(svc.run, u, wid))
+    r["reused"] = bool(r.get("reused"))  # same files as an earlier run: that run is returned, nothing is recomputed
+    return r
+
+
+# 2026-11-13: sample templates users can download before uploading (synthetic rows from the fixtures).
+TEMPLATE_KINDS = ("bank", "ledger", "ar", "ap", "documents", "parties")
+
+
+@app.get("/v1/templates/{kind}.csv")
+def template(kind: str, u=Depends(current_user)):
+    if kind not in TEMPLATE_KINDS:
+        raise HTTPException(404, "not found")
+    lines = (Path(__file__).parent / "fixtures" / f"client-a_{kind}.csv").read_text(encoding="utf-8").splitlines()[:4]
+    body = "\n".join(lines) + "\n"
+    return Response(body, media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="ledgersight-template-{kind}.csv"', "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/v1/workspaces/{wid}/runs")
+def runs_list(wid: str, day: str | None = None, month: str | None = None, by: str | None = None, u=Depends(current_user)):
+    """Every run of this client, newest first; filter by day, month or who ran it (2026-11-16 action items)."""
+    return handle(svc.runs_list, u, wid, day, month, by)
 
 
 @app.get("/v1/workspaces/{wid}/runs/{run_id}")
@@ -399,7 +567,77 @@ def get_run(wid: str, run_id: str, u=Depends(current_user)):
     w = handle(svc.gate, u, wid, "workspace.read", run_id=run_id)
     if run_id not in w.runs:
         raise HTTPException(404, "not found")
+    svc.sync_trustops(w, w.runs[run_id])
     return _run_view(w.runs[run_id])
+
+
+@app.get("/v1/trustops/reviewers")
+def trustops_reviewers(u=Depends(current_user)):
+    """Who can review in TrustOps (Admins and Approvers), managed in TrustOps Team & access."""
+    if not trustops_api.configured():
+        return {"items": [], "connected": False}
+    items = trustops_api.reviewers()
+    if items is None:
+        raise HTTPException(503, "TrustOps could not be reached")
+    return {"items": items, "connected": True}
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/send-to-trustops")
+def send_to_trustops(wid: str, run_id: str, exc_id: str, body: dict = Body(default={}), u=Depends(current_user)):
+    """A person sends one review item to the approvers in TrustOps (2026-11-13, user request)."""
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    try:
+        return handle(svc.send_to_trustops, u, wid, run_id, exc_id, body.get("note") or "", body.get("to") or None)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/send-to-trustops")
+def send_many_to_trustops(wid: str, run_id: str, body: dict = Body(...), u=Depends(current_user)):
+    """Send several review items to one approver in TrustOps (2026-11-16 action items: select all / bulk send).
+    Body: {"exception_ids": [...], "to": email, "note": optional}. Each item is sent and signed like a single send."""
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    ids = body.get("exception_ids")
+    if not isinstance(ids, list):
+        raise HTTPException(422, "exception_ids must be a list")
+    try:
+        return handle(svc.send_many_to_trustops, u, wid, run_id, ids, body.get("note") or "", body.get("to") or None)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/resend-to-trustops")
+def resend_to_trustops(wid: str, run_id: str, exc_id: str, body: dict = Body(default={}), u=Depends(current_user)):
+    """Send an item rejected in TrustOps again, with new proof attached (2026-11-13 action items)."""
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    try:
+        return handle(svc.resend_to_trustops, u, wid, run_id, exc_id, body.get("note") or "", body.get("to") or None)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/reviewer")
+def trustops_reassign(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depends(current_user)):
+    if not trustops_api.configured():
+        raise HTTPException(409, "TrustOps is not connected")
+    try:
+        return handle(svc.trustops_reassign, u, wid, run_id, exc_id, body.get("to"))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@app.get("/trustops/items/{ref:path}")
+def trustops_item(ref: str, x_trustops_key: str | None = Header(default=None)):
+    """TrustOps 'Load details' for an item it is asked to approve. Authenticated by the shared TrustOps key."""
+    if not trustops_api.valid_key(x_trustops_key):
+        raise HTTPException(401, "invalid key")
+    try:
+        return svc.trustops_item(ref)
+    except KeyError:
+        raise HTTPException(404, "not found")
 
 
 @app.get("/v1/workspaces/{wid}/trustops/proof")
@@ -421,6 +659,21 @@ def propose(wid: str, run_id: str, exc_id: str, body: dict = Body(...), u=Depend
     return handle(svc.propose, u, wid, run_id, exc_id, body.get("note", ""))
 
 
+@app.post("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/attachments")
+async def attach_proof(wid: str, run_id: str, exc_id: str, note: str = Form(""), file: UploadFile = File(...), u=Depends(current_user)):
+    """Proof for a review item (receipt, bill, statement extract, email). Stored unopened and signed."""
+    blob = await file.read(MAX_BYTES + 1)
+    return await run_in_threadpool(handle, svc.attach_proof, u, wid, run_id, exc_id, file.filename or "proof", blob, note)
+
+
+@app.get("/v1/workspaces/{wid}/runs/{run_id}/exceptions/{exc_id}/attachments/{att_id}")
+def proof_file(wid: str, run_id: str, exc_id: str, att_id: str, u=Depends(current_user)):
+    rec, blob, mime = handle(svc.proof_file, u, wid, run_id, exc_id, att_id)
+    safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in rec["filename"])
+    return Response(blob, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{safe}"',
+                                                     "X-Content-Type-Options": "nosniff"})
+
+
 @app.post("/v1/workspaces/{wid}/actions/attempt")
 def attempt(wid: str, body: dict = Body(...), u=Depends(current_user)):
     """Security demonstration: ask the gate for an action, as a person or as an agent
@@ -428,6 +681,7 @@ def attempt(wid: str, body: dict = Body(...), u=Depends(current_user)):
     action = body.get("action", "")
     kw = {"data_class": body.get("data_class", "synthetic"), "model_route": body.get("model_route", "deterministic")}
     try:
+        svc.require_governance(u, wid)  # Guardrails is a CPA reviewer page
         if body.get("as_agent"):
             r = svc.agent_attempt(u, wid, body["as_agent"], action, **kw)
             return JSONResponse(status_code=403 if r["decision"] == "DENY" else 200, content=r)
@@ -452,9 +706,10 @@ def sample_list(wid: str, u=Depends(current_user)):
 
 
 @app.get("/v1/workspaces/{wid}/runs/{run_id}/reports/{kind}.{fmt}")
-def report(wid: str, run_id: str, kind: str, fmt: str, u=Depends(current_user)):
-    rep, blob = handle(svc.report, u, wid, run_id, kind, fmt)
-    if fmt == "json" and kind:
+def report(wid: str, run_id: str, kind: str, fmt: str, preview: bool = False, u=Depends(current_user)):
+    # preview=1: shown on screen only; recorded as a preview, so it does not complete the Report step
+    rep, blob = handle(svc.report, u, wid, run_id, kind, fmt, preview)
+    if fmt == "json" and preview:
         return Response(blob, media_type=REPORT_TYPES[fmt])
     return Response(blob, media_type=REPORT_TYPES[fmt],
                     headers={"Content-Disposition": f'attachment; filename="{rep["report_id"]}.{fmt}"'})
@@ -469,7 +724,10 @@ def audit_trail(wid: str, fmt: str, u=Depends(current_user)):
 
 @app.post("/v1/workspaces/{wid}/ask")
 def ask(wid: str, body: dict = Body(...), u=Depends(current_user)):
-    return handle(svc.ask, u, wid, body.get("question", ""))
+    q = body.get("question", "")
+    if not isinstance(q, str) or len(q) > 2000:
+        raise HTTPException(422, "question must be text of at most 2000 characters")
+    return handle(svc.ask, u, wid, q)
 
 
 @app.get("/v1/workspaces/{wid}/ask/suggestions")
@@ -508,18 +766,20 @@ def party_link(wid: str, pid: str, line_id: str, body: dict = Body(...), u=Depen
 
 
 @app.get("/v1/workspaces/{wid}/trace")
-def trace_index(wid: str, u=Depends(current_user)):
-    return handle(svc.trace_index, u, wid)
+def trace_index(wid: str, run_id: str | None = None, u=Depends(current_user)):
+    return handle(svc.trace_index, u, wid, run_id)
 
 
 @app.get("/v1/workspaces/{wid}/trace/{line_id}")
-def trace(wid: str, line_id: str, u=Depends(current_user)):
-    return handle(svc.trace, u, wid, line_id)
+def trace(wid: str, line_id: str, run_id: str | None = None, u=Depends(current_user)):
+    return handle(svc.trace, u, wid, line_id, run_id)
 
 
 @app.get("/v1/workspaces/{wid}/evidence")
-def evidence(wid: str, u=Depends(current_user)):
-    return handle(svc.evidence, u, wid)
+def evidence(wid: str, limit: int | None = None, u=Depends(current_user)):
+    if limit is not None and not 1 <= limit <= 5000:
+        raise HTTPException(422, "limit must be between 1 and 5000")
+    return handle(svc.evidence, u, wid, limit)
 
 
 @app.post("/v1/workspaces/{wid}/evidence/tamper-check")
@@ -550,6 +810,21 @@ def reset(wid: str, u=Depends(current_user)):
     return handle(svc.reset, u, wid)
 
 
+@app.get("/v1/workspaces/{wid}/notifications")
+def notifications(wid: str, u=Depends(current_user)):
+    n = handle(svc.notifications, u, wid)
+    demo_names = {uid: name for uid, name, _ in DEMO_PEOPLE.values()}  # local demo people are not in the user list
+    for it in n["items"]:  # the person's display name, for the bell list
+        x = auth.users.get(it["by"])
+        it["by_name"] = x.display_name if x else demo_names.get(it["by"], it["by"])
+    return n
+
+
+@app.post("/v1/workspaces/{wid}/notifications/seen")
+def notifications_seen(wid: str, body: dict = Body(...), u=Depends(current_user)):
+    return handle(svc.notifications_seen, u, wid, body.get("upto"))
+
+
 @app.get("/v1/trust")
 def trust(u=Depends(current_user)):
-    return svc.trust()
+    return handle(svc.trust, u)

@@ -1,0 +1,13 @@
+party_id,name,type,aliases,ref_prefixes
+P-MAPLE,Maple Ridge Clinics LLC,customer,MAPLE RIDGE CLINICS;MAPLE-RIDGE,
+P-COPPER,Copperleaf Bakery Co,customer,COPPERLEAF BAKERY;COPPERLEAF,
+P-SUMMIT,Summit Trail Outfitters,customer,SUMMIT TRAIL OUTFITTERS;SUMMIT-TRAIL,
+P-BLUEWATER,Bluewater Analytics Inc,customer,BLUEWATER ANALYTICS;BLUEWATER,
+P-CRESTLINE,Crestline Property Management,vendor,CRESTLINE PROPERTY;VEND-CRESTLINE,LEASE-
+P-CLOUDFRAME,Cloudframe Software Inc,vendor,CLOUDFRAME SOFTWARE,CF-
+P-INKWELL,Inkwell Print Works,vendor,INKWELL PRINT WORKS;VEND-INKWELL,IP-
+P-PAPERHOUSE,Paperhouse Office Supply,vendor,PAPERHOUSE OFFICE SUPPLY,PH-
+P-LUMEN,Lumen Stock Media,vendor,LUMEN STOCK MEDIA;VEND-LUMEN,LS-
+P-PAYROLL,Northgate Payroll Services,internal,NORTHGATE;PAYROLL,PR-
+P-BANK,Operating bank,bank,SERVICE FEE,FEE-
+P-THAMES,Thames Valley Components Ltd,vendor,THAMES VALLEY COMPONENTS;VEND-THAMES,TVC-

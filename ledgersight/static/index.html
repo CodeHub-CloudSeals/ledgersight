@@ -5,58 +5,58 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LedgerSight</title>
 <link rel="icon" href="/static/logo.svg">
-<link rel="stylesheet" href="/static/avocet.css">
+<link rel="stylesheet" href="/static/avocet.css?v=20261118b">
 </head>
 <body>
 
 <section id="login" class="login hidden">
-  <div class="login-visual" aria-hidden="true">
-    <div class="holo-grid"></div>
-    <div class="holo-blob b1"></div>
-    <div class="holo-blob b2"></div>
-    <div class="holo-blob b3"></div>
-    <div class="holo-icons">
-      <svg class="holo-ico ico-a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
-      <svg class="holo-ico ico-b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>
-      <svg class="holo-ico ico-c" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
-    </div>
-    <div class="login-copy">
-      <div class="eyebrow on-dark">LedgerSight · TrustOps</div>
-      <h2>Reconciliation your auditors will believe.</h2>
-      <p>LedgerSight does the matching. TrustOps governs, authorises and evidences every step it takes.</p>
-      <ul class="login-points">
-        <li>Deterministic matching, not a black box</li>
-        <li>Every decision is ALLOW, ESCALATE or DENY, with a reason</li>
-        <li>Signed, tamper-evident evidence for every action</li>
-      </ul>
+  <div class="lg-art">
+    <div class="lg-hero">
+      <div class="lv-brand m-in"><img src="/static/logo.svg" alt=""><span>LedgerSight</span><em>by CloudSeals</em></div>
+      <div class="login-copy">
+        <div class="eyebrow m-in">LedgerSight · Governed by TrustOps</div>
+        <h2 class="m-words"><span class="sr-only">Reconciliation that's explainable, audit-ready, governed and on time.</span><span class="ln" aria-hidden="true">Reconciliation that's</span> <span class="lg-rotline m-in" aria-hidden="true"><span class="lg-rot" id="lg-rot" data-words="explainable.|audit-ready.|governed.|on time."><span class="lg-rw">explainable.</span></span></span></h2>
+        <p class="m-in">LedgerSight matches your bank to your books. TrustOps checks every action and keeps a signed record, ready for your auditor.</p>
+      </div>
+      <ol class="lg-steps" aria-label="How it works">
+        <li class="m-in"><span class="lgs-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></span>
+          <div><b>Reconcile</b><span>Bank and ledger matched with fixed, explainable rules. Nothing is guessed.</span></div></li>
+        <li class="m-in"><span class="lgs-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2.5 4 2.5 4H5"/></svg></span>
+          <div><b>Review</b><span>Anything uncertain goes to a CPA reviewer with its source rows attached.</span></div></li>
+        <li class="m-in"><span class="lgs-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span>
+          <div><b>Prove</b><span>TrustOps checks every action and signs it into the audit trail.</span></div></li>
+      </ol>
     </div>
   </div>
-  <div class="login-formside">
-    <div class="login-card">
-      <img src="/static/logo.svg" alt="" class="logo-lg">
-      <div class="eyebrow">LedgerSight · TrustOps</div>
-      <h1>Sign in</h1>
-      <p class="muted" id="lg-hint">Invitation-only access.</p>
-      <div id="lg-pwform">
-        <label>User ID<input id="lg-user" autocomplete="username"></label>
-        <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
-        <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
-        <button id="lg-btn" class="primary wide">Sign in</button>
+  <div class="lg-side">
+    <div class="lg-col">
+      <div class="lv-brand lg-mbrand"><img src="/static/logo.svg" alt=""><span>CloudSeals</span></div>
+      <div class="login-card" id="lg-card">
+        <h1 class="m-in">Welcome back</h1>
+        <p class="muted m-in" id="lg-hint">Invitation-only access.</p>
+        <div id="lg-pwform" class="m-in">
+          <label>User ID<input id="lg-user" autocomplete="username"></label>
+          <label>Password<input id="lg-pw" type="password" autocomplete="current-password"></label>
+          <label id="lg-code-row" class="hidden">Authenticator code<input id="lg-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></label>
+          <button id="lg-btn" class="primary wide lg-cta"><span>Sign in</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+        </div>
+        <div id="lg-msg" class="msg"></div>
+        <div id="lg-google" class="lg-google hidden">
+          <div id="lg-divider" class="lg-divider"><span>or</span></div>
+          <div id="g_id_button"></div>
+        </div>
+        <div class="lg-trust m-in"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>Every sign-in is recorded in the signed audit trail</div>
       </div>
-      <div id="lg-msg" class="msg"></div>
-      <div id="lg-google" class="lg-google hidden">
-        <div id="lg-divider" class="lg-divider"><span>or</span></div>
-        <div id="g_id_button"></div>
-      </div>
+      <div class="login-foot m-in">© CloudSeals · LedgerSight v1.0.0</div>
     </div>
-    <div class="login-foot">LedgerSight v1.0.0 · Governed by TrustOps</div>
   </div>
 </section>
 
 <div id="app" class="hidden">
   <div class="shell">
   <aside class="sidebar">
-    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div><div class="bname">LedgerSight</div><div class="bsub">Reconciliation · Governed By TrustOps</div></div></div>
+    <div class="brandcard"><img src="/static/logo.svg" alt="" class="logo"><div class="bt"><div class="bname">LedgerSight</div><div class="bsub">Reconciliation · Governed By TrustOps</div></div>
+      <button id="side-toggle" class="side-toggle" type="button" aria-label="Collapse menu" title="Collapse menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5M18 17l-5-5 5-5"/></svg></button></div>
     <nav id="tabs" aria-label="Main">
       <div class="navlabel">WorkSpace</div>
       <button class="tab active" data-tab="home"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span class="lbl-t">Overview</span></button>
@@ -73,42 +73,56 @@
       <button class="tab" data-tab="controls"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg></span><span class="lbl-t">Guardrails</span></button>
       <button class="tab" data-tab="evidence"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.6-3.4 8.3-8 9-4.6-.7-8-4.4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></span><span class="lbl-t">Audit trail</span></button>
       <div class="navlabel">Admin</div>
-      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span><span class="lbl-t">People</span></button>
+      <button class="tab" data-tab="team"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.5"/><path d="M3.5 20a6.5 6.5 0 0 1 13 0M19 8v6M16 11h6"/></svg></span><span class="lbl-t">Users</span></button>
       <button class="tab" data-tab="trust"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg></span><span class="lbl-t">Data &amp; security</span></button>
     </nav>
-    <div class="sidefoot"><div id="app-version" class="small">LedgerSight</div></div>
+    <div class="sidefoot">
+      <button type="button" id="ask-open" class="side-ask" aria-expanded="false" aria-controls="ask-drawer" aria-label="FinTwin - Your Financial Digital Twin (read-only)" title="FinTwin · Ctrl K">
+        <span class="sa-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.4a7.6 7.6 0 0 1-11.3 6.6L4 19.6l1.6-4.4A7.6 7.6 0 1 1 20 11.4z"/><path class="sa-spark" d="M12.2 7.6l.85 2.15 2.15.85-2.15.85-.85 2.15-.85-2.15-2.15-.85 2.15-.85z" fill="currentColor" stroke="none"/></svg></span>
+        <span class="sa-t"><b>FinTwin</b><span>Your Financial Digital Twin</span></span>
+        <kbd class="sa-k">Ctrl K</kbd>
+      </button>
+      <div id="app-version" class="small">LedgerSight</div>
+    </div>
   </aside>
   <div class="content">
   <header class="topbar">
     <div class="tb-left">
-      <div class="small muted">Client</div>
-      <div class="ws-line"><select id="ws-select" class="ws-title" aria-label="Client"></select><span class="page-sub" id="page-sub">–</span></div>
+      <label class="ws-pill" title="Client"><span class="ws-av" id="ws-av" aria-hidden="true">–</span><select id="ws-select" class="ws-title" aria-label="Client"></select></label>
+      <span class="tb-sep" aria-hidden="true">/</span>
+      <div class="period-wrap"><button id="period-chip" class="period-chip" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="period-panel" title="Reporting period"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span class="page-sub" id="page-sub">–</span></button>
+      <div id="period-panel" class="period-panel hidden" role="dialog" aria-label="Choose the reporting period"></div></div>
+      <span class="tb-sep" aria-hidden="true">/</span>
+      <div class="crumb" aria-label="Current page"><span id="crumb-group" class="crumb-g"></span><b id="crumb-page">Overview</b></div>
     </div>
     <div class="tb-right">
-      <label id="act-as-wrap" class="tbl hidden"><span class="lbl">Acting as</span><select id="act-as" aria-label="Acting as"></select></label>
+      <label id="act-as-wrap" class="tbl role-pill hidden"><span class="rp-dot" aria-hidden="true"></span><span class="lbl">Acting as</span><select id="act-as" aria-label="Acting as"></select></label>
+      <div class="notif-wrap">
+        <button id="notif-btn" class="iconbtn" type="button" aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false" title="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span id="notif-count" class="notif-count hidden" aria-hidden="true"></span></button>
+        <div id="notif-panel" class="notif-panel hidden" role="dialog" aria-label="Notifications"></div>
+      </div>
       <button id="theme" class="iconbtn" title="Light / dark" aria-label="Toggle light or dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 0 17z" fill="currentColor"/></svg></button>
       <span id="avatar" class="avatar">–</span>
       <span class="who"><b id="me-name">-</b></span>
       <button id="logout" class="ghost">Sign out</button>
     </div>
   </header>
-  <div class="stepper" id="stepper"></div>
   <main>
     <!-- ================= Overview ================= -->
     <section class="panel active" id="p-home">
-      <div id="ov-hero" class="hero"></div>
-      <div id="ov-kpis" class="tiles"></div>
-      <div class="card gap hidden" id="ov-cases"></div>
-      <div class="card gap pipe" id="ov-pipe">
-        <div class="pipe-head"><div class="card-title">Agent workflow</div>
-          <div class="pipe-meta"><a class="linkbtn" href="#agents" data-go="agents">Open live view →</a></div></div>
-        <div id="ov-agents"></div>
+      <div id="ov-hero" class="ov-head"></div>
+      <nav class="mprog" id="stepper" aria-label="Month-end progress"></nav>
+      <div id="ov-allruns" class="card ov-allruns hidden" aria-label="Review items across all runs"></div>
+      <div id="ov-kpis" class="kw-row"></div>
+      <div id="ov-charts" class="sk-grid hidden">
+        <div class="card ch-card sk-flow"><div class="ch-head"><div><div class="card-title">Cash movement</div><div class="ch-sub">Money in and out on the bank statement, by day</div></div>
+          <a class="linkbtn" href="#trace" data-go="trace">Trace a transaction →</a></div><div id="ov-flow"></div></div>
+        <div class="sk-var" id="ov-var"></div>
+        <div class="card hidden sk-cases" id="ov-cases"></div>
+        <div class="card ch-card sk-cover"><div class="ch-head"><div><div class="card-title">Match coverage</div><div class="ch-sub">Bank transactions in this run</div></div>
+          <a class="linkbtn" href="#recon" data-go="recon">Details →</a></div><div id="ov-cover"></div></div>
       </div>
-      <div class="grid ov gap">
-        <div class="card"><div class="card-title">TrustOps decisions <a class="linkbtn" href="#evidence" data-go="evidence">Audit trail →</a></div><div id="ov-gov"></div></div>
-        <div class="card"><div class="card-title">Recent activity</div><ul id="ov-activity" class="feed"></ul></div>
-      </div>
-      <div class="card gap" aria-label="How it works">
+      <div class="card gap hidden" id="ov-how" aria-label="How it works">
         <div class="card-title">How it works <span class="muted">who does each step</span></div>
         <div class="how">
           <a href="#import" data-go="import"><span class="n">1</span><span class="tx"><b>Upload files</b><span>Bank statement, ledger, invoices: CSV, Excel or PDF.</span><em class="who you">YOU</em></span></a>
@@ -118,24 +132,17 @@
           <a href="#reports" data-go="reports"><span class="n">5</span><span class="tx"><b>Download reports</b><span>Finance report and governance report, with proof.</span><em class="who ls">BOTH</em></span></a>
         </div>
       </div>
-      <details class="card gap fold" id="ov-profile">
-        <summary>Client profile</summary>
-        <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
-        <div class="form-grid gap">
-          <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
-          <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
-          <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
-        </div>
-        <div class="row gap"><button id="pf-save" class="primary">Save profile</button><button id="reset-btn" class="danger">Clear this client's data</button><span id="pf-msg" class="msg"></span><span id="reset-msg" class="msg"></span></div>
-      </details>
     </section>
 
     <!-- ================= Sources ================= -->
     <section class="panel" id="p-import">
       <div class="page-head"><div><h2>Sources</h2>
         <p class="sub">Bring in the bank statement, general ledger, invoices and supporting documents. Each file is checked, fingerprinted and mapped to standard columns, and you confirm the mapping before anything is used.</p></div></div>
-      <div class="grid two">
-        <div class="card">
+      <!-- The file being confirmed sits first, right under the heading: no jump past the upload and status cards. -->
+      <div id="mapping" class="card map-card hidden"></div>
+      <!-- 2026-11-13 layout (user choice): a short upload strip on top, the 6 sources as cards in a 3x2 grid below -->
+      <div class="src-top stack">
+        <div class="card src-up">
           <div class="card-title">Upload files</div>
           <select id="up-kind" aria-label="File type" class="hidden"><option value="auto">Detect file type automatically</option></select>
           <div class="dropzone" id="dz-target">
@@ -155,21 +162,21 @@
             <span class="small muted grow">Add files from Google Drive, Docs, Sheets and Slides</span>
             <button id="dz-drive-btn" class="ghost">Connect</button>
           </div>
+          <div id="tpl-links" class="tpl-links"></div>
           <div id="em-view"></div>
           <div id="drive-view"></div>
           <div id="up-msg" class="msg"></div>
           <div id="up-refused"></div>
           <div id="up-next"></div>
         </div>
-        <div class="card">
-          <div class="card-title">Source status</div>
-          <div id="src-status" class="src-status"></div>
-          <div class="row gap"><button id="clear-all" class="danger">Clear all imported files</button><span id="clear-msg" class="msg"></span></div>
+        <div class="card src-st">
+          <div class="ss-headrow"><div class="card-title">Source status</div><span id="ss-sum" class="ss-sum"></span></div>
+          <div id="src-status" class="ss-wrap"></div>
+          <div class="ss-endrow"><span class="ss-note">All sources are read-only. Hover a file name for its fingerprint. Use Clear on a file to remove just that file.</span></div>
+          <div id="clear-msg" class="msg"></div>
         </div>
       </div>
-      <div id="mapping" class="card gap hidden"></div>
-      <div class="card gap"><div class="card-title">Connections</div><div id="connectors"></div></div>
-      <div class="card gap"><div class="card-title">Import health</div><div id="health"></div></div>
+      <div class="card gap"><div class="card-title">Import health</div><div id="health" class="tablewrap"></div></div>
       <div class="card gap"><div class="card-title">Supporting documents on file</div><div id="docs"></div></div>
       <div class="card gap" id="held-card"><div class="card-title">Held for conversion <span class="muted">stored safely · not opened · JSON conversion in development</span></div><div id="held"></div></div>
     </section>
@@ -179,18 +186,24 @@
       <div class="page-head"><div><h2>Reconciliation</h2>
         <p class="sub">Fixed, explainable rules match what agrees exactly. Anything uncertain is held back for a person, never guessed.</p></div>
         <div class="row"><button id="run-btn" class="primary">Run reconciliation</button><span id="run-msg" class="msg"></span></div></div>
+      <div id="rc-runbar" class="runbar hidden"></div>
+      <details class="card gap stages-fold runs-fold" id="runs-card">
+        <summary><span class="sf-t">All runs</span><span class="sf-sum muted small">every run of this client · filter by day, month or who ran it</span><span class="sf-more"><span class="sf-show">Show</span><span class="sf-hide">Hide</span></span></summary>
+        <div id="runs-list"></div>
+      </details>
       <div id="recon-ready"></div>
       <div id="tiles" class="tiles"></div>
-      <div class="card gap" id="stages-card">
-        <div class="card-title">Run stages <span class="muted small">Intake → Validate → Map → Reconcile → Exception → Complete</span></div>
-        <div id="stages"></div>
-      </div>
-      <div class="card gap pipe" id="rc-pipe">
+      <!-- At-a-glance first (agent workflow), then the detail behind it (run stages) -->
+      <div class="card gap pipe wf" id="rc-pipe">
         <div class="pipe-head"><div class="card-title">Agent workflow</div>
           <div class="pipe-meta"><span class="muted">TrustOps checks every step</span></div></div>
         <div id="rc-pipeline"></div>
         <div id="workflow" class="hidden"></div>
       </div>
+      <details class="card gap stages-fold" id="stages-card">
+        <summary><span class="sf-t">Run stages</span><span id="stages-sum" class="sf-sum"></span><span class="sf-more">Details</span></summary>
+        <div id="stages"></div>
+      </details>
       <div class="grid two gap">
         <div class="card"><div class="card-title">Matched automatically</div><div id="matches" class="tablewrap"></div></div>
         <div class="card"><div class="card-title">Source detail</div><div id="detail" class="muted">Select a matched row to compare the bank and ledger lines.</div></div>
@@ -201,9 +214,9 @@
     <section class="panel" id="p-agents">
       <div class="page-head"><div><h2>Agents</h2>
         <p class="sub">The six LedgerSight agents for this client. See what each one is doing now, what it last did and what TrustOps decided. Built from the signed audit trail and refreshed every 2 seconds.</p></div>
-        <div class="row"><span id="ag-live" class="pill live">● live</span><button id="ag-run" class="primary">Run reconciliation now</button></div></div>
+        <div class="row"><span id="ag-live" class="pill live">● live</span></div></div>
       <div id="ag-ready"></div>
-      <div class="card pipe" id="ag-pipe">
+      <div class="card pipe wf" id="ag-pipe">
         <div class="pipe-head"><div class="card-title">Agent workflow</div>
           <div class="pipe-meta"></div></div>
         <div id="ag-pipeline"></div>
@@ -217,6 +230,7 @@
     <section class="panel" id="p-exceptions">
       <div class="page-head"><div><h2>Review queue</h2>
         <p class="sub">Only what needs a person. Each item shows the source rows, the rule that raised it, the TrustOps decision and a suggested next step. Decisions are recorded and signed. Nothing is posted.</p></div></div>
+      <div id="exc-runbar" class="runbar hidden"></div>
       <div id="exc-list"></div>
     </section>
 
@@ -224,13 +238,14 @@
     <section class="panel" id="p-controls">
       <div class="page-head"><div><h2>Guardrails</h2>
         <p class="sub">Try a forbidden action, as yourself or as one of the agents. TrustOps refuses it live and the refusal is written to the audit trail. Nothing is ever executed.</p></div></div>
-      <div class="card gap" id="proof-card">
-        <div class="card-title">TrustOps proof for this client <span class="muted small">read back from the signed audit trail</span>
+      <div class="card" id="proof-card">
+        <div class="pf-top"><div><div class="card-title">TrustOps proof for this client</div>
+          <div class="small muted">Read back from the signed audit trail</div></div>
           <button class="linkbtn" id="proof-refresh">Refresh</button></div>
-        <div id="proof" class="muted">Loading…</div>
+        <div id="proof"><span class="muted">Loading…</span></div>
       </div>
-      <div class="grid three" id="attack-grid"></div>
-      <div class="card gap"><div class="card-title">Results</div><div id="attack-out" class="muted">No attempts yet.</div></div>
+      <div class="grid three gap-lg" id="attack-grid"></div>
+      <div class="card gap-lg"><div class="card-title">Results</div><div id="attack-out" class="muted">No attempts yet.</div></div>
     </section>
 
     <!-- ================= Counterparties ================= -->
@@ -248,6 +263,7 @@
     <section class="panel" id="p-trace">
       <div class="page-head"><div><h2>Trace a transaction</h2>
         <p class="sub">Follow any bank transaction end to end. See the file and row it came from, every check, agent step, TrustOps decision and human decision, and the signed record behind each.</p></div></div>
+      <div id="tr-runbar" class="runbar hidden"></div>
       <div class="trace-grid">
         <div class="card"><div class="card-title">Bank transactions</div><div id="trace-list" class="muted">Import files first.</div></div>
         <div id="trace-view" class="card"><div class="muted">Select a line on the left.</div></div>
@@ -262,17 +278,24 @@
       <div id="tamper-out" class="msg"></div>
       <div class="row"><a id="exp-audit-pdf" class="primary btnlink" href="#" download>Download audit trail (PDF)</a>
         <a id="exp-audit-csv" class="secondary btnlink" href="#" download>Audit trail (CSV)</a>
-        <a id="exp-csv" class="secondary btnlink disabled" href="#">Review CSV</a><a id="exp-pack" class="secondary btnlink disabled" href="#">Signed review pack (JSON)</a>
-        <a id="exp-print" class="secondary btnlink disabled" href="#" target="_blank" rel="noopener">Printable review pack</a></div>
+        <a id="exp-audit-xlsx" class="secondary btnlink" href="#" download>Audit trail (Excel)</a><a id="exp-audit-json" class="secondary btnlink" href="#" download>Audit trail (JSON)</a>
+        <span class="muted small">Review exports (CSV, review pack) are on Reports.</span></div>
+      <div class="grid ov gap" id="ev-summary">
+        <div class="card"><div class="card-title">TrustOps decisions </div><div id="ov-gov"></div></div>
+        <div class="card"><div class="card-title">Recent activity <span class="muted small">newest first</span></div><ul id="ov-activity" class="feed tl-feed"></ul></div>
+      </div>
       <div class="card gap"><div id="events" class="tablewrap"></div></div>
     </section>
 
     <!-- ================= Reports ================= -->
     <section class="panel" id="p-reports">
       <div class="page-head"><div><h2>Reports</h2>
-        <p class="sub">Two reports for the same run. The Finance Reconciliation Report shows what happened to the records. The TrustOps Governance Report proves how it happened, with the agents, policies, decisions, approvals and evidence behind it.</p></div>
-        <div class="row"><span class="pill">Run <b id="rep-run">none</b></span><span class="pill">Trace <b id="rep-trace">–</b></span></div></div>
+        <p class="sub">The Finance Reconciliation Report shows what happened to the records in this run, including who approved each review item in TrustOps. The governance record (how it happened) is kept in TrustOps.</p></div>
+        <div class="row"><label class="pill rep-pick" for="rep-run-pick">Run <select id="rep-run-pick" aria-label="Choose the run whose reports to see"><option>none</option></select></label><span class="pill">Trace <b id="rep-trace">–</b></span></div></div>
+      <div id="rep-draft"></div>
       <div class="grid two" id="rep-cards"></div>
+      <div id="rep-exports"></div>
+      <div class="card gap"><div class="card-title">All runs <span class="muted small">newest first · choose a run to see its reports</span></div><div id="rep-runs"></div></div>
       <div class="card gap"><div class="card-title" id="rep-prev-title">Preview</div><div id="rep-preview" class="muted">Run a reconciliation first.</div></div>
     </section>
 
@@ -287,51 +310,68 @@
     <section class="panel" id="p-trust">
       <div class="page-head"><div><h2>Data &amp; security</h2>
         <p class="sub">What runs, where it is declared to run, which models are allowed and what is forbidden, stated plainly, including what is not yet verified.</p></div></div>
-      <div id="trust"></div>
+      <div class="card" id="ov-profile">
+        <div class="card-title">Client profile</div>
+        <div class="muted small">Name this client book for the session. Names are entered here, never built into the product.</div>
+        <div class="form-grid gap">
+          <label class="ctl2">Client name<input id="pf-name" maxlength="80"></label>
+          <label class="ctl2">Period<input id="pf-period" maxlength="40"></label>
+          <label class="ctl2">Industry<input id="pf-industry" maxlength="60"></label>
+        </div>
+        <div class="row gap"><button id="pf-save" class="primary">Save profile</button><button id="reset-btn" class="danger">Clear this client's data</button><span id="pf-msg" class="msg"></span><span id="reset-msg" class="msg"></span></div>
+      </div>
+      <div id="trust" class="gap"></div>
     </section>
 
     <!-- ================= People ================= -->
     <section class="panel" id="p-team">
-      <div class="page-head"><div><h2>People</h2>
-        <p class="sub">Invitation-only, per-client membership, 14-day access expiry, instant revocation.</p></div></div>
-      <div class="grid two">
+      <div class="page-head"><div><h2>Users</h2>
+        <p class="sub">Add the people who work on your clients. Each person gets a single-use link to set a password and an authenticator code. Access is per client, expires, and can be revoked at once.</p></div></div>
+      <div id="users-demo-note"></div>
+      <div class="grid two users-grid">
         <div class="card">
-          <div class="card-title">Invite someone</div>
-          <label class="ctl2">User ID (email)<input id="inv-user"></label>
-          <label class="ctl2">Name<input id="inv-name"></label>
-          <label class="ctl2">Role
-            <select id="inv-role"><option value="preparer">Staff preparer</option><option value="owner_reviewer">CPA reviewer</option></select>
+          <div class="card-title">Add a user</div>
+          <label class="ctl2">Full name<input id="inv-name" autocomplete="off" placeholder="e.g. Staff Preparer 2"></label>
+          <label class="ctl2">Email (used to sign in)<input id="inv-user" type="email" autocomplete="off" placeholder="name@yourfirm.com"></label>
+          <div class="ctl2"><span>Role</span>
+            <div class="role-pick" role="radiogroup" aria-label="Role">
+              <label class="rp"><input type="radio" name="inv-role" value="preparer" checked><span><b>Staff preparer</b><small>Uploads files, runs reconciliation, proposes resolutions, attaches proof.</small></span></label>
+              <label class="rp"><input type="radio" name="inv-role" value="owner_reviewer"><span><b>CPA reviewer</b><small>Everything a preparer does, plus approve / reject / return, governance pages and users.</small></span></label>
+            </div>
+          </div>
+          <div class="ctl2"><span>Client access</span><div id="inv-ws" class="ws-pick"></div></div>
+          <label class="ctl2">Access expires after
+            <select id="inv-days"><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="365">1 year</option></select>
           </label>
-          <div class="ctl2"><span>Client access</span><div id="inv-ws" class="row wrap"></div></div>
-          <button id="inv-btn" class="primary">Create invitation link</button>
+          <button id="inv-btn" class="primary">Create user</button>
           <div id="inv-out" class="msg"></div>
         </div>
-        <div class="card"><div class="card-title">Users</div><div id="users"></div></div>
+        <div class="card"><div class="card-title">People with access <span class="muted small" id="users-count"></span></div><div id="users"></div></div>
       </div>
     </section>
   </main>
   </div>
   </div>
 </div>
-<!-- Ask LedgerSight: floating launcher, bottom right (Diana review 06/11) -->
-<button id="ask-open" class="ask-fab" aria-expanded="false" aria-controls="ask-drawer" aria-label="Ask LedgerSight (read-only)" title="Ask LedgerSight (read-only)">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>
-  <span class="ask-fab-tip">Ask LedgerSight</span></button>
 <aside id="ask-drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="ask-title" aria-hidden="true">
   <div class="drawer-head">
     <div class="drawer-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.3 7.6L3 21l1.4-5.4A8.5 8.5 0 1 1 21 12z"/></svg></div>
-    <div class="grow"><div class="drawer-title" id="ask-title">Ask LedgerSight</div>
-      <div class="small muted">Read-only answers about this client book, with sources. It cannot change anything or see other clients.</div></div>
-    <button id="ask-close" class="iconbtn" aria-label="Close Ask LedgerSight">✕</button>
+    <div class="grow"><div class="drawer-title" id="ask-title">FinTwin - Your Financial Digital Twin</div></div>
+    <button id="ask-close" class="iconbtn" aria-label="Close FinTwin">✕</button>
   </div>
-  <div class="drawer-body" id="ask-scroll"><div id="ask-out"></div>
-    <div id="ask-empty" class="ask-empty"><b>Ask about this client book</b><span>Unmatched items, why something was flagged, what is outstanding or who approved it.</span></div></div>
+  <div class="drawer-body" id="ask-scroll">
+    <div id="ask-welcome" class="qa ask-welcome"><div class="a-bubble">Hi, I'm FinTwin! How can I help you?</div></div>
+    <div id="ask-out"></div></div>
   <div class="drawer-foot">
     <div id="ask-chips" class="chips"></div>
-    <div class="ask-row"><input id="ask-q" placeholder="Ask a question…" maxlength="500" aria-label="Question"><button id="ask-btn" class="primary">Ask</button></div>
+    <div class="ask-row"><input id="ask-q" placeholder="Ask FinTwin a question…" maxlength="500" aria-label="Question"><button id="ask-btn" class="primary">Ask</button></div>
   </div>
 </aside>
 <div id="toasts" class="toasts" aria-live="polite"></div>
-<script src="/static/avocet.js"></script>
+<script src="/static/vendor/motion.min.js"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/avocet.js?v=20261118b"></script>
+<script src="/static/ui-plus.js"></script>
+<script src="/static/login-motion.js"></script>
 </body>
 </html>
